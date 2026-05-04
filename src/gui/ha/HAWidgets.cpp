@@ -149,15 +149,11 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
         else if (code == LV_EVENT_RELEASED) {
             if (widget_is_dragging) {
                 widget_is_dragging = false;
-                
                 if (widget->getSnapToGrid()) {
-                    int nx = lv_obj_get_x(obj);
-                    int ny = lv_obj_get_y(obj);
-                    nx = round(nx / 10.0) * 10;
-                    ny = round(ny / 10.0) * 10;
+                    int nx = lv_obj_get_x(obj); int ny = lv_obj_get_y(obj);
+                    nx = round(nx / 10.0) * 10; ny = round(ny / 10.0) * 10;
                     lv_obj_set_pos(obj, nx, ny);
                 }
-                
                 if (onDeleteRequested) onDeleteRequested(widget);
             }
         }
@@ -170,6 +166,9 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
     }
 }
 
+// =========================================================
+// LIGHT WIDGET
+// =========================================================
 HALightWidget::HALightWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off)
     : HAWidget(parent, tab_idx, type, entity, x, y, w, h, name, mdi, c_on, c_off) {
     lv_label_set_text(icon_label, getIconForEntity(entity, mdi_icon).c_str());
@@ -177,10 +176,14 @@ HALightWidget::HALightWidget(lv_obj_t* parent, int tab_idx, String type, String 
 }
 
 void HALightWidget::updateState(String state) {
-    if (this->current_state == state) return; 
+    if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) return; 
+    
     HAWidget::updateState(state);
+    lv_obj_set_style_text_opa(icon_label, 255, 0); 
+
     uint32_t c_on_val = 0xFFD700; if (color_on.length() > 0 && color_on.startsWith("#")) c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
     uint32_t c_off_val = 0x555555; if (color_off.length() > 0 && color_off.startsWith("#")) c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
+    
     if (state == "on" || state == "open") {
         lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); lv_obj_set_style_text_color(icon_label, lv_color_hex(c_on_val), 0); 
     } else {
@@ -189,13 +192,14 @@ void HALightWidget::updateState(String state) {
 }
 
 void HALightWidget::onClick() {
+    lv_obj_set_style_text_opa(icon_label, 127, 0); 
     int dotIdx = entity_id.indexOf('.'); String domain = (dotIdx != -1) ? entity_id.substring(0, dotIdx) : "homeassistant";
     HaWebsocketLogic_CallService(domain, "toggle", entity_id);
 }
 
 
 // =========================================================
-// SENSOR WIDGET
+// SENSOR WIDGET (MIT FIX FÜR X-ACHSE & RENDER KOLLAPS)
 // =========================================================
 
 HASensorWidget::HASensorWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off, bool showChart, int chart_w, int chart_h, int chart_x, int chart_y, String c_min, String c_max)
@@ -219,9 +223,12 @@ HASensorWidget::HASensorWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     this->last_value = 0;
     this->last_update_millis = millis();
     
+    // BACKFILL: Array direkt mit fiktiven Werten (Jetzt - 10s Schritte) füllen, 
+    // damit die X-Achse sofort etwas zum Zeichnen hat!
+    time_t now; time(&now);
     for(int i=0; i<50; i++) {
-        timestamps[i] = 0;
-        is_held[i] = false;
+        timestamps[i] = now - ((49 - i) * 10);
+        is_held[i] = true; 
     }
     
     hold_timer = lv_timer_create(hold_timer_cb, 10000, this);
@@ -245,38 +252,37 @@ void HASensorWidget::buildUI() {
         lv_obj_set_size(chart, lv_pct(chart_w_pct), lv_pct(chart_h_pct));
         
         // ==========================================
-        // FIX: Y-Achse war unsichtbar/abgeschnitten
-        // Padding deutlich erhöht für die Achsen!
+        // DER LAYOUT FIX: Realistische Padding-Werte
         // ==========================================
-        lv_obj_set_style_pad_left(chart, 60, 0);
-        lv_obj_set_style_pad_bottom(chart, 30, 0);
+        // Links Platz für z.B. "22.5", Unten für "14:30"
+        lv_obj_set_style_pad_left(chart, 35, 0); 
+        lv_obj_set_style_pad_bottom(chart, 25, 0); 
         lv_obj_set_style_pad_right(chart, 10, 0);
         lv_obj_set_style_pad_top(chart, 10, 0);
         
-        lv_obj_align(chart, LV_ALIGN_BOTTOM_MID, chart_x_ofs, chart_y_ofs);
+        lv_obj_align(chart, LV_ALIGN_CENTER, chart_x_ofs, chart_y_ofs);
         
         lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
         lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
         lv_chart_set_point_count(chart, 50); 
         
-        // draw_size an das Padding anpassen, damit nichts abgeschnitten wird
-        lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 5, 2, 5, 1, true, 30);
-        lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y, 5, 2, 4, 1, true, 60);
+        // draw_size an das neue Padding angepasst, Y hat 4 Ticks, X hat 5 Ticks
+        lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 5, 2, 5, 1, true, 25);
+        lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y, 5, 2, 4, 1, true, 35);
 
         lv_obj_set_style_bg_opa(chart, 0, LV_PART_MAIN);
         lv_obj_set_style_border_width(chart, 0, LV_PART_MAIN);
-        lv_obj_set_style_line_color(chart, lv_color_hex(0x444444), LV_PART_MAIN); 
+        lv_obj_set_style_line_color(chart, lv_color_hex(0x333333), LV_PART_MAIN); 
         
+        // Ticks explizit mit Farbe und Schrift ausstatten
+        lv_obj_set_style_line_width(chart, 2, LV_PART_TICKS);
+        lv_obj_set_style_line_color(chart, lv_color_hex(0x666666), LV_PART_TICKS);
+        lv_obj_set_style_text_color(chart, lv_color_hex(0xAAAAAA), LV_PART_TICKS);
+        lv_obj_set_style_text_font(chart, &lv_font_montserrat_12, LV_PART_TICKS);
+
         lv_obj_set_style_line_width(chart, 3, LV_PART_ITEMS);
         lv_obj_set_style_bg_opa(chart, LV_OPA_30, LV_PART_ITEMS); 
         lv_obj_set_style_size(chart, 6, LV_PART_INDICATOR); 
-
-        // ==========================================
-        // FIX: Erzwungene Schriftfarbe für die Achsen (Ticks)
-        // (Sonst sind sie auf dunklen Hintergründen oft unsichtbar)
-        // ==========================================
-        lv_obj_set_style_text_color(chart, lv_color_hex(0xAAAAAA), LV_PART_TICKS);
-        lv_obj_set_style_text_font(chart, &lv_font_montserrat_12, LV_PART_TICKS);
 
         lv_obj_add_event_cb(chart, chart_draw_event_cb, LV_EVENT_DRAW_PART_BEGIN, this);
 
@@ -322,7 +328,11 @@ void HASensorWidget::setChartConfig(bool show, int w_p, int h_p, int x_ofs, int 
     if (unit_label) { lv_obj_del_async(unit_label); unit_label = nullptr; }
     
     first_value_received = false;
-    for(int i=0; i<50; i++) timestamps[i] = 0;
+    time_t now; time(&now);
+    for(int i=0; i<50; i++) {
+        timestamps[i] = now - ((49 - i) * 10);
+        is_held[i] = true;
+    }
     
     buildUI();
     
@@ -362,37 +372,50 @@ void HASensorWidget::addChartValue(float val, bool held) {
         if (val > current_max) current_max = val;
     }
 
+    // ==========================================
+    // FLOAT FIX: Mit 10 multiplizieren für Kommastellen
+    // ==========================================
     if (chart_min.length() > 0 && chart_max.length() > 0) {
-        lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)chart_min.toFloat(), (lv_coord_t)chart_max.toFloat());
+        lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(chart_min.toFloat() * 10.0f), (lv_coord_t)(chart_max.toFloat() * 10.0f));
     } else {
         float range = current_max - current_min;
         if (range < 0.5f) {
-            lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(current_min - 0.5f), (lv_coord_t)(current_max + 0.5f));
+            lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)((current_min - 0.5f) * 10.0f), (lv_coord_t)((current_max + 0.5f) * 10.0f));
         } else {
             float padding = range * 0.2f;
-            lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(current_min - padding), (lv_coord_t)(current_max + padding));
+            lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)((current_min - padding) * 10.0f), (lv_coord_t)((current_max + padding) * 10.0f));
         }
     }
     
-    lv_chart_set_next_value(chart, ser, (lv_coord_t)val);
+    lv_chart_set_next_value(chart, ser, (lv_coord_t)(val * 10.0f));
 }
 
 void HASensorWidget::chart_draw_event_cb(lv_event_t * e) {
     lv_obj_draw_part_dsc_t * dsc = lv_event_get_draw_part_dsc(e);
     HASensorWidget* w = (HASensorWidget*)lv_event_get_user_data(e);
 
+    // X-Achse (NTP Uhrzeit - gekürzt auf HH:MM gegen Überlappung)
     if (dsc->part == LV_PART_TICKS && dsc->id == LV_CHART_AXIS_PRIMARY_X) {
         if (dsc->text) {
             int pt_idx = dsc->value; 
-            if (pt_idx >= 0 && pt_idx < 50 && w->timestamps[pt_idx] > 1000000) {
+            if (pt_idx >= 0 && pt_idx < 50) {
                 time_t t = w->timestamps[pt_idx];
-                struct tm * tm_info = localtime(&t);
-                snprintf(dsc->text, dsc->text_length, "%02d:%02d:%02d", tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
-            } else {
-                snprintf(dsc->text, dsc->text_length, ""); 
+                if (t > 1000000) { // Check ob NTP geladen ist
+                    struct tm * tm_info = localtime(&t);
+                    snprintf(dsc->text, dsc->text_length, "%02d:%02d", tm_info->tm_hour, tm_info->tm_min);
+                } else {
+                    snprintf(dsc->text, dsc->text_length, "--:--"); 
+                }
             }
         }
     }
+    // Y-Achse (Durch 10 teilen, um Float wiederherzustellen)
+    else if (dsc->part == LV_PART_TICKS && dsc->id == LV_CHART_AXIS_PRIMARY_Y) {
+        if (dsc->text) {
+            snprintf(dsc->text, dsc->text_length, "%.1f", (float)dsc->value / 10.0f);
+        }
+    }
+    // Die Linienpunkte (Echte vs. Gehaltene Werte)
     else if (dsc->part == LV_PART_INDICATOR) {
         int pt_idx = dsc->id; 
         if (pt_idx >= 0 && pt_idx < 50) {
@@ -474,25 +497,35 @@ void HASensorWidget::updateState(String state) {
 
 void HASensorWidget::onClick() { }
 
+// =========================================================
+// ACTION WIDGET
+// =========================================================
 HAActionWidget::HAActionWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off)
     : HAWidget(parent, tab_idx, type, entity, x, y, w, h, name, mdi, c_on, c_off) {
     lv_label_set_text(icon_label, getIconForEntity(entity, mdi_icon).c_str()); updateState("unknown");
 }
 
 void HAActionWidget::updateState(String state) {
-    if (this->current_state == state) return; 
+    if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) return; 
     
     this->current_state = state;
+    lv_obj_set_style_text_opa(icon_label, 255, 0); 
+
     uint32_t c_on_val = 0x9B59B6; if (color_on.length() > 0 && color_on.startsWith("#")) c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
     lv_obj_set_style_text_color(icon_label, lv_color_hex(c_on_val), 0);
 }
 
 void HAActionWidget::onClick() {
+    lv_obj_set_style_text_opa(icon_label, 127, 0); 
+
     String domain = entity_id.substring(0, entity_id.indexOf('.')); String service = "turn_on"; 
     if (domain == "button" || domain == "input_button") service = "press"; else if (domain == "automation") service = "trigger";
     HaWebsocketLogic_CallService(domain, service, entity_id);
 }
 
+// =========================================================
+// MEDIA WIDGET
+// =========================================================
 HAMediaWidget::HAMediaWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off)
     : HAWidget(parent, tab_idx, type, entity, x, y, w, h, name, mdi, c_on, c_off) {
     if (String(mdi).length() == 0) lv_label_set_text(icon_label, getSafeIcon("mdi:television").c_str()); else lv_label_set_text(icon_label, getIconForEntity(entity, mdi_icon).c_str());
@@ -500,7 +533,11 @@ HAMediaWidget::HAMediaWidget(lv_obj_t* parent, int tab_idx, String type, String 
 }
 
 void HAMediaWidget::updateState(String state) {
-    if (this->current_state == state) return; HAWidget::updateState(state);
+    if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) return; 
+    
+    HAWidget::updateState(state);
+    lv_obj_set_style_text_opa(icon_label, 255, 0); 
+
     uint32_t c_on_val = 0x00A0FF; if (color_on.length() > 0 && color_on.startsWith("#")) c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
     uint32_t c_off_val = 0x555555; if (color_off.length() > 0 && color_off.startsWith("#")) c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
     if (state != "off" && state != "unavailable" && state != "unknown") {
@@ -510,8 +547,14 @@ void HAMediaWidget::updateState(String state) {
     }
 }
 
-void HAMediaWidget::onClick() { HaWebsocketLogic_CallService("media_player", "toggle", entity_id); }
+void HAMediaWidget::onClick() { 
+    lv_obj_set_style_text_opa(icon_label, 127, 0); 
+    HaWebsocketLogic_CallService("media_player", "toggle", entity_id); 
+}
 
+// =========================================================
+// MEDIA ITEM WIDGET
+// =========================================================
 HAMediaItemWidget::HAMediaItemWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off, String m_c_type, String m_c_id)
     : HAWidget(parent, tab_idx, type, entity, x, y, w, h, name, mdi, c_on, c_off) {
     this->media_content_type = m_c_type; this->media_content_id = m_c_id;
@@ -520,7 +563,11 @@ HAMediaItemWidget::HAMediaItemWidget(lv_obj_t* parent, int tab_idx, String type,
 }
 
 void HAMediaItemWidget::updateState(String state) {
-    if (this->current_state == state) return; HAWidget::updateState(state);
+    if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) return; 
+    
+    HAWidget::updateState(state);
+    lv_obj_set_style_text_opa(icon_label, 255, 0); 
+
     uint32_t c_on_val = 0x00A0FF; if (color_on.length() > 0 && color_on.startsWith("#")) c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
     uint32_t c_off_val = 0x555555; if (color_off.length() > 0 && color_off.startsWith("#")) c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
     if (state == "playing") {
@@ -530,4 +577,7 @@ void HAMediaItemWidget::updateState(String state) {
     }
 }
 
-void HAMediaItemWidget::onClick() { HaWebsocketLogic_CallPlayMedia(entity_id, media_content_type, media_content_id); }
+void HAMediaItemWidget::onClick() { 
+    lv_obj_set_style_text_opa(icon_label, 127, 0); 
+    HaWebsocketLogic_CallPlayMedia(entity_id, media_content_type, media_content_id); 
+}
