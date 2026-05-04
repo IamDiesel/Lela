@@ -9,6 +9,7 @@
 #include "HaDialogAdd.h"
 #include "HaDialogImport.h"
 #include "HaDialogMedia.h" 
+#include <algorithm> 
 
 lv_obj_t* ViewHomeAssistant::screen = nullptr;
 lv_obj_t* ViewHomeAssistant::tabview = nullptr;
@@ -323,6 +324,13 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
         if (act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
         currentActiveTab = act_tab;
         
+        std::sort(widgets.begin(), widgets.end(), [](HAWidget* a, HAWidget* b) {
+            if (a->container && b->container) {
+                return lv_obj_get_index(a->container) < lv_obj_get_index(b->container);
+            }
+            return false;
+        });
+
         HaConfigLogic::dashboards[act_tab].widgets.clear();
         for(HAWidget* w : widgets) {
             if (lv_obj_has_flag(w->container, LV_OBJ_FLAG_HIDDEN)) continue; 
@@ -343,6 +351,15 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
                 def.state_margin = w->getStateMargin(); 
                 
                 def.snap_to_grid = w->getSnapToGrid(); 
+                def.show_chart = w->getShowChart();
+                
+                // NEU: Die neuen Offset-Werte beim Speichern auslesen
+                def.chart_w_pct = w->getChartWPct();
+                def.chart_h_pct = w->getChartHPct();
+                def.chart_x_ofs = w->getChartXOfs();
+                def.chart_y_ofs = w->getChartYOfs();
+                def.chart_min = w->getChartMin();
+                def.chart_max = w->getChartMax();
                 
                 def.media_content_type = w->getMediaContentType();
                 def.media_content_id = w->getMediaContentId();
@@ -406,7 +423,9 @@ lv_obj_t* ViewHomeAssistant::build() {
         
         for (const auto& wDef : HaConfigLogic::dashboards[i].widgets) {
             HAWidget* new_widget = nullptr;
-            if (wDef.type == "sensor") new_widget = new HASensorWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
+            
+            // NEU: Die neuen Offset-Parameter werden in den Konstruktor durchgereicht
+            if (wDef.type == "sensor") new_widget = new HASensorWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.show_chart, wDef.chart_w_pct, wDef.chart_h_pct, wDef.chart_x_ofs, wDef.chart_y_ofs, wDef.chart_min, wDef.chart_max);
             else if (wDef.type == "action") new_widget = new HAActionWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
             else if (wDef.type == "media_player") new_widget = new HAMediaWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
             else if (wDef.type == "media_item") new_widget = new HAMediaItemWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.media_content_type, wDef.media_content_id);

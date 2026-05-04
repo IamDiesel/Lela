@@ -5,12 +5,12 @@
 #include "HaConfigLogic.h"
 #include <ArduinoWebsockets.h>
 #include <ArduinoJson.h>
-#include <HTTPClient.h> 
 #include <esp_heap_caps.h> 
-#include "lvgl.h" // WICHTIG FÜR LV_ALIGN MACROS
+#include "lvgl.h" 
 
 using namespace websockets;
 
+// PSRAM Allocator für sicheres Speichermanagement großer JSONs
 class SpiRamAllocator : public ArduinoJson::Allocator {
 public:
     void* allocate(size_t size) override { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
@@ -26,6 +26,7 @@ static bool isHaAuthenticated = false;
 
 static uint32_t lastPingTime = 0;
 static uint32_t messageIdCounter = 1;
+static uint32_t getStatesReqId = 0; // Speichert die ID für unsere initiale Zustandsabfrage
 
 static volatile TaskHandle_t haTaskHandle = NULL;
 static volatile bool haShouldRun = false;
@@ -76,8 +77,6 @@ volatile bool pendingMediaBrowserUpdate = false;
 volatile bool pendingMediaBrowserError = false;
 
 volatile bool triggerRestStateFetch = false; 
-static std::vector<String> restFetchList;
-static size_t restFetchIndex = 0; 
 
 void safeSend(const String& payload) {
     if (haClientMutex != NULL && xSemaphoreTakeRecursive(haClientMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
@@ -208,18 +207,15 @@ String HaWebsocketLogic_GetCachedIcon(String entity_id) {
 void HaWebsocketLogic_UpdateTrackedEntities() {
     if (haStateMutex != NULL && xSemaphoreTake(haStateMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         trackedEntities.clear();
-        restFetchList.clear();
-
         for (const auto& tab : HaConfigLogic::dashboards) {
             for (const auto& w : tab.widgets) {
                 if (std::find(trackedEntities.begin(), trackedEntities.end(), w.entity_id) == trackedEntities.end()) {
                     trackedEntities.push_back(w.entity_id);
-                    restFetchList.push_back(w.entity_id);
                 }
             }
         }
         
-        triggerRestStateFetch = true;
+        triggerRestStateFetch = true; // Jetzt der Trigger für den WS get_states call
         xSemaphoreGive(haStateMutex);
     }
 }
@@ -245,127 +241,142 @@ String HaWebsocketLogic_GetState(String entity_id) {
 
 bool HaWebsocketLogic_IsConnected() { return isHaConnected && isHaAuthenticated; }
 
+// Hilfsfunktion, um die geparsten Daten eines Objekts auszuwerten
+void processParsedEntity(JsonObject doc) {
+    String entityId = doc["entity_id"] | "";
+    String newState = doc["state"] | "";
+    
+    // Wir ignorieren Entitäten, die nicht auf unserem Dashboard sind (spart massiv RAM)
+    bool isRelevant = false;
+    if (haStateMutex != NULL && xSemaphoreTake(haStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (std::find(trackedEntities.begin(), trackedEntities.end(), entityId) != trackedEntities.end()) {
+            isRelevant = true;
+        }
+        xSemaphoreGive(haStateMutex);
+    }
+    if (!isRelevant || entityId.length() == 0) return;
+
+    String unit = doc["attributes"]["unit_of_measurement"] | "";
+    String name = doc["attributes"]["friendly_name"] | "";
+    String icon = doc["attributes"]["icon"] | "";
+    
+    updateEntityState(entityId, newState);
+    
+    JsonObject attrs = doc["attributes"];
+    int bri = attrs["brightness"] | -1;
+    JsonArray rgb = attrs["rgb_color"];
+    JsonArray rgbw = attrs["rgbw_color"];
+    String mTitle = attrs["media_title"] | "";
+    String mArtist = attrs["media_artist"] | "";
+    float mVol = attrs["volume_level"] | -1.0f;
+    String mSource = attrs["source"] | "";
+    JsonArray sList = attrs["source_list"];
+
+    if (haStateMutex != NULL && xSemaphoreTake(haStateMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        
+        if (name.length() > 0) haEntityNames[entityId] = name;
+        if (icon.length() > 0) haEntityIcons[entityId] = icon;
+
+        if (unit.length() > 0 && newState != "unavailable" && newState != "unknown") {
+            haEntityUnits[entityId] = unit;
+        } else {
+            haEntityUnits[entityId] = "";
+        }
+        
+        if (bri >= 0) haEntityBrightness[entityId] = bri;
+
+        if (!rgbw.isNull() && rgbw.size() == 4) {
+            haEntityIsRGBW[entityId] = true;
+            haEntityRGB[entityId] = (rgbw[0].as<uint32_t>() << 16) | (rgbw[1].as<uint32_t>() << 8) | rgbw[2].as<uint32_t>();
+            haEntityWhite[entityId] = rgbw[3].as<int>();
+        } else if (!rgb.isNull() && rgb.size() == 3) {
+            haEntityIsRGBW[entityId] = false;
+            haEntityRGB[entityId] = (rgb[0].as<uint32_t>() << 16) | (rgb[1].as<uint32_t>() << 8) | rgb[2].as<uint32_t>();
+        }
+
+        if (mTitle.length() > 0) haEntityMediaTitle[entityId] = mTitle;
+        if (mArtist.length() > 0) haEntityMediaArtist[entityId] = mArtist;
+        if (mVol >= 0) haEntityMediaVolume[entityId] = mVol;
+
+        if (mSource.length() > 0) haEntitySource[entityId] = mSource;
+        if (!sList.isNull()) {
+            std::vector<String> sources;
+            for (JsonVariant v : sList) {
+                sources.push_back(v.as<String>());
+            }
+            haEntitySourceList[entityId] = sources;
+        }
+        xSemaphoreGive(haStateMutex);
+    }
+}
+
 void onMessageCallback(WebsocketsMessage message) {
     if (!message.isText()) return;
     String payload = message.data();
 
+    // 1. Verarbeitung von Echtzeit-Events ("state_changed")
     if (payload.indexOf("\"type\":\"event\"") != -1 || payload.indexOf("\"type\": \"event\"") != -1) {
         if (payload.indexOf("\"state_changed\"") != -1) {
-            
-            bool isRelevant = false;
-            if (haStateMutex != NULL && xSemaphoreTake(haStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                for (const String& entity : trackedEntities) {
-                    if (payload.indexOf(entity) != -1) {
-                        isRelevant = true;
-                        break;
-                    }
-                }
-                xSemaphoreGive(haStateMutex);
-            }
-            if (!isRelevant) return;
-
             JsonDocument filter(&psramAlloc);
             filter["event"]["data"]["entity_id"] = true;
-            filter["event"]["data"]["new_state"]["state"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["unit_of_measurement"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["brightness"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["rgb_color"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["rgbw_color"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["media_title"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["media_artist"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["volume_level"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["source"] = true;
-            filter["event"]["data"]["new_state"]["attributes"]["source_list"] = true;
-
-            JsonDocument doc(&psramAlloc);
-            DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(250));
+            filter["event"]["data"]["new_state"] = true;
             
+            JsonDocument doc(&psramAlloc);
+            DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
             if (!err) {
-                String entityId = doc["event"]["data"]["entity_id"] | "";
-                String newState = doc["event"]["data"]["new_state"]["state"] | "";
-                String unit = doc["event"]["data"]["new_state"]["attributes"]["unit_of_measurement"] | "";
-                
-                if (entityId.length() > 0 && newState.length() > 0) {
-                    
-                    updateEntityState(entityId, newState);
-                    
-                    JsonObject attrs = doc["event"]["data"]["new_state"]["attributes"];
-                    int bri = attrs["brightness"] | -1;
-                    JsonArray rgb = attrs["rgb_color"];
-                    JsonArray rgbw = attrs["rgbw_color"];
-                    String mTitle = attrs["media_title"] | "";
-                    String mArtist = attrs["media_artist"] | "";
-                    float mVol = attrs["volume_level"] | -1.0f;
-                    String mSource = attrs["source"] | "";
-                    JsonArray sList = attrs["source_list"];
-
-                    if (haStateMutex != NULL && xSemaphoreTake(haStateMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                        
-                        if (unit.length() > 0 && newState != "unavailable" && newState != "unknown") {
-                            haEntityUnits[entityId] = unit;
-                        } else {
-                            haEntityUnits[entityId] = "";
-                        }
-                        
-                        if (bri >= 0) haEntityBrightness[entityId] = bri;
-
-                        if (!rgbw.isNull() && rgbw.size() == 4) {
-                            haEntityIsRGBW[entityId] = true;
-                            haEntityRGB[entityId] = (rgbw[0].as<uint32_t>() << 16) | (rgbw[1].as<uint32_t>() << 8) | rgbw[2].as<uint32_t>();
-                            haEntityWhite[entityId] = rgbw[3].as<int>();
-                        } else if (!rgb.isNull() && rgb.size() == 3) {
-                            haEntityIsRGBW[entityId] = false;
-                            haEntityRGB[entityId] = (rgb[0].as<uint32_t>() << 16) | (rgb[1].as<uint32_t>() << 8) | rgb[2].as<uint32_t>();
-                        }
-
-                        if (mTitle.length() > 0) haEntityMediaTitle[entityId] = mTitle;
-                        if (mArtist.length() > 0) haEntityMediaArtist[entityId] = mArtist;
-                        if (mVol >= 0) haEntityMediaVolume[entityId] = mVol;
-
-                        if (mSource.length() > 0) haEntitySource[entityId] = mSource;
-                        if (!sList.isNull()) {
-                            std::vector<String> sources;
-                            for (JsonVariant v : sList) {
-                                sources.push_back(v.as<String>());
-                            }
-                            haEntitySourceList[entityId] = sources;
-                        }
-
-                        xSemaphoreGive(haStateMutex);
-                    }
-                }
+                // Wir mappen die Event-Struktur auf unsere gemeinsame Funktion
+                JsonObject entityData = doc["event"]["data"]["new_state"];
+                processParsedEntity(entityData);
             }
         }
         return; 
     }
 
+    // 2. Schnelle Header-Analyse für System-Responses
     JsonDocument headerFilter(&psramAlloc);
     headerFilter["type"] = true;
     headerFilter["id"] = true;
     headerFilter["success"] = true;
 
     JsonDocument headerDoc(&psramAlloc);
-    DeserializationError err = deserializeJson(headerDoc, payload, DeserializationOption::Filter(headerFilter), DeserializationOption::NestingLimit(250));
+    DeserializationError err = deserializeJson(headerDoc, payload, DeserializationOption::Filter(headerFilter));
     if (err) return;
 
     String type = headerDoc["type"] | "";
     uint32_t msgId = headerDoc["id"] | 0;
     bool success = headerDoc["success"] | false;
 
-    if (msgId == lastMediaBrowseReqId && lastMediaBrowseReqId > 0) {
-        if (!success) {
-            pendingMediaBrowserError = true;
-            return;
+    // 3. NEU: Verarbeitung der initialen "get_states" Antwort
+    if (msgId == getStatesReqId && getStatesReqId > 0 && success) {
+        JsonDocument statesFilter(&psramAlloc);
+        // Wir iterieren durch das große result Array und filtern uns nur das Wichtige heraus
+        statesFilter["result"][0]["entity_id"] = true;
+        statesFilter["result"][0]["state"] = true;
+        statesFilter["result"][0]["attributes"] = true; 
+
+        JsonDocument doc(&psramAlloc);
+        DeserializationError stateErr = deserializeJson(doc, payload, DeserializationOption::Filter(statesFilter), DeserializationOption::NestingLimit(250));
+        
+        if (!stateErr) {
+            JsonArray results = doc["result"];
+            for (JsonObject entity : results) {
+                processParsedEntity(entity);
+            }
         }
+        return;
+    }
+
+    // --- Der Rest bleibt identisch (MediaBrowser, Lovelace Import, Auth) ---
+    if (msgId == lastMediaBrowseReqId && lastMediaBrowseReqId > 0) {
+        if (!success) { pendingMediaBrowserError = true; return; }
         
         JsonDocument browseFilter(&psramAlloc);
         browseFilter["result"]["children"] = true; 
         JsonDocument doc(&psramAlloc);
-        deserializeJson(doc, payload, DeserializationOption::Filter(browseFilter), DeserializationOption::NestingLimit(250));
+        deserializeJson(doc, payload, DeserializationOption::Filter(browseFilter));
         
         currentMediaFolder.clear();
         JsonArray children = doc["result"]["children"];
-        
         if (!children.isNull()) {
             for (JsonObject child : children) {
                 MediaBrowserItem item;
@@ -375,8 +386,7 @@ void onMessageCallback(WebsocketsMessage message) {
                 item.can_expand = child["can_expand"] | false;
                 item.can_play = child["can_play"] | false;
                 currentMediaFolder.push_back(item);
-                
-                if (currentMediaFolder.size() > 100) break; // RAM Limit
+                if (currentMediaFolder.size() > 100) break; 
             }
         }
         pendingMediaBrowserUpdate = true;
@@ -397,7 +407,7 @@ void onMessageCallback(WebsocketsMessage message) {
                 viewFilter["result"]["result"]["views"][0]["title"] = true; viewFilter["result"]["result"]["views"][0]["path"] = true; viewFilter["result"]["result"]["views"][0]["icon"] = true;
                 
                 JsonDocument doc(&psramAlloc);
-                DeserializationError viewErr = deserializeJson(doc, payload, DeserializationOption::Filter(viewFilter), DeserializationOption::NestingLimit(250));
+                DeserializationError viewErr = deserializeJson(doc, payload, DeserializationOption::Filter(viewFilter));
                 if (!viewErr) {
                     JsonArray views = doc["result"]["views"];
                     if (views.isNull()) views = doc["result"]["result"]["views"];
@@ -485,7 +495,6 @@ void onMessageCallback(WebsocketsMessage message) {
                         wDef.x = margin + (i % cols) * (cardW + margin); wDef.y = margin + (i / cols) * (cardH + margin);
                         wDef.name = customName; wDef.mdi_icon = customIcon; wDef.w = cardW; wDef.h = cardH;
                         
-                        // NEUER STANDARD BEIM IMPORT: Icon oben, Text unten!
                         wDef.icon_align = LV_ALIGN_TOP_MID;
                         wDef.text_align = LV_ALIGN_BOTTOM_MID;
                         
@@ -516,7 +525,7 @@ void onMessageCallback(WebsocketsMessage message) {
                 JsonDocument filter(&psramAlloc);
                 filter["result"] = true;
                 JsonDocument doc(&psramAlloc);
-                deserializeJson(doc, payload, DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(250));
+                deserializeJson(doc, payload, DeserializationOption::Filter(filter));
 
                 availableDashboardUrls.clear(); availableDashboardTitles.clear();
                 availableDashboardTitles.push_back("Standard (Overview)"); availableDashboardUrls.push_back("");
@@ -547,12 +556,16 @@ void onMessageCallback(WebsocketsMessage message) {
     else if (type == "auth_ok") {
         isHaAuthenticated = true;
         
+        // 1. Wir abonnieren Live-Events
         JsonDocument subDoc(&psramAlloc);
         subDoc["id"] = messageIdCounter++; 
         subDoc["type"] = "subscribe_events"; 
         subDoc["event_type"] = "state_changed";
         String subPayload; serializeJson(subDoc, subPayload); 
         safeSend(subPayload);
+
+        // 2. NEU: Wir lösen den initialen Fetch ALLER Stati über den Websocket aus
+        triggerRestStateFetch = true; 
     }
 }
 
@@ -566,114 +579,26 @@ void onEventsCallback(WebsocketsEvent event, String data) {
     }
 }
 
+
 void haWsTask(void *pvParameters) {
     while (haShouldRun) {
         if (WiFi.status() == WL_CONNECTED) {
             
-            bool isFetchingThisLoop = false;
-            String entityToFetch = "";
-
+            // Haben wir den Befehl erhalten, die aktuellen Stati zu fetchen?
             if (haStateMutex != NULL && xSemaphoreTake(haStateMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                if (triggerRestStateFetch) {
-                    restFetchIndex = 0; 
+                if (triggerRestStateFetch && isHaAuthenticated) {
                     triggerRestStateFetch = false;
-                }
-                if (restFetchIndex < restFetchList.size()) {
-                    entityToFetch = restFetchList[restFetchIndex];
-                    restFetchIndex++;
-                    isFetchingThisLoop = true;
+                    
+                    getStatesReqId = messageIdCounter++;
+                    JsonDocument reqDoc(&psramAlloc);
+                    reqDoc["id"] = getStatesReqId; 
+                    reqDoc["type"] = "get_states"; 
+                    
+                    String reqPayload; 
+                    serializeJson(reqDoc, reqPayload); 
+                    safeSend(reqPayload); 
                 }
                 xSemaphoreGive(haStateMutex);
-            }
-
-            if (isFetchingThisLoop && entityToFetch.length() > 0) {
-                String url = "http://" + String(SECRET_HA_IP) + ":" + String(SECRET_HA_PORT) + "/api/states/" + entityToFetch;
-                
-                HTTPClient restHttp;
-                restHttp.setTimeout(3000); 
-                restHttp.begin(url);
-                restHttp.addHeader("Authorization", "Bearer " + String(SECRET_HA_TOKEN));
-                restHttp.addHeader("Content-Type", "application/json");
-                
-                int httpCode = restHttp.GET();
-                if (httpCode == HTTP_CODE_OK) {
-                    String payload = restHttp.getString();
-                    JsonDocument httpFilter(&psramAlloc);
-                    httpFilter["state"] = true;
-                    httpFilter["attributes"]["friendly_name"] = true;
-                    httpFilter["attributes"]["icon"] = true;
-                    
-                    httpFilter["attributes"]["unit_of_measurement"] = true;
-                    httpFilter["attributes"]["brightness"] = true;
-                    httpFilter["attributes"]["rgb_color"] = true;
-                    httpFilter["attributes"]["rgbw_color"] = true;
-                    httpFilter["attributes"]["media_title"] = true;
-                    httpFilter["attributes"]["media_artist"] = true;
-                    httpFilter["attributes"]["volume_level"] = true;
-                    httpFilter["attributes"]["source"] = true;
-                    httpFilter["attributes"]["source_list"] = true;
-
-                    JsonDocument doc(&psramAlloc);
-                    DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(httpFilter));
-                    
-                    if (!err) {
-                        String state = doc["state"] | "";
-                        String name = doc["attributes"]["friendly_name"] | "";
-                        String icon = doc["attributes"]["icon"] | "";
-                        String unit = doc["attributes"]["unit_of_measurement"] | ""; 
-                        
-                        if (haStateMutex != NULL && xSemaphoreTake(haStateMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                            
-                            if (state.length() > 0) haEntityStates[entityToFetch] = state;
-                            if (name.length() > 0) haEntityNames[entityToFetch] = name;
-                            if (icon.length() > 0) haEntityIcons[entityToFetch] = icon;
-                            
-                            if (unit.length() > 0 && state != "unavailable" && state != "unknown") {
-                                haEntityUnits[entityToFetch] = unit;
-                            } else {
-                                haEntityUnits[entityToFetch] = "";
-                            }
-                            
-                            int bri = doc["attributes"]["brightness"] | -1;
-                            JsonArray rgb = doc["attributes"]["rgb_color"];
-                            JsonArray rgbw = doc["attributes"]["rgbw_color"];
-                            String mTitle = doc["attributes"]["media_title"] | "";
-                            String mArtist = doc["attributes"]["media_artist"] | "";
-                            float mVol = doc["attributes"]["volume_level"] | -1.0f;
-                            String mSource = doc["attributes"]["source"] | "";
-                            JsonArray sList = doc["attributes"]["source_list"];
-
-                            if (bri >= 0) haEntityBrightness[entityToFetch] = bri;
-
-                            if (!rgbw.isNull() && rgbw.size() == 4) {
-                                haEntityIsRGBW[entityToFetch] = true;
-                                haEntityRGB[entityToFetch] = (rgbw[0].as<uint32_t>() << 16) | (rgbw[1].as<uint32_t>() << 8) | rgbw[2].as<uint32_t>();
-                                haEntityWhite[entityToFetch] = rgbw[3].as<int>();
-                            } else if (!rgb.isNull() && rgb.size() == 3) {
-                                haEntityIsRGBW[entityToFetch] = false;
-                                haEntityRGB[entityToFetch] = (rgb[0].as<uint32_t>() << 16) | (rgb[1].as<uint32_t>() << 8) | rgb[2].as<uint32_t>();
-                            }
-                            
-                            if (mTitle.length() > 0) haEntityMediaTitle[entityToFetch] = mTitle;
-                            if (mArtist.length() > 0) haEntityMediaArtist[entityToFetch] = mArtist;
-                            if (mVol >= 0) haEntityMediaVolume[entityToFetch] = mVol;
-
-                            if (mSource.length() > 0) haEntitySource[entityToFetch] = mSource;
-                            if (!sList.isNull()) {
-                                std::vector<String> sources;
-                                for (JsonVariant v : sList) {
-                                    sources.push_back(v.as<String>());
-                                }
-                                haEntitySourceList[entityToFetch] = sources;
-                            }
-
-                            xSemaphoreGive(haStateMutex);
-                        }
-                    }
-                } else {
-                    restHttp.getString(); 
-                }
-                restHttp.end(); 
             }
 
             if (haClientMutex != NULL && xSemaphoreTakeRecursive(haClientMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -681,12 +606,10 @@ void haWsTask(void *pvParameters) {
                     isHaConnected = false; 
                     isHaAuthenticated = false;
                     
-                    if (!isFetchingThisLoop) {
-                        if (!haClient.connect("ws://" + String(SECRET_HA_IP) + ":" + String(SECRET_HA_PORT) + "/api/websocket")) {
-                            xSemaphoreGiveRecursive(haClientMutex);
-                            vTaskDelay(pdMS_TO_TICKS(2000));
-                            continue;
-                        }
+                    if (!haClient.connect("ws://" + String(SECRET_HA_IP) + ":" + String(SECRET_HA_PORT) + "/api/websocket")) {
+                        xSemaphoreGiveRecursive(haClientMutex);
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                        continue;
                     }
                 } else {
                     haClient.poll();
@@ -704,7 +627,7 @@ void haWsTask(void *pvParameters) {
                 xSemaphoreGiveRecursive(haClientMutex);
             }
             
-            vTaskDelay(pdMS_TO_TICKS(isFetchingThisLoop ? 30 : 10)); 
+            vTaskDelay(pdMS_TO_TICKS(10)); 
             
         } else {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -736,7 +659,7 @@ void HaWebsocketLogic_Start() {
     haClient.onMessage(onMessageCallback);
     haClient.onEvent(onEventsCallback);
     
-    xTaskCreatePinnedToCore(haWsTask, "HA_WS_Task", 8192, NULL, 1, (TaskHandle_t*)&haTaskHandle, 1); 
+    xTaskCreatePinnedToCore(haWsTask, "HA_WS_Task", 16384, NULL, 1, (TaskHandle_t*)&haTaskHandle, 1); 
 }
 
 void HaWebsocketLogic_Stop() {
@@ -764,7 +687,6 @@ void HaWebsocketLogic_Stop() {
         std::vector<String>().swap(availableDashboardUrls);
         std::vector<String>().swap(availableDashboardTitles);
         std::vector<String>().swap(availableViewTitles);
-        std::vector<String>().swap(restFetchList); 
         
         xSemaphoreGive(haStateMutex);
     }

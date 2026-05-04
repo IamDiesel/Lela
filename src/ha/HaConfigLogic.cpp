@@ -58,7 +58,6 @@ void HaConfigLogic::Load() {
             wDef.color_on = wObj["color_on"] | "";
             wDef.color_off = wObj["color_off"] | "";
             
-            // Layout Zuweisungen mit Abwaertskompatibilitaet
             int i_align = wObj["icon_align"] | LV_ALIGN_TOP_MID;
             int i_margin = 5;
             if (i_align >= 100) { i_align -= 100; i_margin = 25; }
@@ -75,6 +74,15 @@ void HaConfigLogic::Load() {
             wDef.state_margin = wObj["state_margin"] | 0;
             
             wDef.snap_to_grid = wObj.containsKey("snap_to_grid") ? wObj["snap_to_grid"].as<bool>() : true;
+            
+            wDef.show_chart = wObj["show_chart"] | false; 
+            wDef.chart_w_pct = wObj["chart_w_pct"] | 95;
+            wDef.chart_h_pct = wObj["chart_h_pct"] | 50;
+            wDef.chart_x_ofs = wObj["chart_x_ofs"] | 0;     // NEU
+            wDef.chart_y_ofs = wObj["chart_y_ofs"] | -15;   // NEU
+            wDef.chart_min = wObj["chart_min"] | "";
+            wDef.chart_max = wObj["chart_max"] | "";
+            
             wDef.media_content_type = wObj["media_content_type"] | "";
             wDef.media_content_id = wObj["media_content_id"] | "";
             
@@ -111,6 +119,14 @@ void HaConfigLogic::Save() {
             wObj["state_margin"] = w.state_margin;
             
             wObj["snap_to_grid"] = w.snap_to_grid;
+            
+            wObj["show_chart"] = w.show_chart;
+            wObj["chart_w_pct"] = w.chart_w_pct;
+            wObj["chart_h_pct"] = w.chart_h_pct;
+            wObj["chart_x_ofs"] = w.chart_x_ofs; // NEU
+            wObj["chart_y_ofs"] = w.chart_y_ofs; // NEU
+            wObj["chart_min"] = w.chart_min;
+            wObj["chart_max"] = w.chart_max;
             
             if (w.name.length() > 0) wObj["name"] = w.name;
             if (w.mdi_icon.length() > 0) wObj["mdi_icon"] = w.mdi_icon;

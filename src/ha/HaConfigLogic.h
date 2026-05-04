@@ -16,13 +16,22 @@ struct HAWidgetDef {
     
     int icon_align = 0;  
     int text_align = 2;  
-    int state_align = 1; // NEU: Ausrichtung fuer Sensorwerte
+    int state_align = 1; 
     
     int icon_margin = 5; 
     int text_margin = 5; 
-    int state_margin = 0; // NEU: Abstand fuer Sensorwerte
+    int state_margin = 0; 
     
     bool snap_to_grid = true; 
+    
+    // --- DIAGRAMM SETTINGS ---
+    bool show_chart = false; 
+    int chart_w_pct = 95;
+    int chart_h_pct = 50;
+    int chart_x_ofs = 0;     // NEU: X-Verschiebung
+    int chart_y_ofs = -15;   // NEU: Y-Verschiebung
+    String chart_min = "";
+    String chart_max = "";
     
     String media_content_type;
     String media_content_id;

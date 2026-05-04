@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <time.h> 
 #include "LVGL_Driver.h"
 
 String formatEntityName(String entity_id, String name);
@@ -62,6 +63,15 @@ public:
     
     bool getSnapToGrid() { return snap_to_grid; } 
     
+    virtual bool getShowChart() { return false; }
+    virtual int getChartWPct() { return 95; }
+    virtual int getChartHPct() { return 50; }
+    virtual int getChartXOfs() { return 0; }
+    virtual int getChartYOfs() { return -15; }
+    virtual String getChartMin() { return ""; }
+    virtual String getChartMax() { return ""; }
+    virtual void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max) {}
+    
     virtual String getMediaContentType() { return ""; }
     virtual String getMediaContentId() { return ""; }
 
@@ -91,11 +101,50 @@ public:
 class HASensorWidget : public HAWidget {
 private:
     lv_obj_t* state_label;
+    
+    bool showChart;
+    int chart_w_pct;
+    int chart_h_pct;
+    int chart_x_ofs;
+    int chart_y_ofs;
+    String chart_min;
+    String chart_max;
+    
+    lv_obj_t* chart;
+    lv_chart_series_t* ser;
+    lv_obj_t* unit_label; 
+    
+    uint32_t timestamps[50];
+    bool is_held[50];
+    float last_value;
+    uint32_t last_update_millis;
+    lv_timer_t* hold_timer;
+    
+    float current_min;
+    float current_max;
+    bool first_value_received;
+    
+    void buildUI(); 
+    void addChartValue(float val, bool held);
+    static void chart_draw_event_cb(lv_event_t * e);
+    static void hold_timer_cb(lv_timer_t * t);
+    
 public:
-    HASensorWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off);
+    HASensorWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off, bool showChart = false, int chart_w = 95, int chart_h = 50, int chart_x = 0, int chart_y = -15, String c_min = "", String c_max = "");
+    virtual ~HASensorWidget() override; 
+    
     void updateState(String state) override;
     void onClick() override;
     void setAlignments(int i_align, int t_align, int s_align, int i_margin, int t_margin, int s_margin) override; 
+    
+    bool getShowChart() override { return showChart; }
+    int getChartWPct() override { return chart_w_pct; }
+    int getChartHPct() override { return chart_h_pct; }
+    int getChartXOfs() override { return chart_x_ofs; }
+    int getChartYOfs() override { return chart_y_ofs; }
+    String getChartMin() override { return chart_min; }
+    String getChartMax() override { return chart_max; }
+    void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max) override;
 };
 
 class HAActionWidget : public HAWidget {

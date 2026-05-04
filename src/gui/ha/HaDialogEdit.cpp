@@ -17,6 +17,18 @@ lv_obj_t* HaDialogEdit::dd_icon = nullptr;
 lv_obj_t* HaDialogEdit::dd_type = nullptr;
 lv_obj_t* HaDialogEdit::cb_snap = nullptr;
 
+lv_obj_t* HaDialogEdit::cb_chart = nullptr; 
+lv_obj_t* HaDialogEdit::slider_chart_w = nullptr;
+lv_obj_t* HaDialogEdit::slider_chart_h = nullptr;
+lv_obj_t* HaDialogEdit::slider_chart_x = nullptr; 
+lv_obj_t* HaDialogEdit::slider_chart_y = nullptr; 
+lv_obj_t* HaDialogEdit::lbl_c_w_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_c_h_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_c_x_val = nullptr;    
+lv_obj_t* HaDialogEdit::lbl_c_y_val = nullptr;    
+lv_obj_t* HaDialogEdit::ta_chart_min = nullptr;
+lv_obj_t* HaDialogEdit::ta_chart_max = nullptr;
+
 lv_obj_t* HaDialogEdit::slider_icon_margin = nullptr;
 lv_obj_t* HaDialogEdit::slider_text_margin = nullptr;
 lv_obj_t* HaDialogEdit::lbl_i_m_val = nullptr;
@@ -129,6 +141,10 @@ void HaDialogEdit::resetState() {
     light_control_overlay = nullptr; cur_light_slider = nullptr; cur_light_w_slider = nullptr;
     cur_light_cw = nullptr; color_picker_overlay = nullptr;
     dd_state_pos = nullptr; slider_state_margin = nullptr; lbl_s_m_val = nullptr;
+    cb_chart = nullptr; slider_chart_w = nullptr; slider_chart_h = nullptr;
+    slider_chart_x = nullptr; slider_chart_y = nullptr;
+    ta_chart_min = nullptr; ta_chart_max = nullptr; 
+    lbl_c_w_val = nullptr; lbl_c_h_val = nullptr; lbl_c_x_val = nullptr; lbl_c_y_val = nullptr;
 }
 
 void HaDialogEdit::updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix) {
@@ -319,6 +335,11 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     lv_obj_t* tab_size = lv_tabview_add_tab(tv, "Groesse");
     lv_obj_t* tab_disp = lv_tabview_add_tab(tv, "Anzeige");
     lv_obj_t* tab_layout = lv_tabview_add_tab(tv, "Layout");
+    
+    lv_obj_t* tab_chart = nullptr;
+    if (w->getType() == "sensor") {
+        tab_chart = lv_tabview_add_tab(tv, "Diagramm");
+    }
     lv_obj_set_style_text_font(lv_tabview_get_tab_btns(tv), &lv_font_montserrat_24, 0);
 
     // --- TAB GROESSE ---
@@ -414,10 +435,22 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     selected_color_on = w->getColorOn(); selected_color_off = w->getColorOff();
     updateColorBtn(btn_color_on, selected_color_on, "Aktiv:"); updateColorBtn(btn_color_off, selected_color_off, "Inaktiv:");
 
-    // --- TAB LAYOUT (MIT NEGATIVEN REGLERN & 3-WEGE SENSOR) ---
+    // --- TAB LAYOUT ---
     int y_offs = 15;
     
-    // ICON BEREICH
+    lv_obj_t* btn_fwd = lv_btn_create(tab_layout);
+    lv_obj_set_size(btn_fwd, 150, 40); lv_obj_set_pos(btn_fwd, 10, y_offs);
+    lv_obj_set_style_bg_color(btn_fwd, lv_color_hex(0x2980B9), 0);
+    lv_label_set_text(lv_label_create(btn_fwd), "Nach vorne"); lv_obj_center(lv_obj_get_child(btn_fwd, 0));
+    lv_obj_add_event_cb(btn_fwd, [](lv_event_t* e){ if(current_widget) lv_obj_move_foreground(current_widget->container); }, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t* btn_bwd = lv_btn_create(tab_layout);
+    lv_obj_set_size(btn_bwd, 150, 40); lv_obj_set_pos(btn_bwd, 170, y_offs);
+    lv_obj_set_style_bg_color(btn_bwd, lv_color_hex(0x8E44AD), 0);
+    lv_label_set_text(lv_label_create(btn_bwd), "Nach hinten"); lv_obj_center(lv_obj_get_child(btn_bwd, 0));
+    lv_obj_add_event_cb(btn_bwd, [](lv_event_t* e){ if(current_widget) lv_obj_move_background(current_widget->container); }, LV_EVENT_CLICKED, NULL);
+    y_offs += 60;
+
     lv_obj_t* lbl_i_pos = lv_label_create(tab_layout); lv_label_set_text(lbl_i_pos, "Icon:");
     lv_obj_set_style_text_font(lbl_i_pos, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_i_pos, 10, y_offs + 10);
     
@@ -441,7 +474,6 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
 
     y_offs += 60;
 
-    // TEXT BEREICH
     lv_obj_t* lbl_t_pos = lv_label_create(tab_layout); lv_label_set_text(lbl_t_pos, "Text:");
     lv_obj_set_style_text_font(lbl_t_pos, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_t_pos, 10, y_offs + 10);
     
@@ -465,7 +497,6 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
 
     y_offs += 60;
     
-    // STATE BEREICH (NUR SENSOR WIDGET)
     if (w->getType() == "sensor") {
         lv_obj_t* lbl_s_pos = lv_label_create(tab_layout); lv_label_set_text(lbl_s_pos, "Wert:");
         lv_obj_set_style_text_font(lbl_s_pos, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_s_pos, 10, y_offs + 10);
@@ -520,13 +551,108 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
         lv_obj_add_event_cb(slider_state_margin, layout_change_cb, LV_EVENT_VALUE_CHANGED, NULL);
     }
 
-    // SNAP TO GRID BEREICH
     cb_snap = lv_checkbox_create(tab_layout);
     lv_checkbox_set_text(cb_snap, "Am Raster einrasten (Snap 10px)");
     lv_obj_set_style_text_font(cb_snap, &lv_font_montserrat_20, 0);
     lv_obj_set_pos(cb_snap, 10, y_offs);
     if (w->getSnapToGrid()) lv_obj_add_state(cb_snap, LV_STATE_CHECKED);
     else lv_obj_clear_state(cb_snap, LV_STATE_CHECKED);
+
+    // --- TAB DIAGRAMM (NEU) ---
+    if (tab_chart) {
+        int cy = 10;
+        
+        cb_chart = lv_checkbox_create(tab_chart);
+        lv_checkbox_set_text(cb_chart, "Als Diagramm (Verlauf) anzeigen");
+        lv_obj_set_style_text_font(cb_chart, &lv_font_montserrat_20, 0);
+        lv_obj_set_pos(cb_chart, 10, cy);
+        if (w->getShowChart()) lv_obj_add_state(cb_chart, LV_STATE_CHECKED);
+        else lv_obj_clear_state(cb_chart, LV_STATE_CHECKED);
+        cy += 40;
+
+        auto chart_slider_cb = [](lv_event_t* e) {
+            lv_label_set_text_fmt(lbl_c_w_val, "%d %%", (int)lv_slider_get_value(slider_chart_w));
+            lv_label_set_text_fmt(lbl_c_h_val, "%d %%", (int)lv_slider_get_value(slider_chart_h));
+            lv_label_set_text_fmt(lbl_c_x_val, "%d px", (int)lv_slider_get_value(slider_chart_x));
+            lv_label_set_text_fmt(lbl_c_y_val, "%d px", (int)lv_slider_get_value(slider_chart_y));
+        };
+
+        // Breite
+        lv_obj_t* lbl_cw = lv_label_create(tab_chart); lv_label_set_text(lbl_cw, "Breite:");
+        lv_obj_set_style_text_font(lbl_cw, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cw, 10, cy);
+        
+        slider_chart_w = lv_slider_create(tab_chart);
+        lv_obj_set_size(slider_chart_w, 250, 20); lv_obj_set_pos(slider_chart_w, 120, cy+2);
+        lv_slider_set_range(slider_chart_w, 50, 100);
+        lv_slider_set_value(slider_chart_w, w->getChartWPct(), LV_ANIM_OFF);
+        
+        lbl_c_w_val = lv_label_create(tab_chart); lv_label_set_text_fmt(lbl_c_w_val, "%d %%", w->getChartWPct());
+        lv_obj_set_style_text_font(lbl_c_w_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_c_w_val, 400, cy);
+        lv_obj_add_event_cb(slider_chart_w, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        cy += 40;
+
+        // Höhe
+        lv_obj_t* lbl_ch = lv_label_create(tab_chart); lv_label_set_text(lbl_ch, "Hoehe:");
+        lv_obj_set_style_text_font(lbl_ch, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_ch, 10, cy);
+        
+        slider_chart_h = lv_slider_create(tab_chart);
+        lv_obj_set_size(slider_chart_h, 250, 20); lv_obj_set_pos(slider_chart_h, 120, cy+2);
+        lv_slider_set_range(slider_chart_h, 20, 100);
+        lv_slider_set_value(slider_chart_h, w->getChartHPct(), LV_ANIM_OFF);
+        
+        lbl_c_h_val = lv_label_create(tab_chart); lv_label_set_text_fmt(lbl_c_h_val, "%d %%", w->getChartHPct());
+        lv_obj_set_style_text_font(lbl_c_h_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_c_h_val, 400, cy);
+        lv_obj_add_event_cb(slider_chart_h, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        cy += 40;
+        
+        // Offset X
+        lv_obj_t* lbl_cx = lv_label_create(tab_chart); lv_label_set_text(lbl_cx, "X-Pos:");
+        lv_obj_set_style_text_font(lbl_cx, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cx, 10, cy);
+        
+        slider_chart_x = lv_slider_create(tab_chart);
+        lv_obj_set_size(slider_chart_x, 250, 20); lv_obj_set_pos(slider_chart_x, 120, cy+2);
+        lv_slider_set_range(slider_chart_x, -100, 100);
+        lv_slider_set_value(slider_chart_x, w->getChartXOfs(), LV_ANIM_OFF);
+        
+        lbl_c_x_val = lv_label_create(tab_chart); lv_label_set_text_fmt(lbl_c_x_val, "%d px", w->getChartXOfs());
+        lv_obj_set_style_text_font(lbl_c_x_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_c_x_val, 400, cy);
+        lv_obj_add_event_cb(slider_chart_x, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        cy += 40;
+        
+        // Offset Y
+        lv_obj_t* lbl_cy = lv_label_create(tab_chart); lv_label_set_text(lbl_cy, "Y-Pos:");
+        lv_obj_set_style_text_font(lbl_cy, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cy, 10, cy);
+        
+        // ==========================================
+        // FIX: Y-Offset Bereich auf -200 erweitert!
+        // ==========================================
+        slider_chart_y = lv_slider_create(tab_chart);
+        lv_obj_set_size(slider_chart_y, 250, 20); lv_obj_set_pos(slider_chart_y, 120, cy+2);
+        lv_slider_set_range(slider_chart_y, -200, 100);
+        lv_slider_set_value(slider_chart_y, w->getChartYOfs(), LV_ANIM_OFF);
+        
+        lbl_c_y_val = lv_label_create(tab_chart); lv_label_set_text_fmt(lbl_c_y_val, "%d px", w->getChartYOfs());
+        lv_obj_set_style_text_font(lbl_c_y_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_c_y_val, 400, cy);
+        lv_obj_add_event_cb(slider_chart_y, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        cy += 50;
+
+        // Min/Max Werte
+        lv_obj_t* lbl_cmin = lv_label_create(tab_chart); lv_label_set_text(lbl_cmin, "Min. Wert:");
+        lv_obj_set_style_text_font(lbl_cmin, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cmin, 10, cy+10);
+        ta_chart_min = lv_textarea_create(tab_chart); 
+        lv_obj_set_size(ta_chart_min, 150, 40); lv_obj_set_pos(ta_chart_min, 120, cy);
+        lv_textarea_set_placeholder_text(ta_chart_min, "Auto");
+        lv_textarea_set_text(ta_chart_min, w->getChartMin().c_str());
+        lv_textarea_set_one_line(ta_chart_min, true);
+
+        lv_obj_t* lbl_cmax = lv_label_create(tab_chart); lv_label_set_text(lbl_cmax, "Max. Wert:");
+        lv_obj_set_style_text_font(lbl_cmax, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cmax, 300, cy+10);
+        ta_chart_max = lv_textarea_create(tab_chart); 
+        lv_obj_set_size(ta_chart_max, 150, 40); lv_obj_set_pos(ta_chart_max, 420, cy);
+        lv_textarea_set_placeholder_text(ta_chart_max, "Auto");
+        lv_textarea_set_text(ta_chart_max, w->getChartMax().c_str());
+        lv_textarea_set_one_line(ta_chart_max, true);
+    }
 
     // --- KEYBOARD ---
     kb = lv_keyboard_create(action_overlay);
@@ -538,6 +664,9 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
         lv_obj_t* ta = lv_event_get_target(e);
         if(code == LV_EVENT_FOCUSED) {
             lv_keyboard_set_textarea(kb, ta);
+            if (ta == ta_chart_min || ta == ta_chart_max) lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
+            else lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+            
             lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
             lv_obj_align(edit_panel, LV_ALIGN_TOP_MID, 0, 10);
         }
@@ -551,6 +680,8 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     
     lv_obj_add_event_cb(ta_name, ta_focus_cb, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(ta_icon_search, ta_focus_cb, LV_EVENT_ALL, NULL);
+    if (ta_chart_min) lv_obj_add_event_cb(ta_chart_min, ta_focus_cb, LV_EVENT_ALL, NULL);
+    if (ta_chart_max) lv_obj_add_event_cb(ta_chart_max, ta_focus_cb, LV_EVENT_ALL, NULL);
     
     lv_obj_add_event_cb(kb, [](lv_event_t* e){
         lv_event_code_t code = lv_event_get_code(e);
@@ -580,6 +711,18 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
 
         current_widget->setColors(selected_color_on, selected_color_off);
         current_widget->setSnapToGrid(lv_obj_has_state(cb_snap, LV_STATE_CHECKED));
+        
+        if (current_widget->getType() == "sensor" && cb_chart) {
+            current_widget->setChartConfig(
+                lv_obj_has_state(cb_chart, LV_STATE_CHECKED),
+                lv_slider_get_value(slider_chart_w),
+                lv_slider_get_value(slider_chart_h),
+                lv_slider_get_value(slider_chart_x),
+                lv_slider_get_value(slider_chart_y),
+                String(lv_textarea_get_text(ta_chart_min)),
+                String(lv_textarea_get_text(ta_chart_max))
+            );
+        }
 
         lv_obj_del_async(action_overlay); action_overlay = nullptr;
     }, LV_EVENT_CLICKED, NULL);
