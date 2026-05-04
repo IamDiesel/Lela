@@ -3,12 +3,17 @@
 #include <WiFi.h>
 #include <LittleFS.h>
 #include "ViewHomeAssistant.h"
+#include <M5Unified.h> // NEU: Für den Display-Zugriff
+
+extern bool lvgl_port_lock(uint32_t timeout_ms);
+extern void lvgl_port_unlock(void);
 
 // Globale Variable für den chunk-weisen Datei-Upload
 static File fsUploadFile;
+static bool serverRunning = false; // Speichert den Status des Webservers
 
 void WebSetupLogic_Init() {
-    // --- HTML AUSLIEFERN ---
+    // --- HTML AUSLIEFERN (Setup) ---
     server.on("/", HTTP_GET, []() {
         String html = "<!DOCTYPE html><html lang='de'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
         html += "<title>Lela OS Setup</title>";
@@ -27,9 +32,6 @@ void WebSetupLogic_Init() {
         
         html += "<h1>Lela OS Setup</h1>";
 
-        // =========================================================
-        // NEU: Dashboard Backup & Wiederherstellung
-        // =========================================================
         html += "<h2>Dashboard Layout Backup</h2>";
         html += "<p style='font-size: 14px; color: #aaa;'>Sichere dein HA-Dashboard oder lade ein altes Layout (JSON) auf das Geraet hoch.</p>";
         html += "<a href='/export_ha' class='btn-export'>Backup herunterladen (.json)</a>";
@@ -41,7 +43,6 @@ void WebSetupLogic_Init() {
         html += "<input type='submit' value='Layout wiederherstellen' class='btn-import'>";
         html += "</form></div>";
 
-        // Reguläres Formular
         html += "<form action='/save' method='POST'>";
         html += "<h2>WLAN Einstellungen</h2>";
         html += "<label>SSID</label><input type='text' name='wifiSsid' value='" + wifiSsid + "'>";
@@ -72,8 +73,97 @@ void WebSetupLogic_Init() {
     });
 
     // =========================================================
-    // NEU: Export Handler
+    // NEU: SCREENSHOT FRONTEND (HTML)
     // =========================================================
+    server.on("/screenshot", HTTP_GET, []() {
+        String html = "<!DOCTYPE html><html lang='de'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+        html += "<title>Lela OS Screenshot</title>";
+        html += "<style>";
+        html += "body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; padding: 20px; max-width: 600px; margin: 0 auto; text-align: center; }";
+        html += "h1 { color: #00A0FF; margin-bottom: 30px; }";
+        html += ".btn { display:block; text-align:center; padding:15px; border-radius:6px; margin-bottom:15px; font-weight:bold; text-decoration:none; border:none; width:100%; box-sizing:border-box; font-size:18px; cursor:pointer; }";
+        html += ".btn-capture { background-color:#27AE60; color:white; }";
+        html += ".btn-capture:hover { background-color:#219150; }";
+        html += ".btn-exit { background-color:#AA0000; color:white; }";
+        html += ".btn-exit:hover { background-color:#880000; }";
+        html += "</style>";
+        html += "<script>";
+        html += "function exitScreenshot() { fetch('/exit_screenshot', {method: 'POST'}).then(() => { document.body.innerHTML = '<h2>Screenshot-Modus beendet.</h2><p style=\"color:#aaa;\">Du kannst dieses Fenster nun schliessen.</p>'; }); }";
+        html += "</script>";
+        html += "</head><body>";
+        html += "<h1>Lela OS Screenshot</h1>";
+        html += "<p style='color: #aaa; margin-bottom: 30px;'>Klicke auf den Button, um das aktuelle Bild vom Display herunterzuladen. (Achtung: Dies kann ca. 1-2 Sekunden dauern).</p>";
+        html += "<a href='/capture' class='btn btn-capture'>Bild aufnehmen & laden</a>";
+        html += "<button onclick='exitScreenshot()' class='btn btn-exit'>Screenshot-Modus Beenden</button>";
+        html += "</body></html>";
+        server.send(200, "text/html", html);
+    });
+
+    // =========================================================
+    // NEU: SCREENSHOT BACKEND (STREAMING)
+    // =========================================================
+    server.on("/capture", HTTP_GET, []() {
+        uint32_t width = 1280;
+        uint32_t height = 720;
+        uint32_t rowSize = width * 3; // 3840 Bytes pro Zeile (ist durch 4 teilbar, erfordert kein BMP-Padding!)
+        uint32_t imageSize = rowSize * height;
+        uint32_t fileSize = 54 + imageSize;
+
+        // Standard BMP Header
+        uint8_t header[54] = {
+            'B', 'M',
+            (uint8_t)(fileSize), (uint8_t)(fileSize >> 8), (uint8_t)(fileSize >> 16), (uint8_t)(fileSize >> 24),
+            0, 0, 0, 0,
+            54, 0, 0, 0,
+            40, 0, 0, 0,
+            (uint8_t)(width), (uint8_t)(width >> 8), (uint8_t)(width >> 16), (uint8_t)(width >> 24),
+            (uint8_t)(height), (uint8_t)(height >> 8), (uint8_t)(height >> 16), (uint8_t)(height >> 24),
+            1, 0,
+            24, 0,
+            0, 0, 0, 0,
+            (uint8_t)(imageSize), (uint8_t)(imageSize >> 8), (uint8_t)(imageSize >> 16), (uint8_t)(imageSize >> 24),
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0
+        };
+
+        server.setContentLength(fileSize);
+        server.sendHeader("Content-Disposition", "attachment; filename=\"lela_screenshot.bmp\"");
+        server.send(200, "image/bmp", "");
+
+        server.client().write(header, 54);
+
+        // Wir reservieren RAM nur für eine EINZIGE Pixelzeile! (Verhindert Abstürze durch Out-of-Memory)
+        uint8_t* rowBuffer = (uint8_t*)malloc(rowSize);
+        if (!rowBuffer) return;
+
+        // BMPs werden von unten nach oben (Bottom-Up) gespeichert
+        for (int y = height - 1; y >= 0; y--) {
+            lvgl_port_lock(portMAX_DELAY); // Grafik-Sperre für sauberes Bild
+            M5.Display.readRectRGB(0, y, width, 1, rowBuffer);
+            lvgl_port_unlock();
+
+            // M5 liefert RGB, BMP verlangt BGR -> Rot und Blau tauschen
+            for (int i = 0; i < width; i++) {
+                uint8_t r = rowBuffer[i*3];
+                rowBuffer[i*3] = rowBuffer[i*3 + 2];
+                rowBuffer[i*3 + 2] = r;
+            }
+            server.client().write(rowBuffer, rowSize);
+        }
+        free(rowBuffer);
+    });
+
+    // =========================================================
+    // NEU: EXIT SCREENSHOT ROUTE
+    // =========================================================
+    server.on("/exit_screenshot", HTTP_POST, []() {
+        pendingScreenshotMode = 2; // Signalisiert dem Frontend, das Overlay zu schließen
+        server.send(200, "text/plain", "OK");
+    });
+
+    // --- IMPORT / EXPORT ROUTEN ---
     server.on("/export_ha", HTTP_GET, []() {
         if (LittleFS.exists("/ha_config.json")) {
             File file = LittleFS.open("/ha_config.json", "r");
@@ -86,26 +176,16 @@ void WebSetupLogic_Init() {
         }
     });
 
-    // =========================================================
-    // NEU: Import Handler (Upload & Live-Reload)
-    // =========================================================
     server.on("/import_ha", HTTP_POST, []() {
-        // 1. Antwort an den Browser nach erfolgreichem Upload
         String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:sans-serif; background:#121212; color:#00A0FF; text-align:center; padding-top:50px;} a{color:#fff; text-decoration:none; padding:10px 20px; background:#2980B9; border-radius:5px; display:inline-block; margin-top:20px;}</style></head><body><h2>Backup erfolgreich geladen!</h2><p style='color:#fff;'>Das Dashboard aktualisiert sich jetzt live auf dem Display.</p><a href='/'>Zurueck zum Setup</a></body></html>";
         server.send(200, "text/html", html);
     }, []() {
-        // 2. Tatsaechlicher Upload-Prozess in Chunks
         HTTPUpload& upload = server.upload();
         if (upload.status == UPLOAD_FILE_START) {
-            // Alte Datei loeschen und neu anlegen
             fsUploadFile = LittleFS.open("/ha_config.json", "w");
         } else if (upload.status == UPLOAD_FILE_WRITE) {
-            // Datenstuecke in den Flash schreiben
-            if (fsUploadFile) {
-                fsUploadFile.write(upload.buf, upload.currentSize);
-            }
+            if (fsUploadFile) fsUploadFile.write(upload.buf, upload.currentSize);
         } else if (upload.status == UPLOAD_FILE_END) {
-            // Datei schliessen und Live-Reload des Displays antriggern!
             if (fsUploadFile) {
                 fsUploadFile.close();
                 ViewHomeAssistant::pendingHaReload = true; 
@@ -172,14 +252,30 @@ void WebSetupLogic_Update() {
             dnsServer.start(53, "*", apIP);
             
             server.begin();
+            serverRunning = true;
         } else if (webSetupMode == 2) {
             server.begin();
+            serverRunning = true;
         }
     }
 
-    if (webSetupMode > 0) {
+    // --- NEU: Webserver intelligent starten / stoppen ---
+    if (pendingScreenshotMode == 1 && !serverRunning) {
+        server.begin();
+        serverRunning = true;
+    }
+
+    if (serverRunning) {
         server.handleClient();
         if (webSetupMode == 1) dnsServer.processNextRequest();
-        if (millis() - webSetupStartTime > 300000) ESP.restart();
+        
+        // Timeout nach 5 Minuten im Setup Mode
+        if (webSetupMode > 0 && millis() - webSetupStartTime > 300000) ESP.restart();
+
+        // Webserver sauber beenden, wenn Screenshot UND Setup Mode inaktiv sind
+        if (webSetupMode == 0 && pendingScreenshotMode == 0) {
+            server.stop();
+            serverRunning = false;
+        }
     }
 }

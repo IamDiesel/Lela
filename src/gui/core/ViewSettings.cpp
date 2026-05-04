@@ -45,7 +45,7 @@ static lv_obj_t * btn_cancel_mac;
 static lv_obj_t * btn_rescan_mac; 
 static lv_obj_t * btn_continue_mac;
 
-// NEU: Pop-up Variablen fuer die Stream Einstellungen
+// Pop-up Variablen fuer die Stream Einstellungen
 static lv_obj_t* stream_overlay = nullptr;
 static lv_obj_t* ta_ip = nullptr;
 static lv_obj_t* ta_vid = nullptr;
@@ -70,9 +70,6 @@ static lv_obj_t* create_helper_cont(lv_obj_t* parent, int height) { lv_obj_t * c
 static void btn_back_cb(lv_event_t * e) { playToneI2S(800, 100, true); gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_MOVE_BOTTOM); }
 static void btn_stop_screenshot_cb(lv_event_t * e) { playToneI2S(600, 100, true); lv_obj_add_flag(qr_overlay, LV_OBJ_FLAG_HIDDEN); pendingScreenshotMode = 2; }
 
-// =========================================================
-// NEU: Dialog fuer Stream-Einstellungen
-// =========================================================
 static void stream_expert_sw_cb(lv_event_t* e) {
     bool expert = lv_obj_has_state(sw_expert, LV_STATE_CHECKED);
     if (expert) {
@@ -257,7 +254,7 @@ static void easter_egg_cb(lv_event_t * e) {
         String qrData = "http://" + ipStr + "/screenshot";
         lv_qrcode_update(qr_screenshot, qrData.c_str(), qrData.length()); 
         
-        if (lbl_qr_ip) { lv_label_set_text_fmt(lbl_qr_ip, "Link: http://%s", ipStr.c_str()); lv_obj_align_to(lbl_qr_ip, qr_screenshot, LV_ALIGN_OUT_BOTTOM_MID, 0, 20); }
+        if (lbl_qr_ip) { lv_label_set_text_fmt(lbl_qr_ip, "Link: http://%s/screenshot", ipStr.c_str()); lv_obj_align_to(lbl_qr_ip, qr_screenshot, LV_ALIGN_OUT_BOTTOM_MID, 0, 20); }
         
         lv_obj_clear_flag(qr_overlay, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(qr_overlay);
         pendingScreenshotMode = 1; 
@@ -355,7 +352,7 @@ lv_obj_t* ViewSettings::build() {
 
     create_header(scroll_cont, LV_SYMBOL_VIDEO " BABY-MONITOR & AUDIO");
     
-    // NEU: Pop-up Button fuer die IP-Stream Einstellungen
+    // Pop-up Button fuer die IP-Stream Einstellungen
     lv_obj_t * btn_stream_set = lv_btn_create(scroll_cont); 
     lv_obj_set_size(btn_stream_set, 400, 60); 
     lv_obj_set_style_bg_color(btn_stream_set, lv_color_hex(0x8E44AD), 0); 
@@ -506,6 +503,16 @@ lv_obj_t* ViewSettings::build() {
 void ViewSettings::update() {
     if (gui.getCurrentScreen() != SCREEN_SETTINGS) return;
 
+    // ====================================================================
+    // NEU: Polling fuer das Schliessen-Event aus dem Webserver
+    // ====================================================================
+    if (pendingScreenshotMode == 2) {
+        pendingScreenshotMode = 0; // Direkt zuruecksetzen
+        if (qr_overlay && !lv_obj_has_flag(qr_overlay, LV_OBJ_FLAG_HIDDEN)) {
+            lv_obj_add_flag(qr_overlay, LV_OBJ_FLAG_HIDDEN); // Overlay sauber ausblenden
+        }
+    }
+
     if (webSetupMode > 0 || pendingWebSetupMode > 0) return;
 
     if (!lv_obj_has_flag(scan_overlay, LV_OBJ_FLAG_HIDDEN)) {
@@ -535,7 +542,6 @@ void ViewSettings::update() {
     if (millis() - lastInfoUpdate > 1000) { 
         lastInfoUpdate = millis();
 
-        // 1. BLE Info
         String bleInfo = "Matte: ";
         bleInfo += matEnabled ? (connected ? "Verbunden" : "Getrennt") : "Deaktiviert";
         bleInfo += " ("; bleInfo += connected ? -60 : 0; bleInfo += " dBm)\n";
@@ -549,7 +555,6 @@ void ViewSettings::update() {
         
         lv_label_set_text(text_ble_info, bleInfo.c_str());
 
-        // 2. KUGELSICHERER String Builder für System Info (ohne snprintf!)
         uint32_t sec = (millis() - startTime) / 1000;
         
         String sysInfo = "WLAN: ";
