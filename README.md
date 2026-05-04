@@ -148,6 +148,41 @@ Wenn das Gerät zum ersten Mal startet (oder sein konfiguriertes WLAN nicht find
 
 ---
 
-## 7. Lizenz
+### 7. Eigene Icons generieren (Icon Studio)
+Im Verzeichnis python_lvgl_mdi_icon_studio liegt ein Python-Tool (iconConverter.py), mit dem die LVGL-Icon-Datei (lela_icons.c) komfortabel um eigene Material Design Icons erweitert werden kann.
+
+<img width="1144" height="827" alt="image" src="https://github.com/user-attachments/assets/6187b960-2d38-4d36-ad63-866d4d1e6975" />
+
+Vorbereitungen
+Damit das Skript funktioniert, müssen folgende Abhängigkeiten auf dem PC installiert sein:
+
+Node.js (wird für das LVGL-Font-Tool npx benötigt).
+
+Python 3 inkl. der Bibliothek PyQt5.
+
+Installation via Terminal: pip install PyQt5
+
+Lade die Font- und CSS-Dateien herunter:
+
+Gehe auf das Repo Templarian/MaterialDesign-Webfont (master)
+
+Lade die Datei materialdesignicons-webfont.ttf (aus dem Ordner fonts) herunter.
+
+Lade die Datei materialdesignicons.css (aus dem Ordner css) herunter.
+
+Lege beide Dateien direkt in denselben Ordner wie das iconConverter.py Skript.
+
+Icons kompilieren
+Führe das Skript aus: python iconConverter.py
+
+Es öffnet sich eine Benutzeroberfläche (Lela OS - Icon Studio). Wähle dort die gewünschten Icons aus.
+
+Nach dem Bestätigen generiert das Skript über npx lv_font_conv vollautomatisch eine neue C-Datei (lela_icons.c).
+
+Ersetze die bestehende lela_icons.c im Projekt (src/gui/fonts/) durch die neu generierte Datei.
+
+---
+
+## 8. Lizenz
 
 Dieses Projekt ist unter der **MIT-Lizenz** lizenziert. Es darf für private und kommerzielle Zwecke frei verwendet, modifiziert und weitergegeben werden, sofern der ursprüngliche Copyright-Hinweis beibehalten wird. Die Nutzung erfolgt ohne Gewährleistung.
