@@ -6,6 +6,10 @@ Lela OS ist eine auf FreeRTOS und LVGL basierende Smart-Home-Betriebssystemumgeb
 <img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/0744ee97-ae6c-481b-a7cc-810118674257" />
 <img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/248af16d-70d8-421c-b933-fef771af4c68" />
 <img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/1e9dc37d-7b92-448b-aa02-4b974506b825" />
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/76344272-6600-479e-a90e-29b8496e24bb" />
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/76344272-6600-479e-a90e-29b8496e24bb" />
+
+
 
 
 
