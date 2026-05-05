@@ -10,3 +10,4 @@
 
 # Secrets ignorieren
 src/config/secrets.h
+AGENTS.md
