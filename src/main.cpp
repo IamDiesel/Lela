@@ -5,6 +5,39 @@
 #include <Wire.h>
 #include <WiFi.h>
 
+// ==============================================================
+// FAIL-SAFE USB-HOST INTEGRATION (CDC-ACM VCP)
+// ==============================================================
+#if __has_include(<USBHostSerial.h>)
+    #include <USBHostSerial.h>
+    USBHostSerial dongleUSB;
+
+    // Custom Stream-Adapter für die Bibliothek
+    class UsbStreamWrapper : public Stream {
+    private:
+        USBHostSerial* _usb;
+    public:
+        UsbStreamWrapper(USBHostSerial* usb) : _usb(usb) {}
+        int available() override { return _usb->available(); }
+        int read() override { return _usb->read(); }
+        
+        // FIX: Die Bibliothek hat kein peek() oder flush(), 
+        // daher geben wir Standard-Dummy-Werte zurück, um Compile-Fehler zu vermeiden.
+        int peek() override { return -1; } 
+        void flush() override { /* Nichts tun */ }
+        
+        size_t write(uint8_t c) override { return _usb->write(c); }
+        size_t write(const uint8_t *buffer, size_t size) override { return _usb->write(buffer, size); }
+    };
+
+    // Die Instanz unseres Adapters
+    UsbStreamWrapper dongleStream(&dongleUSB);
+#else
+    // Fallback auf Serial2, falls die Library nicht kompiliert
+    HardwareSerial& dongleStream = Serial2; 
+#endif
+// ==============================================================
+
 #include "LVGL_Driver.h" 
 #include "SharedData.h"
 #include "SystemLogic.h"
@@ -13,6 +46,7 @@
 #include "WebSetupLogic.h" 
 #include "VideoLogic.h"    
 #include "HaWebsocketLogic.h" 
+#include "BleLogic.h"
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
 extern void lvgl_port_unlock(void);
@@ -36,23 +70,32 @@ void setup() {
     auto cfg = M5.config();
     M5.begin(cfg);
     delay(500); 
-    //M5.Display.setRefreshRate(60);
+
     Data_Init();
     
-    // FIX: Saubere Helligkeitsberechnung direkt beim Start
+    // Saubere Helligkeitsberechnung direkt beim Start
     M5.Display.setBrightness((brightnessPercent * 255) / 100);
 
-    /*WiFi.setPins(BOARD_SDIO_ESP_HOSTED_CLK, BOARD_SDIO_ESP_HOSTED_CMD, BOARD_SDIO_ESP_HOSTED_D0, 
-                 BOARD_SDIO_ESP_HOSTED_D1, BOARD_SDIO_ESP_HOSTED_D2, BOARD_SDIO_ESP_HOSTED_D3, 
-                 BOARD_SDIO_ESP_HOSTED_RESET);*/
-    // ==============================================================
-    // FIX: Die M5Tab5 WLAN-Pins (aus deinem Snippet)
-    // ==============================================================
     Serial.println("[SYSTEM] Konfiguriere WLAN-Pins fuer M5Tab5...");
     WiFi.setPins(12, 13, 11, 10, 9, 8, 15);
+
     // ==============================================================
+    // BLE LOGIK & DONGLE INITIALISIERUNG
+    // ==============================================================
+    BleLogic_Init();
 
-
+    #if __has_include(<USBHostSerial.h>)
+        Serial.println("[USB] Starte USBHostSerial Treiber...");
+        // Die Bibliothek verlangt zwingend 4 Parameter (Baudrate, DataBits, Parity, StopBits)
+        // 115200 Baud, 8 Datenbits, Keine Parität (0), 1 Stoppbit
+        dongleUSB.begin(115200, 8, 0, 1);
+        BleLogic_SetDongleStream(&dongleStream);
+    #else
+        Serial.println("[USB] WARNUNG: Library fehlt. Nutze Dummy-Serial.");
+        dongleStream.begin(115200);
+        BleLogic_SetDongleStream(&dongleStream);
+    #endif
+    // ==============================================================
 
     Serial.println("[AUDIO-DIAG] Erzwinge I2S/I2C Hardware-Reset...");
     M5.Speaker.end();
@@ -180,5 +223,11 @@ void loop() {
     
     SystemLogic_Update(); 
     WebSetupLogic_Update();
-    delay(5);
+
+    // CPU-Drosselung (Smart Sleep)
+    if (M5.Display.getBrightness() == 0) {
+        delay(100); 
+    } else {
+        delay(5);
+    }
 }

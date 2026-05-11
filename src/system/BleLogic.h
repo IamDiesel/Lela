@@ -1,13 +1,12 @@
 #pragma once
 #include <Arduino.h>
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+#include <Stream.h>
 
-// Initialisiert die BLE Hardware und Scanner
+// Initialisiert Mutexe
 void BleLogic_Init();
 
-// Führt die kompletten BLE-Abläufe aus. 
-// Gibt 'true' zurück, wenn SystemLogic danach pausieren soll (z.B. im Setup-Scan)
+// Setzt den USB-Stream (den T-Dongle)
+void BleLogic_SetDongleStream(Stream* stream);
+
+// Führt die Logik aus (Senden/Empfangen von JSON)
 bool BleLogic_Update();
