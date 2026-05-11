@@ -7,6 +7,7 @@
 #include "SharedData.h"
 #include <WiFi.h>
 #include <HTTPClient.h>      
+#include <ArduinoJson.h>
 #include "ViewBaby.h"        
 #include <driver/jpeg_decode.h>
 
@@ -177,22 +178,89 @@ static void videoTask(void * pvParameters) {
                     if (ipEnd == -1) ipEnd = url.indexOf('/', ipStart);
                     if (ipEnd != -1) {
                         String ipStr = url.substring(ipStart, ipEnd);
+                        
+                        int reqW = 0, reqH = 0;
+                        if (camHackMode == 1) { reqW = 320; reqH = 240; }
+                        else if (camHackMode == 2) { reqW = 480; reqH = 360; }
+                        else if (camHackMode == 3) { reqW = 640; reqH = 360; }
+                        else if (camHackMode == 4) { reqW = 640; reqH = 480; }
+                        else if (camHackMode == 5) { reqW = 800; reqH = 450; }
+                        else if (camHackMode == 6) { reqW = 800; reqH = 600; }
+                        else if (camHackMode == 7) { reqW = 1024; reqH = 768; }
+                        else if (camHackMode == 8) { reqW = 1280; reqH = 720; }
+                        else if (camHackMode == 9) { reqW = 1280; reqH = 960; }
+                        
+                        int finalW = reqW;
+                        int finalH = reqH;
+
+                        // 1. Verfuegbare Aufloesungen abrufen
+                        HTTPClient httpRes;
+                        httpRes.setTimeout(2000);
+                        httpRes.begin("http://" + ipStr + ":8080/api/v1/camera/resolutions?_=0");
+                        httpRes.addHeader("accept", "application/json");
+                        int resCode = httpRes.GET();
+                        
+                        if (resCode == HTTP_CODE_OK) {
+                            String resPayload = httpRes.getString();
+                            JsonDocument doc; 
+                            DeserializationError err = deserializeJson(doc, resPayload);
+                            
+                            if (!err && doc.containsKey("resolutions")) {
+                                JsonArray resArray = doc["resolutions"];
+                                bool exactMatch = false;
+                                int bestArea = 0;
+                                int fallbackW = 0, fallbackH = 0;
+                                int reqArea = reqW * reqH;
+                                
+                                int minArea = 99999999;
+                                int minW = 0, minH = 0;
+
+                                for (JsonVariant v : resArray) {
+                                    String rStr = v.as<String>();
+                                    int xIdx = rStr.indexOf('x');
+                                    if (xIdx != -1) {
+                                        int w = rStr.substring(0, xIdx).toInt();
+                                        int h = rStr.substring(xIdx + 1).toInt();
+                                        int area = w * h;
+
+                                        // Kleinstmoegliche Aufloesung merken (Fallback fuer extreme Faelle)
+                                        if (area < minArea && area > 0) { 
+                                            minArea = area; minW = w; minH = h; 
+                                        }
+
+                                        if (w == reqW && h == reqH) {
+                                            exactMatch = true;
+                                            break;
+                                        }
+
+                                        // Suche die groesste Aufloesung, die noch kleiner/gleich der angeforderten ist
+                                        if (area <= reqArea && area > bestArea) {
+                                            bestArea = area;
+                                            fallbackW = w;
+                                            fallbackH = h;
+                                        }
+                                    }
+                                }
+
+                                if (!exactMatch) {
+                                    if (bestArea > 0) {
+                                        finalW = fallbackW; finalH = fallbackH;
+                                    } else if (minW > 0) {
+                                        finalW = minW; finalH = minH; // Absoluter Fallback
+                                    }
+                                }
+                            }
+                        }
+                        httpRes.end();
+
+                        // 2. Aufloesung anwenden
                         HTTPClient httpHack;
                         httpHack.setTimeout(2000);
                         httpHack.begin("http://" + ipStr + ":8080/api/v1/camera/change-resolution");
                         httpHack.addHeader("accept", "application/json");
                         httpHack.addHeader("content-type", "application/x-www-form-urlencoded");
 
-                        String payload = "";
-                        if (camHackMode == 1) { payload = "{width:320,height:240}"; }
-                        else if (camHackMode == 2) { payload = "{width:480,height:360}"; }
-                        else if (camHackMode == 3) { payload = "{width:640,height:360}"; }
-                        else if (camHackMode == 4) { payload = "{width:640,height:480}"; }
-                        else if (camHackMode == 5) { payload = "{width:800,height:450}"; }
-                        else if (camHackMode == 6) { payload = "{width:800,height:600}"; }
-                        else if (camHackMode == 7) { payload = "{width:1024,height:768}"; }
-                        else if (camHackMode == 8) { payload = "{width:1280,height:720}"; }
-                        else if (camHackMode == 9) { payload = "{width:1280,height:960}"; }
+                        String payload = "{width:" + String(finalW) + ",height:" + String(finalH) + "}";
 
                         httpHack.POST(payload);
                         httpHack.end();
