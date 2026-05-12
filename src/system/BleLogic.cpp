@@ -6,74 +6,87 @@ static Stream* dongleStream = nullptr;
 static String dongleBuffer = "";
 static bool currentlyScanning = false;
 static uint32_t lastConnectAttempt = 0;
-static bool connectionSent = false;
+
+QueueHandle_t bleUpdateQueue = NULL;
 
 void BleLogic_Init() {
     if (bleMutex == NULL) bleMutex = xSemaphoreCreateMutex();
+    dongleBuffer.reserve(2048); 
+    
+    // Erstelle den Briefkasten fuer 60 gleichzeitige UI-Updates
+    if (bleUpdateQueue == NULL) {
+        bleUpdateQueue = xQueueCreate(60, sizeof(BleUpdateEvent));
+    }
 }
 
 void BleLogic_SetDongleStream(Stream* stream) {
     dongleStream = stream;
-    if (dongleStream) {
-        Serial.println("[BLE] >>> USB Dongle Interface initialisiert.");
-    }
+    if (dongleStream) Serial.println("[BLE] >>> USB Dongle Interface initialisiert.");
 }
 
 void ParseDongleJSON(String jsonStr) {
-    // Echtzeit-Debug im Serial Monitor
-    Serial.print("[DONGLE <<] ");
-    Serial.println(jsonStr);
-
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, jsonStr);
-    if (error) {
-        Serial.println("[DONGLE !!] JSON Parse-Fehler");
-        return;
-    }
+    if (error) return;
 
     String event = doc["event"] | "";
 
-    // 1. Geräte im Scan gefunden (Beacon)
     if (event == "beacon") {
         String mac = doc["mac"] | "";
         String name = doc["name"] | "Unbekannt";
         int rssi = doc["rssi"] | -100;
 
         if (isSetupScanning) {
-            if (bleMutex != NULL && xSemaphoreTake(bleMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-                bool exists = false;
-                for (int i = 0; i < scanResultCount; i++) {
-                    if (scanResultMacs[i].equalsIgnoreCase(mac)) {
+            bool exists = false;
+            
+            // 1. Pruefen, ob wir das Geraet schon kennen
+            for (int i = 0; i < scanResultCount; i++) {
+                if (scanResultMacs[i].equalsIgnoreCase(mac)) {
+                    exists = true;
+                    
+                    // HYSTERESE-FILTER: Nur updaten, wenn Abweichung >= 3 dBm 
+                    // oder wenn der Name nachtraeglich geladen wurde!
+                    bool nameChanged = (scanResultNames[i] == "Unbekannt" && name != "Unbekannt" && name != "");
+                    
+                    if (abs(scanResultRssi[i] - rssi) >= 3 || nameChanged) {
                         scanResultRssi[i] = rssi;
-                        exists = true; break;
+                        if (nameChanged) scanResultNames[i] = name;
+                        
+                        // Paket packen und non-blocking in die Queue werfen
+                        BleUpdateEvent ev;
+                        ev.isClear = false; ev.isNew = false; ev.index = i;
+                        strncpy(ev.device.mac, scanResultMacs[i].c_str(), 17); ev.device.mac[17] = '\0';
+                        strncpy(ev.device.name, scanResultNames[i].c_str(), 31); ev.device.name[31] = '\0';
+                        ev.device.rssi = rssi;
+                        
+                        xQueueSend(bleUpdateQueue, &ev, 0); 
                     }
+                    break;
                 }
-                if (!exists && scanResultCount < 20) {
+            }
+            
+            // 2. Neues Geraet gefunden
+            if (!exists && scanResultCount < MAX_LIST_DEVICES) {
+                BleUpdateEvent ev;
+                ev.isClear = false; ev.isNew = true; ev.index = scanResultCount;
+                strncpy(ev.device.mac, mac.c_str(), 17); ev.device.mac[17] = '\0';
+                strncpy(ev.device.name, name.c_str(), 31); ev.device.name[31] = '\0';
+                ev.device.rssi = rssi;
+                
+                // Wir speichern das Geraet intern NUR, wenn das Display das Paket auch annehmen konnte
+                if (xQueueSend(bleUpdateQueue, &ev, 0) == pdTRUE) {
                     scanResultMacs[scanResultCount] = mac;
                     scanResultNames[scanResultCount] = name;
                     scanResultRssi[scanResultCount] = rssi;
                     scanResultCount++;
                 }
-
-                // Generiere die Liste für das LVGL-Widget (Format: Name\nName\n...)
-                String rollerList = "";
-                for(int i=0; i<scanResultCount; i++) {
-                    rollerList += scanResultNames[i] + " [" + scanResultMacs[i] + "]";
-                    if (i < scanResultCount - 1) rollerList += "\n";
-                }
-                strncpy(scanOptionsStr, rollerList.c_str(), sizeof(scanOptionsStr)-1);
-                requestRollerUpdate = true; // Signal an ViewSettings.cpp
-                xSemaphoreGive(bleMutex);
             }
         }
 
-        // Hintergrund-Suche für Kippy
         if (kippyEnabled && mac.equalsIgnoreCase(savedKippyMac)) {
-            catRssi = rssi;
-            lastCatSeenTime = millis();
+            catRssi = rssi; lastCatSeenTime = millis();
         }
     } 
-    // 2. Sensordaten empfangen
     else if (event == "sensor") {
         String mac = doc["mac"] | "";
         if (matEnabled && !useMqttForMat && mac.equalsIgnoreCase(savedMatMac)) {
@@ -85,47 +98,132 @@ void ParseDongleJSON(String jsonStr) {
 }
 
 bool BleLogic_Update() {
-    if (!dongleStream) return false;
-
-    // 1. Daten vom USB-Stick lesen
-    while (dongleStream->available()) {
-        char c = dongleStream->read();
-        if (c == '\n') {
-            ParseDongleJSON(dongleBuffer);
-            dongleBuffer = "";
-        } else if (c >= 32) { // Steuerzeichen ignorieren
-            dongleBuffer += c;
+    // 1. Timeout (40s)
+    if (isSetupScanning) {
+        if ((millis() - setupScanStartTime) >= 40000) {
+            BleLogic_StopSetupScan();
         }
     }
 
-    // 2. Scan-Steuerung
+    if (!dongleStream) return false;
+
+    // ==============================================================
+    // NEU: DIE DROSSELKLAPPE (Throttling)
+    // ==============================================================
+    int parsed_lines = 0; 
+    
+    // Anstatt die CPU zu blockieren, verarbeiten wir MAXIMAL 3 JSON-Zeilen.
+    // Danach brechen wir ab und geben der Grafikkarte Zeit, das UI zu zeichnen!
+    // Im naechsten Durchlauf (Millisekunden spaeter) machen wir weiter.
+    while (dongleStream->available() && parsed_lines < 3) {
+        char c = dongleStream->read();
+        if (c == '\n') { 
+            ParseDongleJSON(dongleBuffer); 
+            dongleBuffer = ""; 
+            parsed_lines++; // Zaehler erhoehen!
+        } 
+        else if (c >= 32) { 
+            dongleBuffer += c; 
+        }
+    }
+
+    // Hardware Scanning Befehle
     bool needScan = isSetupScanning || kippyEnabled;
     if (needScan && !currentlyScanning) {
-        String cmd = "{\"cmd\":\"scan_start\"}\n";
-        dongleStream->print(cmd);
-        Serial.print("[DONGLE >>] "); Serial.print(cmd);
+        dongleStream->print("{\"cmd\":\"scan_start\"}\n");
         currentlyScanning = true;
     } else if (!needScan && currentlyScanning) {
         dongleStream->println("{\"cmd\":\"scan_stop\"}");
-        Serial.println("[DONGLE >>] scan_stop");
         currentlyScanning = false;
     }
 
-    // 3. Verbindungs-Logik (Matte)
-    if (matEnabled && !useMqttForMat && savedMatMac.length() > 0 && !connected) {
-        if (millis() - lastConnectAttempt > 10000) { // Alle 10s versuchen
+    // Sensor Reconnect (Nur wenn Fenster geschlossen)
+    if (setupScanMode == 0 && matEnabled && !useMqttForMat && savedMatMac.length() > 0 && !connected) {
+        if (millis() - lastConnectAttempt > 10000) { 
             lastConnectAttempt = millis();
             JsonDocument doc;
-            doc["cmd"] = "connect";
-            doc["mac"] = savedMatMac;
+            doc["cmd"] = "connect"; doc["mac"] = savedMatMac;
             doc["service"] = "FFF0"; doc["char"] = "FFF1";
             doc["offset"] = 5; doc["length"] = 2; doc["big_endian"] = true;
-            
             String cmd; serializeJson(doc, cmd);
             dongleStream->println(cmd);
-            Serial.print("[DONGLE >>] "); Serial.println(cmd);
         }
     }
 
     return isSetupScanning;
+}
+
+// ==============================================================
+// GUI SCHNITTSTELLEN
+// ==============================================================
+
+void BleLogic_StartSetupScan(int mode, bool clearList) {
+    if (dongleStream) {
+        if (savedMatMac.length() > 0) {
+            JsonDocument doc; doc["cmd"] = "disconnect"; doc["mac"] = savedMatMac;
+            String cmdStr; serializeJson(doc, cmdStr);
+            dongleStream->println(cmdStr);
+        }
+        connected = false;
+
+        if (currentlyScanning) {
+            dongleStream->println("{\"cmd\":\"scan_stop\"}");
+            currentlyScanning = false;
+        }
+        delay(20); 
+    }
+
+    if (clearList) {
+        scanResultCount = 0;
+        BleUpdateEvent ev;
+        ev.isClear = true; // Signal an die UI: Loesche die Tabelle!
+        xQueueSend(bleUpdateQueue, &ev, 0);
+    }
+    
+    setupScanMode = mode;
+    setupScanStartTime = millis();
+    isSetupScanning = true;
+    scanJustFinished = false;
+}
+
+void BleLogic_StopSetupScan() {
+    isSetupScanning = false;
+    scanJustFinished = true;
+    if (dongleStream && currentlyScanning) {
+        dongleStream->println("{\"cmd\":\"scan_stop\"}");
+        currentlyScanning = false;
+    }
+}
+
+void BleLogic_CloseSetupWindow() {
+    BleLogic_StopSetupScan();
+    setupScanMode = 0; 
+    scanJustFinished = false;
+    lastConnectAttempt = 0; 
+}
+
+void BleLogic_SaveDevice(int index) {
+    if (index >= 0 && index < scanResultCount) {
+        if (setupScanMode == 1) {
+            savedMatMac = scanResultMacs[index];
+            preferences.begin("catmat", false); preferences.putString("macM", savedMatMac); preferences.end();
+        } else if (setupScanMode == 2) {
+            savedKippyMac = scanResultMacs[index];
+            preferences.begin("catmat", false); preferences.putString("macK", savedKippyMac); preferences.end();
+        }
+    }
+    BleLogic_CloseSetupWindow(); 
+}
+
+void BleLogic_GetScanStatus(char* infoBuf, size_t maxLen, bool& isScanning, bool& showSaveBtn) {
+    isScanning = isSetupScanning;
+    showSaveBtn = (scanResultCount > 0);
+    
+    if (isSetupScanning) {
+        uint32_t elapsed = millis() - setupScanStartTime;
+        uint32_t restzeit = (elapsed >= 40000) ? 0 : (40000 - elapsed) / 1000;
+        snprintf(infoBuf, maxLen, "Sucht... (%ds)\nGefunden: %d", restzeit, scanResultCount);
+    } else {
+        snprintf(infoBuf, maxLen, "Suche beendet.\nGefunden: %d", scanResultCount);
+    }
 }
