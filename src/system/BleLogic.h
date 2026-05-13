@@ -3,7 +3,7 @@
 #include <Stream.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
-#include "SharedData.h" // Laedt MAX_SCAN_DEVICES
+#include "SharedData.h" // WICHTIG: Damit MAX_SCAN_DEVICES bekannt ist
 
 // Das Datenpaket, das durch die FreeRTOS Queue geschickt wird
 struct BleDevice {
@@ -35,3 +35,6 @@ void BleLogic_SaveDevice(int index);
 void BleLogic_GetScanStatus(char* infoBuf, size_t maxLen, bool& isScanning, bool& showSaveBtn);
 void BleLogic_SendAlarmOn();
 void BleLogic_SendAlarmOff();
+
+// NEU: Befehl für die Helligkeitssynchronisation
+void BleLogic_SetBrightness(int value);

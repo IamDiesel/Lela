@@ -1,4 +1,5 @@
 #include "BleLogic.h"
+#include "SharedData.h"
 #include <ArduinoJson.h>
 
 static Stream* dongleStream = nullptr; 
@@ -38,16 +39,20 @@ void ParseDongleJSON(String jsonStr) {
         if (isSetupScanning) {
             bool exists = false;
             
+            // 1. Pruefen, ob wir das Geraet schon kennen
             for (int i = 0; i < scanResultCount; i++) {
                 if (scanResultMacs[i].equalsIgnoreCase(mac)) {
                     exists = true;
                     
+                    // HYSTERESE-FILTER: Nur updaten, wenn Abweichung >= 3 dBm 
+                    // oder wenn der Name nachtraeglich geladen wurde!
                     bool nameChanged = (scanResultNames[i] == "Unbekannt" && name != "Unbekannt" && name != "");
                     
                     if (abs(scanResultRssi[i] - rssi) >= 3 || nameChanged) {
                         scanResultRssi[i] = rssi;
                         if (nameChanged) scanResultNames[i] = name;
                         
+                        // Paket packen und non-blocking in die Queue werfen
                         BleUpdateEvent ev;
                         ev.isClear = false; ev.isNew = false; ev.index = i;
                         strncpy(ev.device.mac, scanResultMacs[i].c_str(), 17); ev.device.mac[17] = '\0';
@@ -60,7 +65,7 @@ void ParseDongleJSON(String jsonStr) {
                 }
             }
             
-            // FIX: MAX_SCAN_DEVICES verwenden!
+            // 2. Neues Geraet gefunden (Korrekt mit MAX_SCAN_DEVICES)
             if (!exists && scanResultCount < MAX_SCAN_DEVICES) {
                 BleUpdateEvent ev;
                 ev.isClear = false; ev.isNew = true; ev.index = scanResultCount;
@@ -68,6 +73,7 @@ void ParseDongleJSON(String jsonStr) {
                 strncpy(ev.device.name, name.c_str(), 31); ev.device.name[31] = '\0';
                 ev.device.rssi = rssi;
                 
+                // Wir speichern das Geraet intern NUR, wenn das Display das Paket auch annehmen konnte
                 if (xQueueSend(bleUpdateQueue, &ev, 0) == pdTRUE) {
                     scanResultMacs[scanResultCount] = mac;
                     scanResultNames[scanResultCount] = name;
@@ -92,6 +98,7 @@ void ParseDongleJSON(String jsonStr) {
 }
 
 bool BleLogic_Update() {
+    // 1. Timeout (40s)
     if (isSetupScanning) {
         if ((millis() - setupScanStartTime) >= 40000) {
             BleLogic_StopSetupScan();
@@ -100,6 +107,7 @@ bool BleLogic_Update() {
 
     if (!dongleStream) return false;
 
+    // DIE DROSSELKLAPPE (Throttling)
     int parsed_lines = 0; 
     while (dongleStream->available() && parsed_lines < 3) {
         char c = dongleStream->read();
@@ -113,6 +121,7 @@ bool BleLogic_Update() {
         }
     }
 
+    // Hardware Scanning Befehle
     bool needScan = isSetupScanning || kippyEnabled;
     if (needScan && !currentlyScanning) {
         dongleStream->print("{\"cmd\":\"scan_start\"}\n");
@@ -122,6 +131,7 @@ bool BleLogic_Update() {
         currentlyScanning = false;
     }
 
+    // Sensor Reconnect (Nur wenn Fenster geschlossen)
     if (setupScanMode == 0 && matEnabled && !useMqttForMat && savedMatMac.length() > 0 && !connected) {
         if (millis() - lastConnectAttempt > 10000) { 
             lastConnectAttempt = millis();
@@ -156,7 +166,7 @@ void BleLogic_StartSetupScan(int mode, bool clearList) {
     if (clearList) {
         scanResultCount = 0;
         BleUpdateEvent ev;
-        ev.isClear = true; 
+        ev.isClear = true; // Signal an die UI: Loesche die Tabelle!
         xQueueSend(bleUpdateQueue, &ev, 0);
     }
     
@@ -219,5 +229,21 @@ void BleLogic_SendAlarmOff() {
     if (dongleStream) {
         dongleStream->println("{\"cmd\":\"alarm_off\"}");
         Serial.println("[BLE] >>> Dongle-Alarm DEAKTIVIERT");
+    }
+}
+
+// NEU: Helligkeit an den Dongle senden
+void BleLogic_SetBrightness(int value) {
+    if (dongleStream) {
+        if (value < 0) value = 0;
+        if (value > 100) value = 100;
+        
+        JsonDocument doc;
+        doc["cmd"] = "brightness";
+        doc["value"] = value;
+        String cmdStr;
+        serializeJson(doc, cmdStr);
+        dongleStream->println(cmdStr);
+        Serial.printf("[BLE] >>> Dongle-Helligkeit auf %d%% gesetzt\n", value);
     }
 }

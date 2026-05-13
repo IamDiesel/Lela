@@ -23,13 +23,14 @@
 #include <time.h> 
 
 int cameraRefreshMs = 300; 
-static bool lastDongleAlarmSent = false; // Status-Tracker fuer Dongle
 
 void SystemLogic_Init() {
     HaConfigLogic::Init();
+    
     Audio_Init(); 
     VideoLogic_Init(); 
     AudioStreamLogic_Init(); 
+    
     BleLogic_Init();     
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
@@ -72,6 +73,7 @@ void SystemLogic_Update() {
     }
 
     WebSetupLogic_Update(); 
+
     calcMultiplex(); 
     if (webSetupMode > 0 || pendingWebSetupMode > 0) return; 
 
@@ -136,11 +138,11 @@ void SystemLogic_Update() {
             if (millis() - lastBeep > 2500) { playBabyAlarmI2S(); lastBeep = millis(); }
         }
     }
-    
+
     // --- T-Dongle Alarm Synchronisierung ---
+    static bool lastDongleAlarmSent = false;
     bool shouldDongleAlarm = false;
 
-    // FIX: Variable 'muted' verwendet anstatt alarmMuted
     if (dongleAlarmEnabled && alarmActive && !muted) {
         shouldDongleAlarm = true;
     }
@@ -155,6 +157,14 @@ void SystemLogic_Update() {
     }
     // --------------------------------------------
 
+    // --- NEU: T-Dongle Helligkeit Synchronisierung ---
+    static int lastDongleBrightness = -1;
+    if (brightnessPercent != lastDongleBrightness) {
+        lastDongleBrightness = brightnessPercent;
+        BleLogic_SetBrightness(brightnessPercent);
+    }
+    // -------------------------------------------------
+    
     static uint32_t lastBatRead = 0; 
     if (millis() - lastBatRead > 5000) { 
         int batLevel = M5.Power.getBatteryLevel();
@@ -167,13 +177,25 @@ void SystemLogic_Update() {
         bool raw_charging = M5.Power.isCharging();
 
         if (raw_charging) {
-            if (highest_bat_while_charging == 0) { highest_bat_while_charging = batteryPercent; }
-            if (batteryPercent > highest_bat_while_charging) { highest_bat_while_charging = batteryPercent; force_not_charging = false; } 
-            else if (batteryPercent < highest_bat_while_charging) { force_not_charging = true; }
+            if (highest_bat_while_charging == 0) {
+                highest_bat_while_charging = batteryPercent;
+            }
+
+            if (batteryPercent > highest_bat_while_charging) {
+                highest_bat_while_charging = batteryPercent;
+                force_not_charging = false; 
+            } 
+            else if (batteryPercent < highest_bat_while_charging) {
+                force_not_charging = true;
+            }
+
             isBatteryCharging = force_not_charging ? false : true;
         } else {
-            force_not_charging = false; highest_bat_while_charging = 0; isBatteryCharging = false;
+            force_not_charging = false;
+            highest_bat_while_charging = 0;
+            isBatteryCharging = false;
         }
+
         lastBatRead = millis(); 
     }
     
@@ -194,9 +216,15 @@ void SystemLogic_Update() {
         pressureHistory[historyIdx] = valToPush; historyIdx = (historyIdx + 1) % HISTORY_SIZE; if (historyCount < HISTORY_SIZE) historyCount++; requestChartUpdate = true; 
     }
 
-    if (currentScreen == SCREEN_DASHBOARD) { ViewDashboard::update(); } 
-    else if (currentScreen == SCREEN_BABY) { ViewBaby::update(); } 
-    else if (currentScreen == SCREEN_CATMAT) { ViewCatMat::update(); } 
-    else if (currentScreen == SCREEN_HA) { ViewHomeAssistant::update(); } 
-    else if (currentScreen == SCREEN_SETTINGS) { ViewSettings::update(); }
+    if (currentScreen == SCREEN_DASHBOARD) {
+        ViewDashboard::update();
+    } else if (currentScreen == SCREEN_BABY) {
+        ViewBaby::update();
+    } else if (currentScreen == SCREEN_CATMAT) {
+        ViewCatMat::update();
+    } else if (currentScreen == SCREEN_HA) {
+        ViewHomeAssistant::update(); 
+    } else if (currentScreen == SCREEN_SETTINGS) {
+        ViewSettings::update();      
+    }
 }
