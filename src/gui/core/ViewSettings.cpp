@@ -28,8 +28,9 @@ static lv_obj_t * btn_save_mac, * btn_cancel_mac, * btn_rescan_mac, * btn_contin
 
 // Listen-System Variablen
 static lv_obj_t * scan_list = nullptr;
-static lv_obj_t * scan_list_btns[MAX_LIST_DEVICES];
-static lv_obj_t * scan_list_labels[MAX_LIST_DEVICES];
+// FIX: MAX_SCAN_DEVICES fuer die Arrays verwendet!
+static lv_obj_t * scan_list_btns[MAX_SCAN_DEVICES];
+static lv_obj_t * scan_list_labels[MAX_SCAN_DEVICES];
 static int selected_scan_index = -1;
 
 static lv_obj_t * stream_overlay = nullptr, * sw_expert = nullptr;
@@ -37,9 +38,6 @@ static lv_obj_t * ta_ip, * ta_vid, * ta_aud, * lbl_ip, * lbl_vid, * lbl_aud;
 
 static const int cam_intervals[] = {10, 20, 30, 50, 75, 100, 200, 300, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000};
 
-// ==============================================================
-// HELPER FUNKTIONEN
-// ==============================================================
 static void update_sliders_ui() {
     if (!matEnabled || (!kippyEnabled && !wifiEnabled)) { lv_obj_add_state(sl_master, LV_STATE_DISABLED); lv_obj_set_style_text_color(lbl_master, lv_color_hex(0x555555), 0); } 
     else { lv_obj_clear_state(sl_master, LV_STATE_DISABLED); lv_obj_set_style_text_color(lbl_master, TEXT_COLOR, 0); }
@@ -52,9 +50,6 @@ static lv_obj_t* create_white_label(lv_obj_t* parent, const char* text) { lv_obj
 static lv_obj_t* create_header(lv_obj_t* parent, const char* text) { lv_obj_t * header = lv_label_create(parent); lv_label_set_text(header, text); lv_obj_set_style_text_font(header, &lv_font_montserrat_28, 0); lv_obj_set_style_text_color(header, lv_color_hex(0x00A0FF), 0); lv_obj_set_style_pad_top(header, 30, 0); return header; }
 static lv_obj_t* create_helper_cont(lv_obj_t* parent, int height) { lv_obj_t * cont = lv_obj_create(parent); lv_obj_set_size(cont, 800, height); lv_obj_set_style_bg_opa(cont, 0, 0); lv_obj_set_style_border_width(cont, 0, 0); lv_obj_set_style_pad_all(cont, 0, 0); lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE); return cont; }
 
-// ==============================================================
-// CALLBACKS (Aktionen)
-// ==============================================================
 static void stream_expert_sw_cb(lv_event_t* e) {
     bool expert = lv_obj_has_state(sw_expert, LV_STATE_CHECKED);
     if (expert) { lv_obj_add_flag(lbl_ip, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(ta_ip, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(lbl_vid, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(ta_vid, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(lbl_aud, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(ta_aud, LV_OBJ_FLAG_HIDDEN); } 
@@ -124,13 +119,11 @@ static void scan_list_btn_cb(lv_event_t * e) {
     lv_obj_t * clicked_btn = lv_event_get_target(e);
     selected_scan_index = (int)(intptr_t)lv_event_get_user_data(e);
 
-    // Alle Buttons zuruecksetzen
-    for(int i = 0; i < MAX_LIST_DEVICES; i++) {
+    for(int i = 0; i < MAX_SCAN_DEVICES; i++) {
         if(scan_list_btns[i]) {
             lv_obj_set_style_bg_color(scan_list_btns[i], lv_color_hex(0x222222), 0);
         }
     }
-    // Geklickten Button blau hervorheben
     lv_obj_set_style_bg_color(clicked_btn, lv_color_hex(0x00A0FF), 0);
 }
 
@@ -148,7 +141,7 @@ static void btn_save_mac_cb(lv_event_t * e) {
         lv_label_set_text_fmt(lbl_setup_mat, "Matte:\n%s", savedMatMac.c_str());
         lv_label_set_text_fmt(lbl_setup_kip, "Kippy:\n%s", savedKippyMac.c_str());
     } else {
-        playToneI2S(400, 150, true); // Fehler-Ton, wenn nichts gewaehlt wurde
+        playToneI2S(400, 150, true); 
     }
 }
 
@@ -237,6 +230,10 @@ static void buildNetworkSection(lv_obj_t* parent) {
     lv_obj_t * cont_mqtt_mat = create_helper_cont(parent, 60); lv_obj_t * lbl_sw_mqtt_mat = create_text_label(cont_mqtt_mat, LV_SYMBOL_BLUETOOTH " Daten via Proxy"); lv_obj_align(lbl_sw_mqtt_mat, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * sw_mqtt_mat = lv_switch_create(cont_mqtt_mat); lv_obj_align(sw_mqtt_mat, LV_ALIGN_RIGHT_MID, -20, 0); if(useMqttForMat) lv_obj_add_state(sw_mqtt_mat, LV_STATE_CHECKED); 
     lv_obj_add_event_cb(sw_mqtt_mat, [](lv_event_t* e){ playToneI2S(800, 100, true); useMqttForMat = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("useMqtt", useMqttForMat); preferences.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
 
+    lv_obj_t * cont_dal = create_helper_cont(parent, 60); create_text_label(cont_dal, "Dongle-Alarm (Hardware)"); 
+    lv_obj_t * sw_dal = lv_switch_create(cont_dal); lv_obj_align(sw_dal, LV_ALIGN_RIGHT_MID, -20, 0); if(dongleAlarmEnabled) lv_obj_add_state(sw_dal, LV_STATE_CHECKED); 
+    lv_obj_add_event_cb(sw_dal, [](lv_event_t* e){ playToneI2S(800, 100, true); dongleAlarmEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("dongleAl", dongleAlarmEnabled); prefs.end(); if(!dongleAlarmEnabled) BleLogic_SendAlarmOff(); }, LV_EVENT_VALUE_CHANGED, NULL);
+
     lbl_master = create_text_label(parent, ""); lv_label_set_text_fmt(lbl_master, "Prio Matte: %d%%", prioMaster); sl_master = lv_slider_create(parent); lv_obj_set_size(sl_master, 600, 20); lv_slider_set_range(sl_master, 0, 100); lv_slider_set_value(sl_master, prioMaster, LV_ANIM_OFF); 
     lv_obj_add_event_cb(sl_master, [](lv_event_t* e){ playToneI2S(1000, 50, true); prioMaster = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)); lv_label_set_text_fmt(lbl_master, "Prio Matte: %d%%", prioMaster); preferences.begin("catmat", false); preferences.putInt("prioM", prioMaster); preferences.end(); calcMultiplex(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
@@ -305,7 +302,6 @@ static void buildOverlays(lv_obj_t* scr) {
     scan_spinner = lv_spinner_create(scan_overlay, 1000, 60); lv_obj_set_size(scan_spinner, 64, 64); lv_obj_align(scan_spinner, LV_ALIGN_TOP_MID, -200, 50);
     lbl_scan_info = lv_label_create(scan_overlay); lv_label_set_text(lbl_scan_info, "Suche..."); lv_obj_set_style_text_font(lbl_scan_info, &lv_font_montserrat_28, 0); lv_obj_set_style_text_color(lbl_scan_info, lv_color_white(), 0); lv_obj_align(lbl_scan_info, LV_ALIGN_TOP_MID, 50, 60);
     
-    // DIE NEUE LISTEN-ARCHITEKTUR
     scan_list = lv_obj_create(scan_overlay);
     lv_obj_set_size(scan_list, 600, 260);
     lv_obj_align(scan_list, LV_ALIGN_TOP_MID, 0, 140);
@@ -322,10 +318,10 @@ static void buildOverlays(lv_obj_t* scr) {
     btn_save_mac = lv_btn_create(scan_overlay); lv_obj_set_size(btn_save_mac, 200, 60); lv_obj_align(btn_save_mac, LV_ALIGN_BOTTOM_MID, 120, -50); lv_obj_set_style_bg_color(btn_save_mac, lv_color_hex(0x00A0FF), 0); lv_obj_add_event_cb(btn_save_mac, btn_save_mac_cb, LV_EVENT_CLICKED, NULL); lv_obj_t * l_save = create_white_label(btn_save_mac, "Sichern"); lv_obj_center(l_save);
 }
 
-// ==============================================================
-// KLASSEN METHODEN
-// ==============================================================
 lv_obj_t* ViewSettings::build() {
+    memset(scan_list_btns, 0, sizeof(scan_list_btns));
+    memset(scan_list_labels, 0, sizeof(scan_list_labels));
+
     lv_obj_t* scr = lv_obj_create(NULL);
     if(!scr) return nullptr;
     lv_obj_set_style_bg_color(scr, isDarkMode ? lv_color_hex(0x111111) : lv_color_white(), 0);
@@ -371,27 +367,25 @@ void ViewSettings::update() {
 
         lv_label_set_text(lbl_scan_info, infoBuf);
         
-        // Sichern Button nur einblenden, wenn etwas gefunden UND angeklickt wurde!
         if (showSaveBtn && selected_scan_index >= 0) lv_obj_clear_flag(btn_save_mac, LV_OBJ_FLAG_HIDDEN); 
         else lv_obj_add_flag(btn_save_mac, LV_OBJ_FLAG_HIDDEN);
 
-        // =========================================================
-        // QUEUE PROCESSING: Live-Update der interaktiven Liste
-        // =========================================================
         if (bleUpdateQueue != NULL && uxQueueMessagesWaiting(bleUpdateQueue) > 0) {
             if (lvgl_port_lock(50)) {
                 BleUpdateEvent ev;
-                // Verarbeite alle Nachrichten im Briefkasten, bis er leer ist
+                bool list_changed = false;
+                
                 while (xQueueReceive(bleUpdateQueue, &ev, 0) == pdTRUE) {
-                    
+                    list_changed = true;
+
                     if (ev.isClear) {
-                        lv_obj_clean(scan_list); // Loescht alle Buttons im Container
+                        lv_obj_clean(scan_list); 
                         memset(scan_list_btns, 0, sizeof(scan_list_btns));
                         memset(scan_list_labels, 0, sizeof(scan_list_labels));
                         selected_scan_index = -1;
                     } 
                     else if (ev.isNew) {
-                        if (ev.index < MAX_LIST_DEVICES) {
+                        if (ev.index < MAX_SCAN_DEVICES) {
                             lv_obj_t* btn = lv_btn_create(scan_list);
                             lv_obj_set_width(btn, lv_pct(100));
                             lv_obj_set_height(btn, 50);
@@ -409,12 +403,16 @@ void ViewSettings::update() {
                         }
                     } 
                     else {
-                        // Dynamisches Update nur eines einzigen Labels (Extrem ressourcenschonend!)
-                        if (ev.index < MAX_LIST_DEVICES && scan_list_labels[ev.index]) {
+                        if (ev.index < MAX_SCAN_DEVICES && scan_list_labels[ev.index]) {
                             lv_label_set_text_fmt(scan_list_labels[ev.index], "%s [%s]  %d dBm", ev.device.name, ev.device.mac, ev.device.rssi);
                         }
                     }
                 }
+
+                if (list_changed) {
+                    lv_obj_invalidate(scan_list); 
+                }
+                
                 lvgl_port_unlock();
             }
         }

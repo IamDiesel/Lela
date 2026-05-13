@@ -1,5 +1,4 @@
 #include "BleLogic.h"
-#include "SharedData.h"
 #include <ArduinoJson.h>
 
 static Stream* dongleStream = nullptr; 
@@ -39,20 +38,16 @@ void ParseDongleJSON(String jsonStr) {
         if (isSetupScanning) {
             bool exists = false;
             
-            // 1. Pruefen, ob wir das Geraet schon kennen
             for (int i = 0; i < scanResultCount; i++) {
                 if (scanResultMacs[i].equalsIgnoreCase(mac)) {
                     exists = true;
                     
-                    // HYSTERESE-FILTER: Nur updaten, wenn Abweichung >= 3 dBm 
-                    // oder wenn der Name nachtraeglich geladen wurde!
                     bool nameChanged = (scanResultNames[i] == "Unbekannt" && name != "Unbekannt" && name != "");
                     
                     if (abs(scanResultRssi[i] - rssi) >= 3 || nameChanged) {
                         scanResultRssi[i] = rssi;
                         if (nameChanged) scanResultNames[i] = name;
                         
-                        // Paket packen und non-blocking in die Queue werfen
                         BleUpdateEvent ev;
                         ev.isClear = false; ev.isNew = false; ev.index = i;
                         strncpy(ev.device.mac, scanResultMacs[i].c_str(), 17); ev.device.mac[17] = '\0';
@@ -65,15 +60,14 @@ void ParseDongleJSON(String jsonStr) {
                 }
             }
             
-            // 2. Neues Geraet gefunden
-            if (!exists && scanResultCount < MAX_LIST_DEVICES) {
+            // FIX: MAX_SCAN_DEVICES verwenden!
+            if (!exists && scanResultCount < MAX_SCAN_DEVICES) {
                 BleUpdateEvent ev;
                 ev.isClear = false; ev.isNew = true; ev.index = scanResultCount;
                 strncpy(ev.device.mac, mac.c_str(), 17); ev.device.mac[17] = '\0';
                 strncpy(ev.device.name, name.c_str(), 31); ev.device.name[31] = '\0';
                 ev.device.rssi = rssi;
                 
-                // Wir speichern das Geraet intern NUR, wenn das Display das Paket auch annehmen konnte
                 if (xQueueSend(bleUpdateQueue, &ev, 0) == pdTRUE) {
                     scanResultMacs[scanResultCount] = mac;
                     scanResultNames[scanResultCount] = name;
@@ -98,7 +92,6 @@ void ParseDongleJSON(String jsonStr) {
 }
 
 bool BleLogic_Update() {
-    // 1. Timeout (40s)
     if (isSetupScanning) {
         if ((millis() - setupScanStartTime) >= 40000) {
             BleLogic_StopSetupScan();
@@ -107,27 +100,19 @@ bool BleLogic_Update() {
 
     if (!dongleStream) return false;
 
-    // ==============================================================
-    // NEU: DIE DROSSELKLAPPE (Throttling)
-    // ==============================================================
     int parsed_lines = 0; 
-    
-    // Anstatt die CPU zu blockieren, verarbeiten wir MAXIMAL 3 JSON-Zeilen.
-    // Danach brechen wir ab und geben der Grafikkarte Zeit, das UI zu zeichnen!
-    // Im naechsten Durchlauf (Millisekunden spaeter) machen wir weiter.
     while (dongleStream->available() && parsed_lines < 3) {
         char c = dongleStream->read();
         if (c == '\n') { 
             ParseDongleJSON(dongleBuffer); 
             dongleBuffer = ""; 
-            parsed_lines++; // Zaehler erhoehen!
+            parsed_lines++; 
         } 
         else if (c >= 32) { 
             dongleBuffer += c; 
         }
     }
 
-    // Hardware Scanning Befehle
     bool needScan = isSetupScanning || kippyEnabled;
     if (needScan && !currentlyScanning) {
         dongleStream->print("{\"cmd\":\"scan_start\"}\n");
@@ -137,7 +122,6 @@ bool BleLogic_Update() {
         currentlyScanning = false;
     }
 
-    // Sensor Reconnect (Nur wenn Fenster geschlossen)
     if (setupScanMode == 0 && matEnabled && !useMqttForMat && savedMatMac.length() > 0 && !connected) {
         if (millis() - lastConnectAttempt > 10000) { 
             lastConnectAttempt = millis();
@@ -152,10 +136,6 @@ bool BleLogic_Update() {
 
     return isSetupScanning;
 }
-
-// ==============================================================
-// GUI SCHNITTSTELLEN
-// ==============================================================
 
 void BleLogic_StartSetupScan(int mode, bool clearList) {
     if (dongleStream) {
@@ -176,7 +156,7 @@ void BleLogic_StartSetupScan(int mode, bool clearList) {
     if (clearList) {
         scanResultCount = 0;
         BleUpdateEvent ev;
-        ev.isClear = true; // Signal an die UI: Loesche die Tabelle!
+        ev.isClear = true; 
         xQueueSend(bleUpdateQueue, &ev, 0);
     }
     
@@ -225,5 +205,19 @@ void BleLogic_GetScanStatus(char* infoBuf, size_t maxLen, bool& isScanning, bool
         snprintf(infoBuf, maxLen, "Sucht... (%ds)\nGefunden: %d", restzeit, scanResultCount);
     } else {
         snprintf(infoBuf, maxLen, "Suche beendet.\nGefunden: %d", scanResultCount);
+    }
+}
+
+void BleLogic_SendAlarmOn() {
+    if (dongleStream) {
+        dongleStream->println("{\"cmd\":\"alarm_on\"}");
+        Serial.println("[BLE] >>> Dongle-Alarm AKTIVIERT");
+    }
+}
+
+void BleLogic_SendAlarmOff() {
+    if (dongleStream) {
+        dongleStream->println("{\"cmd\":\"alarm_off\"}");
+        Serial.println("[BLE] >>> Dongle-Alarm DEAKTIVIERT");
     }
 }
