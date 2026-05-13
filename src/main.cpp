@@ -12,6 +12,25 @@
     #include <USBHostSerial.h>
     USBHostSerial dongleUSB;
 
+    // Status-Tracker fuer den physischen Dongle (Heuristik)
+    volatile bool dongleIsPhysicallyConnected = false;
+
+    // Wir parsen die internen Bibliotheks-Logs, um den Status sicher zu ermitteln!
+    void usbHostLogger(const char* msg) {
+        String s = String(msg);
+        s.toLowerCase();
+        
+        // Die Bibliothek meldet typischerweise Verbindungsereignisse im Log
+        if (s.indexOf("disconnect") >= 0 || s.indexOf("error") >= 0 || s.indexOf("fail") >= 0 || s.indexOf("unmount") >= 0) {
+            dongleIsPhysicallyConnected = false;
+        } else if (s.indexOf("connect") >= 0 || s.indexOf("ready") >= 0 || s.indexOf("open") >= 0 || s.indexOf("mount") >= 0) {
+            dongleIsPhysicallyConnected = true;
+        }
+        
+        Serial.print("[USBHostSerial] ");
+        Serial.println(msg);
+    }
+
     // Custom Stream-Adapter für die Bibliothek
     class UsbStreamWrapper : public Stream {
     private:
@@ -20,21 +39,16 @@
         UsbStreamWrapper(USBHostSerial* usb) : _usb(usb) {}
         int available() override { return _usb->available(); }
         int read() override { return _usb->read(); }
-        
-        // FIX: Die Bibliothek hat kein peek() oder flush(), 
-        // daher geben wir Standard-Dummy-Werte zurück, um Compile-Fehler zu vermeiden.
         int peek() override { return -1; } 
-        void flush() override { /* Nichts tun */ }
-        
+        void flush() override { }
         size_t write(uint8_t c) override { return _usb->write(c); }
         size_t write(const uint8_t *buffer, size_t size) override { return _usb->write(buffer, size); }
     };
 
-    // Die Instanz unseres Adapters
     UsbStreamWrapper dongleStream(&dongleUSB);
 #else
-    // Fallback auf Serial2, falls die Library nicht kompiliert
     HardwareSerial& dongleStream = Serial2; 
+    volatile bool dongleIsPhysicallyConnected = true; // Fallback
 #endif
 // ==============================================================
 
@@ -79,23 +93,23 @@ void setup() {
     Serial.println("[SYSTEM] Konfiguriere WLAN-Pins fuer M5Tab5...");
     WiFi.setPins(12, 13, 11, 10, 9, 8, 15);
 
-    // ==============================================================
-    // BLE LOGIK & DONGLE INITIALISIERUNG
-    // ==============================================================
     BleLogic_Init();
 
     #if __has_include(<USBHostSerial.h>)
         Serial.println("[USB] Starte USBHostSerial Treiber...");
-        // Die Bibliothek verlangt zwingend 4 Parameter (Baudrate, DataBits, Parity, StopBits)
-        // 115200 Baud, 8 Datenbits, Keine Parität (0), 1 Stoppbit
-        dongleUSB.begin(115200, 8, 0, 1);
+        
+        // Logger einhaengen (wichtig fuer die Ueberwachung!)
+        dongleUSB.setLogger(usbHostLogger);
+        
+        // BUGFIX: Die Parameter sind (baudrate, stopbits, parity, databits)
+        // 115200 Baud, 0 Stopbits (Bibliotheks-Logik fuer 1 Stop), 0 Parity, 8 Databits
+        dongleUSB.begin(115200, 0, 0, 8); 
         BleLogic_SetDongleStream(&dongleStream);
     #else
         Serial.println("[USB] WARNUNG: Library fehlt. Nutze Dummy-Serial.");
         dongleStream.begin(115200);
         BleLogic_SetDongleStream(&dongleStream);
     #endif
-    // ==============================================================
 
     Serial.println("[AUDIO-DIAG] Erzwinge I2S/I2C Hardware-Reset...");
     M5.Speaker.end();
@@ -221,6 +235,9 @@ void loop() {
         lvgl_port_unlock();
     }
     
+    // Uebergabe des ermittelten Status an die BleLogic!
+    BleLogic_SetDongleReady(dongleIsPhysicallyConnected);
+
     SystemLogic_Update(); 
     WebSetupLogic_Update();
 

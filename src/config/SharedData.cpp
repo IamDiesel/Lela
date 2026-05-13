@@ -37,6 +37,8 @@ bool useCustomUrls = false;
 String camEntity = SECRET_CAM_ENTITY;
 String babyStreamUrl = SECRET_BABY_STREAM_URL;
 
+String topbarStatusMsg = ""; // NEU: Initialisierung
+
 String mqttBabyTopic = SECRET_MQTT_BABY_TOPIC;
 String mqttCameraTriggerTopic = SECRET_MQTT_CAM_TRIGGER;
 volatile bool isBabyArmed = false;
@@ -282,7 +284,7 @@ void playToneI2S(uint16_t freq, uint32_t duration_ms, bool isUiSound) {
 
 void playBabyAlarmI2S() { if(audioQueue != NULL && !muted) { AudioMsg msg; msg.isUiSound = false; msg.soundType = 1; xQueueSend(audioQueue, &msg, 0); } }
 void playCatAlarmI2S() { if(audioQueue != NULL && !muted) { AudioMsg msg; msg.isUiSound = false; msg.soundType = 2; xQueueSend(audioQueue, &msg, 0); } }
-void fullReset() { alarmActive = false; disconnectAlarmActive = false; muted = false; isArmed = false; cooldownUntil = millis() + 5000; }
+void fullReset() { alarmActive = false; disconnectAlarmActive = false; muted = false; isArmed = false; cooldownUntil = millis() + 5000; topbarStatusMsg = ""; }
 void wakeDisplay() { requestWake = true; M5.Display.wakeup(); }
 void sleepDisplay() { requestSleep = true; M5.Display.sleep(); }
 void factoryReset() { preferences.begin("catmat", false); preferences.clear(); preferences.end(); delay(1000); ESP.restart(); }

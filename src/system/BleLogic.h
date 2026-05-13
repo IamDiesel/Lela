@@ -24,6 +24,10 @@ extern QueueHandle_t bleUpdateQueue;
 
 void BleLogic_Init();
 void BleLogic_SetDongleStream(Stream* stream);
+
+// NEU: Signalisiert der Logik, ob der Hardware-Port verbunden ist
+void BleLogic_SetDongleReady(bool ready); 
+
 bool BleLogic_Update();
 
 // UI Steuer-Befehle
@@ -36,5 +40,5 @@ void BleLogic_GetScanStatus(char* infoBuf, size_t maxLen, bool& isScanning, bool
 void BleLogic_SendAlarmOn();
 void BleLogic_SendAlarmOff();
 
-// NEU: Befehl für die Helligkeitssynchronisation
+// Befehl für die Helligkeitssynchronisation
 void BleLogic_SetBrightness(int value);

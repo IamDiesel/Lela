@@ -7,6 +7,9 @@ static String dongleBuffer = "";
 static bool currentlyScanning = false;
 static uint32_t lastConnectAttempt = 0;
 
+// Hardware-Status des USB-Dongles
+static bool dongleReady = false; 
+
 QueueHandle_t bleUpdateQueue = NULL;
 
 void BleLogic_Init() {
@@ -24,6 +27,20 @@ void BleLogic_SetDongleStream(Stream* stream) {
     if (dongleStream) Serial.println("[BLE] >>> USB Dongle Interface initialisiert.");
 }
 
+// Wird aus der main.cpp aufgerufen und schuetzt das System vor Abstuerzen
+void BleLogic_SetDongleReady(bool ready) {
+    if (dongleReady && !ready) {
+        currentlyScanning = false;
+        connected = false; 
+        topbarStatusMsg = "USB-Dongle getrennt!"; // NEU: Warnung
+        Serial.println("[BLE] !!! USB Dongle getrennt !!!");
+    } else if (!dongleReady && ready) {
+        topbarStatusMsg = ""; // Meldung loeschen
+        Serial.println("[BLE] >>> USB Dongle verbunden und bereit.");
+    }
+    dongleReady = ready;
+}
+
 void ParseDongleJSON(String jsonStr) {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, jsonStr);
@@ -39,20 +56,16 @@ void ParseDongleJSON(String jsonStr) {
         if (isSetupScanning) {
             bool exists = false;
             
-            // 1. Pruefen, ob wir das Geraet schon kennen
             for (int i = 0; i < scanResultCount; i++) {
                 if (scanResultMacs[i].equalsIgnoreCase(mac)) {
                     exists = true;
                     
-                    // HYSTERESE-FILTER: Nur updaten, wenn Abweichung >= 3 dBm 
-                    // oder wenn der Name nachtraeglich geladen wurde!
                     bool nameChanged = (scanResultNames[i] == "Unbekannt" && name != "Unbekannt" && name != "");
                     
                     if (abs(scanResultRssi[i] - rssi) >= 3 || nameChanged) {
                         scanResultRssi[i] = rssi;
                         if (nameChanged) scanResultNames[i] = name;
                         
-                        // Paket packen und non-blocking in die Queue werfen
                         BleUpdateEvent ev;
                         ev.isClear = false; ev.isNew = false; ev.index = i;
                         strncpy(ev.device.mac, scanResultMacs[i].c_str(), 17); ev.device.mac[17] = '\0';
@@ -65,7 +78,6 @@ void ParseDongleJSON(String jsonStr) {
                 }
             }
             
-            // 2. Neues Geraet gefunden (Korrekt mit MAX_SCAN_DEVICES)
             if (!exists && scanResultCount < MAX_SCAN_DEVICES) {
                 BleUpdateEvent ev;
                 ev.isClear = false; ev.isNew = true; ev.index = scanResultCount;
@@ -73,7 +85,6 @@ void ParseDongleJSON(String jsonStr) {
                 strncpy(ev.device.name, name.c_str(), 31); ev.device.name[31] = '\0';
                 ev.device.rssi = rssi;
                 
-                // Wir speichern das Geraet intern NUR, wenn das Display das Paket auch annehmen konnte
                 if (xQueueSend(bleUpdateQueue, &ev, 0) == pdTRUE) {
                     scanResultMacs[scanResultCount] = mac;
                     scanResultNames[scanResultCount] = name;
@@ -92,9 +103,47 @@ void ParseDongleJSON(String jsonStr) {
         if (matEnabled && !useMqttForMat && mac.equalsIgnoreCase(savedMatMac)) {
             rawPressure = doc["value"] | 0;
             connected = true;
+            
+            // NEU: Fehler & Alarme loeschen, wenn Daten fliessen
+            disconnectAlarmActive = false; 
+            topbarStatusMsg = ""; 
+            
             requestChartUpdate = true;
         }
     }
+    // ==============================================================
+    // NEU: DONGLE ERROR-HANDLING & RECONNECT-LOGIK
+    // ==============================================================
+    else if (event == "error") {
+        String type = doc["type"] | "";
+        String mac = doc["mac"] | "";
+        String msg = doc["msg"] | "";
+        
+        Serial.printf("[BLE] Dongle Error (%s): %s\n", type.c_str(), msg.c_str());
+
+        // Nachricht sofort auf die Topbar schieben
+        topbarStatusMsg = msg;
+
+        // Pruefen ob der Fehler unsere Matte betrifft
+        if (matEnabled && !useMqttForMat && mac.equalsIgnoreCase(savedMatMac)) {
+            
+            if (type == "disconnected") {
+                Serial.println("[BLE] Sensormatte getrennt! Versuche sofortigen Reconnect...");
+                connected = false;
+                // TRICK: lastConnectAttempt auf 10s in die Vergangenheit setzen, 
+                // damit BleLogic_Update() sofort beim naechsten Tick verbindet.
+                lastConnectAttempt = millis() - 10000; 
+            } 
+            else if (type == "connect_failed" || type == "invalid_service") {
+                Serial.println("[BLE] Reconnect fehlgeschlagen! Warte 10s und starte Alarm.");
+                connected = false;
+                disconnectAlarmActive = true; 
+                // lastConnectAttempt wird hier NICHT resetet! Die Logik wird 
+                // dadurch exakt 10s warten, bis der naechste connect gefeuert wird.
+            }
+        }
+    }
+    // ==============================================================
 }
 
 bool BleLogic_Update() {
@@ -105,7 +154,8 @@ bool BleLogic_Update() {
         }
     }
 
-    if (!dongleStream) return false;
+    // GUARD: Wenn der Dongle physisch nicht bereit ist, brechen wir hier sofort ab!
+    if (!dongleStream || !dongleReady) return isSetupScanning;
 
     // DIE DROSSELKLAPPE (Throttling)
     int parsed_lines = 0; 
@@ -147,8 +197,15 @@ bool BleLogic_Update() {
     return isSetupScanning;
 }
 
+// ==============================================================
+// GUI SCHNITTSTELLEN
+// ==============================================================
+
 void BleLogic_StartSetupScan(int mode, bool clearList) {
-    if (dongleStream) {
+    topbarStatusMsg = ""; // Loescht Fehlermeldungen bei Scan-Start
+    
+    // GUARD: Nur senden wenn Dongle bereit ist
+    if (dongleStream && dongleReady) {
         if (savedMatMac.length() > 0) {
             JsonDocument doc; doc["cmd"] = "disconnect"; doc["mac"] = savedMatMac;
             String cmdStr; serializeJson(doc, cmdStr);
@@ -166,7 +223,7 @@ void BleLogic_StartSetupScan(int mode, bool clearList) {
     if (clearList) {
         scanResultCount = 0;
         BleUpdateEvent ev;
-        ev.isClear = true; // Signal an die UI: Loesche die Tabelle!
+        ev.isClear = true; 
         xQueueSend(bleUpdateQueue, &ev, 0);
     }
     
@@ -179,7 +236,9 @@ void BleLogic_StartSetupScan(int mode, bool clearList) {
 void BleLogic_StopSetupScan() {
     isSetupScanning = false;
     scanJustFinished = true;
-    if (dongleStream && currentlyScanning) {
+    
+    // GUARD: Nur senden wenn Dongle bereit ist
+    if (dongleStream && dongleReady && currentlyScanning) {
         dongleStream->println("{\"cmd\":\"scan_stop\"}");
         currentlyScanning = false;
     }
@@ -219,22 +278,21 @@ void BleLogic_GetScanStatus(char* infoBuf, size_t maxLen, bool& isScanning, bool
 }
 
 void BleLogic_SendAlarmOn() {
-    if (dongleStream) {
+    if (dongleStream && dongleReady) {
         dongleStream->println("{\"cmd\":\"alarm_on\"}");
         Serial.println("[BLE] >>> Dongle-Alarm AKTIVIERT");
     }
 }
 
 void BleLogic_SendAlarmOff() {
-    if (dongleStream) {
+    if (dongleStream && dongleReady) {
         dongleStream->println("{\"cmd\":\"alarm_off\"}");
         Serial.println("[BLE] >>> Dongle-Alarm DEAKTIVIERT");
     }
 }
 
-// NEU: Helligkeit an den Dongle senden
 void BleLogic_SetBrightness(int value) {
-    if (dongleStream) {
+    if (dongleStream && dongleReady) {
         if (value < 0) value = 0;
         if (value > 100) value = 100;
         

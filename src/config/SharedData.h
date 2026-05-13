@@ -43,6 +43,9 @@ extern bool useCustomUrls;
 extern String camEntity; // Wird als Video-URL verwendet
 extern String babyStreamUrl; // Wird als Audio-URL verwendet
 
+// NEU: Topbar Fehler Status
+extern String topbarStatusMsg;
+
 extern String mqttBabyTopic;
 extern String mqttCameraTriggerTopic;
 
