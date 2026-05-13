@@ -154,6 +154,8 @@ uint8_t lastBtPackets[MAX_BT_MSGS][10];
 int btPacketIdx = 0;
 int btPacketCount = 0;
 
+bool dongleAlarmEnabled = false;
+
 void addAudioLog(String msg) {
     if(!audioDebugEnabled) return;
     msg.trim();
@@ -223,6 +225,7 @@ void Data_Init() {
     prioMaster = preferences.getInt("prioM", 60);
     prioSlave = preferences.getInt("prioS", 50);
     useMqttForMat = preferences.getBool("useMqtt", true);
+    dongleAlarmEnabled = preferences.getBool("dongleAl", false);
     preferences.end();
 }
 

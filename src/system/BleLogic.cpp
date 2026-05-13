@@ -1,53 +1,223 @@
 #include "BleLogic.h"
-#include "SharedData.h"
+#include <ArduinoJson.h>
+
+static Stream* dongleStream = nullptr; 
+static String dongleBuffer = "";
+static bool currentlyScanning = false;
+static uint32_t lastConnectAttempt = 0;
+
+QueueHandle_t bleUpdateQueue = NULL;
 
 void BleLogic_Init() {
-    bleMutex = xSemaphoreCreateMutex();
+    if (bleMutex == NULL) bleMutex = xSemaphoreCreateMutex();
+    dongleBuffer.reserve(2048); 
+    
+    // Erstelle den Briefkasten fuer 60 gleichzeitige UI-Updates
+    if (bleUpdateQueue == NULL) {
+        bleUpdateQueue = xQueueCreate(60, sizeof(BleUpdateEvent));
+    }
+}
+
+void BleLogic_SetDongleStream(Stream* stream) {
+    dongleStream = stream;
+    if (dongleStream) Serial.println("[BLE] >>> USB Dongle Interface initialisiert.");
+}
+
+void ParseDongleJSON(String jsonStr) {
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, jsonStr);
+    if (error) return;
+
+    String event = doc["event"] | "";
+
+    if (event == "beacon") {
+        String mac = doc["mac"] | "";
+        String name = doc["name"] | "Unbekannt";
+        int rssi = doc["rssi"] | -100;
+
+        if (isSetupScanning) {
+            bool exists = false;
+            
+            for (int i = 0; i < scanResultCount; i++) {
+                if (scanResultMacs[i].equalsIgnoreCase(mac)) {
+                    exists = true;
+                    
+                    bool nameChanged = (scanResultNames[i] == "Unbekannt" && name != "Unbekannt" && name != "");
+                    
+                    if (abs(scanResultRssi[i] - rssi) >= 3 || nameChanged) {
+                        scanResultRssi[i] = rssi;
+                        if (nameChanged) scanResultNames[i] = name;
+                        
+                        BleUpdateEvent ev;
+                        ev.isClear = false; ev.isNew = false; ev.index = i;
+                        strncpy(ev.device.mac, scanResultMacs[i].c_str(), 17); ev.device.mac[17] = '\0';
+                        strncpy(ev.device.name, scanResultNames[i].c_str(), 31); ev.device.name[31] = '\0';
+                        ev.device.rssi = rssi;
+                        
+                        xQueueSend(bleUpdateQueue, &ev, 0); 
+                    }
+                    break;
+                }
+            }
+            
+            // FIX: MAX_SCAN_DEVICES verwenden!
+            if (!exists && scanResultCount < MAX_SCAN_DEVICES) {
+                BleUpdateEvent ev;
+                ev.isClear = false; ev.isNew = true; ev.index = scanResultCount;
+                strncpy(ev.device.mac, mac.c_str(), 17); ev.device.mac[17] = '\0';
+                strncpy(ev.device.name, name.c_str(), 31); ev.device.name[31] = '\0';
+                ev.device.rssi = rssi;
+                
+                if (xQueueSend(bleUpdateQueue, &ev, 0) == pdTRUE) {
+                    scanResultMacs[scanResultCount] = mac;
+                    scanResultNames[scanResultCount] = name;
+                    scanResultRssi[scanResultCount] = rssi;
+                    scanResultCount++;
+                }
+            }
+        }
+
+        if (kippyEnabled && mac.equalsIgnoreCase(savedKippyMac)) {
+            catRssi = rssi; lastCatSeenTime = millis();
+        }
+    } 
+    else if (event == "sensor") {
+        String mac = doc["mac"] | "";
+        if (matEnabled && !useMqttForMat && mac.equalsIgnoreCase(savedMatMac)) {
+            rawPressure = doc["value"] | 0;
+            connected = true;
+            requestChartUpdate = true;
+        }
+    }
 }
 
 bool BleLogic_Update() {
-    // --- SETUP SCAN SIMULATOR ---
-    // Bleibt erhalten, damit die UI beim Suchen der MAC-Adresse funktioniert
     if (isSetupScanning) {
-        static uint32_t scanStart = 0;
-        if (scanStart == 0) scanStart = millis();
-
-        // Simuliere einen Fund nach 2 Sekunden
-        if (millis() - scanStart > 2000 && scanResultCount == 0) {
-            if (bleMutex != NULL && xSemaphoreTake(bleMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                scanResultMacs[0] = "20:24:08:29:13:f0"; // Echte MAC als Dummy
-                scanResultNames[0] = "CatMat-EXT";
-                scanResultRssi[0] = -65;
-                scanResultCount = 1;
-                xSemaphoreGive(bleMutex);
-            }
+        if ((millis() - setupScanStartTime) >= 40000) {
+            BleLogic_StopSetupScan();
         }
-
-        if (millis() - setupScanStartTime > 10000) {
-            isSetupScanning = false;
-            scanJustFinished = true;
-            scanStart = 0;
-        }
-
-        static uint32_t lastUiStringUpdate = 0;
-        if (millis() - lastUiStringUpdate > 1000) {
-            lastUiStringUpdate = millis();
-            if (bleMutex != NULL && xSemaphoreTake(bleMutex, pdMS_TO_TICKS(30)) == pdTRUE) {
-                if (scanResultCount == 0) { strcpy(scanOptionsStr, "Suche laeuft..."); } 
-                else { strcpy(scanOptionsStr, "20:24:08:29:13:f0 | CatMat-EXT | -65"); }
-                xSemaphoreGive(bleMutex);
-                requestRollerUpdate = true;
-            }
-        }
-        return true;
     }
 
-    // --- PLATZHALTER FÜR DEN HARDWARE BLUETOOTH DONGLE ---
-    if (matEnabled && !useMqttForMat) {
-        // Hier kommt später deine echte lokale BLE Verbindung rein!
-        // Der Code hier wird dann `connected = true` setzen und 
-        // die Variable `rawPressure` mit echten lokalen BLE-Werten füllen.
+    if (!dongleStream) return false;
+
+    int parsed_lines = 0; 
+    while (dongleStream->available() && parsed_lines < 3) {
+        char c = dongleStream->read();
+        if (c == '\n') { 
+            ParseDongleJSON(dongleBuffer); 
+            dongleBuffer = ""; 
+            parsed_lines++; 
+        } 
+        else if (c >= 32) { 
+            dongleBuffer += c; 
+        }
     }
 
-    return false;
+    bool needScan = isSetupScanning || kippyEnabled;
+    if (needScan && !currentlyScanning) {
+        dongleStream->print("{\"cmd\":\"scan_start\"}\n");
+        currentlyScanning = true;
+    } else if (!needScan && currentlyScanning) {
+        dongleStream->println("{\"cmd\":\"scan_stop\"}");
+        currentlyScanning = false;
+    }
+
+    if (setupScanMode == 0 && matEnabled && !useMqttForMat && savedMatMac.length() > 0 && !connected) {
+        if (millis() - lastConnectAttempt > 10000) { 
+            lastConnectAttempt = millis();
+            JsonDocument doc;
+            doc["cmd"] = "connect"; doc["mac"] = savedMatMac;
+            doc["service"] = "FFF0"; doc["char"] = "FFF1";
+            doc["offset"] = 5; doc["length"] = 2; doc["big_endian"] = true;
+            String cmd; serializeJson(doc, cmd);
+            dongleStream->println(cmd);
+        }
+    }
+
+    return isSetupScanning;
+}
+
+void BleLogic_StartSetupScan(int mode, bool clearList) {
+    if (dongleStream) {
+        if (savedMatMac.length() > 0) {
+            JsonDocument doc; doc["cmd"] = "disconnect"; doc["mac"] = savedMatMac;
+            String cmdStr; serializeJson(doc, cmdStr);
+            dongleStream->println(cmdStr);
+        }
+        connected = false;
+
+        if (currentlyScanning) {
+            dongleStream->println("{\"cmd\":\"scan_stop\"}");
+            currentlyScanning = false;
+        }
+        delay(20); 
+    }
+
+    if (clearList) {
+        scanResultCount = 0;
+        BleUpdateEvent ev;
+        ev.isClear = true; 
+        xQueueSend(bleUpdateQueue, &ev, 0);
+    }
+    
+    setupScanMode = mode;
+    setupScanStartTime = millis();
+    isSetupScanning = true;
+    scanJustFinished = false;
+}
+
+void BleLogic_StopSetupScan() {
+    isSetupScanning = false;
+    scanJustFinished = true;
+    if (dongleStream && currentlyScanning) {
+        dongleStream->println("{\"cmd\":\"scan_stop\"}");
+        currentlyScanning = false;
+    }
+}
+
+void BleLogic_CloseSetupWindow() {
+    BleLogic_StopSetupScan();
+    setupScanMode = 0; 
+    scanJustFinished = false;
+    lastConnectAttempt = 0; 
+}
+
+void BleLogic_SaveDevice(int index) {
+    if (index >= 0 && index < scanResultCount) {
+        if (setupScanMode == 1) {
+            savedMatMac = scanResultMacs[index];
+            preferences.begin("catmat", false); preferences.putString("macM", savedMatMac); preferences.end();
+        } else if (setupScanMode == 2) {
+            savedKippyMac = scanResultMacs[index];
+            preferences.begin("catmat", false); preferences.putString("macK", savedKippyMac); preferences.end();
+        }
+    }
+    BleLogic_CloseSetupWindow(); 
+}
+
+void BleLogic_GetScanStatus(char* infoBuf, size_t maxLen, bool& isScanning, bool& showSaveBtn) {
+    isScanning = isSetupScanning;
+    showSaveBtn = (scanResultCount > 0);
+    
+    if (isSetupScanning) {
+        uint32_t elapsed = millis() - setupScanStartTime;
+        uint32_t restzeit = (elapsed >= 40000) ? 0 : (40000 - elapsed) / 1000;
+        snprintf(infoBuf, maxLen, "Sucht... (%ds)\nGefunden: %d", restzeit, scanResultCount);
+    } else {
+        snprintf(infoBuf, maxLen, "Suche beendet.\nGefunden: %d", scanResultCount);
+    }
+}
+
+void BleLogic_SendAlarmOn() {
+    if (dongleStream) {
+        dongleStream->println("{\"cmd\":\"alarm_on\"}");
+        Serial.println("[BLE] >>> Dongle-Alarm AKTIVIERT");
+    }
+}
+
+void BleLogic_SendAlarmOff() {
+    if (dongleStream) {
+        dongleStream->println("{\"cmd\":\"alarm_off\"}");
+        Serial.println("[BLE] >>> Dongle-Alarm DEAKTIVIERT");
+    }
 }

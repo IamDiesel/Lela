@@ -23,17 +23,13 @@
 #include <time.h> 
 
 int cameraRefreshMs = 300; 
+static bool lastDongleAlarmSent = false; // Status-Tracker fuer Dongle
 
 void SystemLogic_Init() {
     HaConfigLogic::Init();
-    
-    // FIX: esp_wifi_set_ps(WIFI_PS_NONE) wurde hier gelöscht! 
-    // Es darf erst nach WiFi.begin() aufgerufen werden!
-
     Audio_Init(); 
     VideoLogic_Init(); 
     AudioStreamLogic_Init(); 
-    
     BleLogic_Init();     
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
@@ -76,20 +72,15 @@ void SystemLogic_Update() {
     }
 
     WebSetupLogic_Update(); 
-
     calcMultiplex(); 
     if (webSetupMode > 0 || pendingWebSetupMode > 0) return; 
 
     if (!wifiEnabled && wifiStarted) { WiFi.disconnect(true, false); wifiStarted = false; timeSynced = false; }
     
     if (wifiEnabled && !wifiStarted && !isTrackerMode && effPrioWifi > 0) { 
-        // FIX: WiFi.begin() MUSS als allererstes aufgerufen werden, damit der RPC-Treiber hochfährt!
         WiFi.begin(wifiSsid.c_str(), wifiPass.c_str()); 
-        
-        // JETZT ist es sicher, die Konfigurationen an den Chip zu schicken:
         WiFi.setTxPower(WIFI_POWER_19_5dBm); 
         esp_wifi_set_ps(WIFI_PS_NONE);
-        
         wifiStarted = true; 
     }
 
@@ -146,6 +137,24 @@ void SystemLogic_Update() {
         }
     }
     
+    // --- T-Dongle Alarm Synchronisierung ---
+    bool shouldDongleAlarm = false;
+
+    // FIX: Variable 'muted' verwendet anstatt alarmMuted
+    if (dongleAlarmEnabled && alarmActive && !muted) {
+        shouldDongleAlarm = true;
+    }
+
+    if (shouldDongleAlarm != lastDongleAlarmSent) {
+        lastDongleAlarmSent = shouldDongleAlarm;
+        if (shouldDongleAlarm) {
+            BleLogic_SendAlarmOn();
+        } else {
+            BleLogic_SendAlarmOff();
+        }
+    }
+    // --------------------------------------------
+
     static uint32_t lastBatRead = 0; 
     if (millis() - lastBatRead > 5000) { 
         int batLevel = M5.Power.getBatteryLevel();
@@ -158,25 +167,13 @@ void SystemLogic_Update() {
         bool raw_charging = M5.Power.isCharging();
 
         if (raw_charging) {
-            if (highest_bat_while_charging == 0) {
-                highest_bat_while_charging = batteryPercent;
-            }
-
-            if (batteryPercent > highest_bat_while_charging) {
-                highest_bat_while_charging = batteryPercent;
-                force_not_charging = false; 
-            } 
-            else if (batteryPercent < highest_bat_while_charging) {
-                force_not_charging = true;
-            }
-
+            if (highest_bat_while_charging == 0) { highest_bat_while_charging = batteryPercent; }
+            if (batteryPercent > highest_bat_while_charging) { highest_bat_while_charging = batteryPercent; force_not_charging = false; } 
+            else if (batteryPercent < highest_bat_while_charging) { force_not_charging = true; }
             isBatteryCharging = force_not_charging ? false : true;
         } else {
-            force_not_charging = false;
-            highest_bat_while_charging = 0;
-            isBatteryCharging = false;
+            force_not_charging = false; highest_bat_while_charging = 0; isBatteryCharging = false;
         }
-
         lastBatRead = millis(); 
     }
     
@@ -197,15 +194,9 @@ void SystemLogic_Update() {
         pressureHistory[historyIdx] = valToPush; historyIdx = (historyIdx + 1) % HISTORY_SIZE; if (historyCount < HISTORY_SIZE) historyCount++; requestChartUpdate = true; 
     }
 
-    if (currentScreen == SCREEN_DASHBOARD) {
-        ViewDashboard::update();
-    } else if (currentScreen == SCREEN_BABY) {
-        ViewBaby::update();
-    } else if (currentScreen == SCREEN_CATMAT) {
-        ViewCatMat::update();
-    } else if (currentScreen == SCREEN_HA) {
-        ViewHomeAssistant::update(); 
-    } else if (currentScreen == SCREEN_SETTINGS) {
-        ViewSettings::update();      
-    }
+    if (currentScreen == SCREEN_DASHBOARD) { ViewDashboard::update(); } 
+    else if (currentScreen == SCREEN_BABY) { ViewBaby::update(); } 
+    else if (currentScreen == SCREEN_CATMAT) { ViewCatMat::update(); } 
+    else if (currentScreen == SCREEN_HA) { ViewHomeAssistant::update(); } 
+    else if (currentScreen == SCREEN_SETTINGS) { ViewSettings::update(); }
 }

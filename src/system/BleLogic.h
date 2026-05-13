@@ -1,13 +1,37 @@
 #pragma once
 #include <Arduino.h>
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+#include <Stream.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include "SharedData.h" // Laedt MAX_SCAN_DEVICES
 
-// Initialisiert die BLE Hardware und Scanner
+// Das Datenpaket, das durch die FreeRTOS Queue geschickt wird
+struct BleDevice {
+    char mac[18];
+    char name[32];
+    int rssi;
+};
+
+struct BleUpdateEvent {
+    bool isClear; // True, wenn die Liste geleert werden soll
+    bool isNew;   // True, wenn ein neues Geraet hinzugefuegt wird
+    int index;    // Zeilennummer in der UI
+    BleDevice device;
+};
+
+// Globaler Briefkasten fuer UI-Updates
+extern QueueHandle_t bleUpdateQueue;
+
 void BleLogic_Init();
-
-// Führt die kompletten BLE-Abläufe aus. 
-// Gibt 'true' zurück, wenn SystemLogic danach pausieren soll (z.B. im Setup-Scan)
+void BleLogic_SetDongleStream(Stream* stream);
 bool BleLogic_Update();
+
+// UI Steuer-Befehle
+void BleLogic_StartSetupScan(int mode, bool clearList); 
+void BleLogic_StopSetupScan();
+void BleLogic_CloseSetupWindow();
+void BleLogic_SaveDevice(int index);
+
+void BleLogic_GetScanStatus(char* infoBuf, size_t maxLen, bool& isScanning, bool& showSaveBtn);
+void BleLogic_SendAlarmOn();
+void BleLogic_SendAlarmOff();

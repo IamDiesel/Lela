@@ -19,6 +19,7 @@ struct AudioMsg { uint16_t freq; uint32_t duration; bool isUiSound; uint8_t soun
 
 extern SemaphoreHandle_t bleMutex;
 
+extern bool dongleAlarmEnabled; // Ob der T-Dongle mitalarmieren soll
 extern bool audioDebugEnabled;
 extern String audioLogs[10];
 extern int audioLogIdx;
