@@ -41,6 +41,14 @@ lv_obj_t* HaDialogEdit::slider_state_margin = nullptr;
 lv_obj_t* HaDialogEdit::lbl_i_m_val = nullptr;
 lv_obj_t* HaDialogEdit::lbl_t_m_val = nullptr;
 lv_obj_t* HaDialogEdit::lbl_s_m_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_c_w_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_c_h_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_c_x_val = nullptr;    
+lv_obj_t* HaDialogEdit::lbl_c_y_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_v_w_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_v_h_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_v_gap_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_v_y_val = nullptr;
 
 lv_obj_t* HaDialogEdit::btn_color_on = nullptr;
 lv_obj_t* HaDialogEdit::btn_color_off = nullptr;
@@ -78,11 +86,16 @@ void HaDialogEdit::resetState() {
     dd_icon_pos = nullptr; dd_text_pos = nullptr; dd_state_pos = nullptr;
     slider_icon_margin = nullptr; slider_text_margin = nullptr; slider_state_margin = nullptr;
     lbl_i_m_val = nullptr; lbl_t_m_val = nullptr; lbl_s_m_val = nullptr;
+    lbl_c_w_val = nullptr; lbl_c_h_val = nullptr; lbl_c_x_val = nullptr; lbl_c_y_val = nullptr;
+    lbl_v_w_val = nullptr; lbl_v_h_val = nullptr; lbl_v_gap_val = nullptr; lbl_v_y_val = nullptr;
     btn_color_on = nullptr; btn_color_off = nullptr;
 }
 
 void HaDialogEdit::updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix) {
+    if (!btn || !lv_obj_is_valid(btn)) return;
     lv_obj_t* label = lv_obj_get_child(btn, 0);
+    if (!label || !lv_obj_is_valid(label)) return;
+    
     if(hexColor.length() > 0 && hexColor.startsWith("#")) {
         lv_obj_set_style_bg_color(btn, lv_color_hex(strtol(hexColor.substring(1).c_str(), NULL, 16)), 0);
         lv_label_set_text_fmt(label, "%s %s", prefix, hexColor.c_str()); 
@@ -95,12 +108,12 @@ void HaDialogEdit::updateColorBtn(lv_obj_t* btn, String hexColor, const char* pr
 }
 
 void HaDialogEdit::icon_search_event_cb(lv_event_t * e) {
-    if (!ta_icon_search) return;
+    if (!ta_icon_search || !lv_obj_is_valid(ta_icon_search)) return;
     last_search_term = String(lv_textarea_get_text(ta_icon_search)); 
     last_search_term.toLowerCase();
     
     if (last_search_term.length() < 2) {
-        if (dd_icon_cat && dd_icon) {
+        if (dd_icon_cat && lv_obj_is_valid(dd_icon_cat) && dd_icon && lv_obj_is_valid(dd_icon)) {
             lv_dropdown_set_options(dd_icon, icon_categories[lv_dropdown_get_selected(dd_icon_cat)].options);
         }
         return;
@@ -127,14 +140,18 @@ void HaDialogEdit::icon_search_event_cb(lv_event_t * e) {
     }
     
     if (count == 0) results += "\nKeine Treffer";
-    lv_dropdown_set_options(dd_icon, results.c_str()); 
-    lv_dropdown_set_selected(dd_icon, count > 0 ? 1 : 0);
+    if (dd_icon && lv_obj_is_valid(dd_icon)) {
+        lv_dropdown_set_options(dd_icon, results.c_str()); 
+        lv_dropdown_set_selected(dd_icon, count > 0 ? 1 : 0);
+    }
 }
 
 void HaDialogEdit::dd_icon_cat_event_cb(lv_event_t * e) {
-    lv_dropdown_set_options(dd_icon, icon_categories[lv_dropdown_get_selected(dd_icon_cat)].options); 
-    lv_dropdown_set_selected(dd_icon, 0); 
-    if (last_search_term.length() > 0) { 
+    if (dd_icon && lv_obj_is_valid(dd_icon) && dd_icon_cat && lv_obj_is_valid(dd_icon_cat)) {
+        lv_dropdown_set_options(dd_icon, icon_categories[lv_dropdown_get_selected(dd_icon_cat)].options); 
+        lv_dropdown_set_selected(dd_icon, 0); 
+    }
+    if (last_search_term.length() > 0 && ta_icon_search && lv_obj_is_valid(ta_icon_search)) { 
         last_search_term = ""; 
         lv_textarea_set_text(ta_icon_search, ""); 
     }
@@ -142,97 +159,163 @@ void HaDialogEdit::dd_icon_cat_event_cb(lv_event_t * e) {
 
 void HaDialogEdit::layout_change_cb(lv_event_t* e) {
     if (!current_widget) return;
-    if (lbl_i_m_val && slider_icon_margin) lv_label_set_text_fmt(lbl_i_m_val, "%d px", (int)lv_slider_get_value(slider_icon_margin));
-    if (lbl_t_m_val && slider_text_margin) lv_label_set_text_fmt(lbl_t_m_val, "%d px", (int)lv_slider_get_value(slider_text_margin));
-    if (lbl_s_m_val && slider_state_margin) lv_label_set_text_fmt(lbl_s_m_val, "%d px", (int)lv_slider_get_value(slider_state_margin));
+    
+    if (lbl_i_m_val && lv_obj_is_valid(lbl_i_m_val) && slider_icon_margin && lv_obj_is_valid(slider_icon_margin)) 
+        lv_label_set_text_fmt(lbl_i_m_val, "%d px", (int)lv_slider_get_value(slider_icon_margin));
+        
+    if (lbl_t_m_val && lv_obj_is_valid(lbl_t_m_val) && slider_text_margin && lv_obj_is_valid(slider_text_margin)) 
+        lv_label_set_text_fmt(lbl_t_m_val, "%d px", (int)lv_slider_get_value(slider_text_margin));
+        
+    if (lbl_s_m_val && lv_obj_is_valid(lbl_s_m_val) && slider_state_margin && lv_obj_is_valid(slider_state_margin)) 
+        lv_label_set_text_fmt(lbl_s_m_val, "%d px", (int)lv_slider_get_value(slider_state_margin));
 
-    current_widget->setAlignments(
-        idxToAlign(lv_dropdown_get_selected(dd_icon_pos)), idxToAlign(lv_dropdown_get_selected(dd_text_pos)),
-        dd_state_pos ? idxToAlign(lv_dropdown_get_selected(dd_state_pos)) : LV_ALIGN_CENTER,
-        lv_slider_get_value(slider_icon_margin), lv_slider_get_value(slider_text_margin),
-        slider_state_margin ? lv_slider_get_value(slider_state_margin) : 0
-    );
+    if (dd_icon_pos && lv_obj_is_valid(dd_icon_pos) && dd_text_pos && lv_obj_is_valid(dd_text_pos) && 
+        slider_icon_margin && lv_obj_is_valid(slider_icon_margin) && slider_text_margin && lv_obj_is_valid(slider_text_margin)) {
+        
+        current_widget->setAlignments(
+            idxToAlign(lv_dropdown_get_selected(dd_icon_pos)), 
+            idxToAlign(lv_dropdown_get_selected(dd_text_pos)),
+            (dd_state_pos && lv_obj_is_valid(dd_state_pos)) ? idxToAlign(lv_dropdown_get_selected(dd_state_pos)) : LV_ALIGN_CENTER,
+            lv_slider_get_value(slider_icon_margin), 
+            lv_slider_get_value(slider_text_margin),
+            (slider_state_margin && lv_obj_is_valid(slider_state_margin)) ? lv_slider_get_value(slider_state_margin) : 0
+        );
+    }
 }
 
 void HaDialogEdit::btn_save_event_cb(lv_event_t * e) {
     if (!current_widget) return;
-    current_widget->setName(String(lv_textarea_get_text(ta_name)));
-
-    char buf[64]; lv_dropdown_get_selected_str(dd_icon, buf, sizeof(buf));
-    String sel_icon = String(buf);
     
-    if (sel_icon != "--- Unveraendert ---") {
-        if (sel_icon.startsWith("Standard") || sel_icon.startsWith("---") || sel_icon.startsWith("Keine Treffer")) {
-            current_widget->setMdiIcon("");
-        } else {
-            current_widget->setMdiIcon(sel_icon);
+    if (ta_name && lv_obj_is_valid(ta_name)) {
+        current_widget->setName(String(lv_textarea_get_text(ta_name)));
+    }
+
+    if (dd_icon && lv_obj_is_valid(dd_icon)) {
+        char buf[64]; 
+        lv_dropdown_get_selected_str(dd_icon, buf, sizeof(buf));
+        String sel_icon = String(buf);
+        if (sel_icon != "--- Unveraendert ---") {
+            if (sel_icon.startsWith("Standard") || sel_icon.startsWith("---") || sel_icon.startsWith("Keine Treffer")) {
+                current_widget->setMdiIcon("");
+            } else {
+                current_widget->setMdiIcon(sel_icon);
+            }
         }
     }
 
     current_widget->setColors(selected_color_on, selected_color_off);
-    current_widget->setSnapToGrid(lv_obj_has_state(cb_snap, LV_STATE_CHECKED));
+    if (cb_snap && lv_obj_is_valid(cb_snap)) {
+        current_widget->setSnapToGrid(lv_obj_has_state(cb_snap, LV_STATE_CHECKED));
+    }
     
-    if (current_widget->getType() == "sensor" && cb_chart) {
-        current_widget->setChartConfig(lv_obj_has_state(cb_chart, LV_STATE_CHECKED),
-            lv_slider_get_value(slider_chart_w), lv_slider_get_value(slider_chart_h),
-            lv_slider_get_value(slider_chart_x), lv_slider_get_value(slider_chart_y),
-            String(lv_textarea_get_text(ta_chart_min)), String(lv_textarea_get_text(ta_chart_max))
+    if (current_widget->getType() == "sensor" && cb_chart && lv_obj_is_valid(cb_chart) && 
+        slider_chart_w && lv_obj_is_valid(slider_chart_w) && 
+        slider_chart_h && lv_obj_is_valid(slider_chart_h) && 
+        slider_chart_x && lv_obj_is_valid(slider_chart_x) && 
+        slider_chart_y && lv_obj_is_valid(slider_chart_y) && 
+        ta_chart_min && lv_obj_is_valid(ta_chart_min) && 
+        ta_chart_max && lv_obj_is_valid(ta_chart_max)) {
+        
+        current_widget->setChartConfig(
+            lv_obj_has_state(cb_chart, LV_STATE_CHECKED),
+            lv_slider_get_value(slider_chart_w),
+            lv_slider_get_value(slider_chart_h),
+            lv_slider_get_value(slider_chart_x),
+            lv_slider_get_value(slider_chart_y),
+            String(lv_textarea_get_text(ta_chart_min)),
+            String(lv_textarea_get_text(ta_chart_max))
         );
-    } else if (current_widget->getType() == "vacuum" && slider_vac_w) {
-        current_widget->setChartConfig(false, lv_slider_get_value(slider_vac_w), lv_slider_get_value(slider_vac_h),
-            lv_slider_get_value(slider_vac_gap), lv_slider_get_value(slider_vac_y), "", ""
+    } else if (current_widget->getType() == "vacuum" && slider_vac_w && lv_obj_is_valid(slider_vac_w) && 
+               slider_vac_h && lv_obj_is_valid(slider_vac_h) && 
+               slider_vac_gap && lv_obj_is_valid(slider_vac_gap) && 
+               slider_vac_y && lv_obj_is_valid(slider_vac_y)) {
+               
+        current_widget->setChartConfig(false,
+            lv_slider_get_value(slider_vac_w),
+            lv_slider_get_value(slider_vac_h),
+            lv_slider_get_value(slider_vac_gap),
+            lv_slider_get_value(slider_vac_y),
+            "", ""
         );
     }
 
-    lv_obj_del_async(overlay); resetState();
+    if (overlay && lv_obj_is_valid(overlay)) {
+        lv_obj_del_async(overlay); 
+    }
+    resetState();
 }
 
 void HaDialogEdit::btn_cancel_event_cb(lv_event_t * e) {
     if (current_widget) { 
         current_widget->setSize(orig_w, orig_h); 
         current_widget->setAlignments(orig_i_align, orig_t_align, orig_s_align, orig_i_margin, orig_t_margin, orig_s_margin); 
-        if (current_widget->getType() == "vacuum") current_widget->setChartConfig(false, orig_c_w, orig_c_h, orig_c_x, orig_c_y, "", "");
+        if (current_widget->getType() == "vacuum") {
+            current_widget->setChartConfig(false, orig_c_w, orig_c_h, orig_c_x, orig_c_y, "", "");
+        }
     }
-    lv_obj_del_async(overlay); resetState();
+    
+    if (overlay && lv_obj_is_valid(overlay)) {
+        lv_obj_del_async(overlay); 
+    }
+    resetState();
 }
 
 void HaDialogEdit::bindKeyboardToTextarea(lv_obj_t* ta) {
-    if (!ta || !kb) return;
+    if (!ta) return;
+    
     lv_obj_add_event_cb(ta, [](lv_event_t* e){
         lv_event_code_t code = lv_event_get_code(e);
         lv_obj_t* target = lv_event_get_target(e);
+        if (!target || !lv_obj_is_valid(target)) return;
         
         if(code == LV_EVENT_FOCUSED) {
-            lv_keyboard_set_textarea(kb, target);
-            if (target == ta_chart_min || target == ta_chart_max) lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
-            else lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
-            lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_align(edit_panel, LV_ALIGN_TOP_MID, 0, 10);
+            if (kb && lv_obj_is_valid(kb)) {
+                lv_keyboard_set_textarea(kb, target);
+                if (target == ta_chart_min || target == ta_chart_max) {
+                    lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
+                } else {
+                    lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+                }
+                lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (edit_panel && lv_obj_is_valid(edit_panel)) {
+                lv_obj_align(edit_panel, LV_ALIGN_TOP_MID, 0, 10);
+            }
         }
+        
         if(code == LV_EVENT_DEFOCUSED) {
-            lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
-            if (current_widget && current_widget->getY() > 300) lv_obj_align(edit_panel, LV_ALIGN_TOP_MID, 0, 10);
-            else lv_obj_align(edit_panel, LV_ALIGN_BOTTOM_MID, 0, -10);
-            if (target == ta_icon_search) lv_event_send(ta_icon_search, LV_EVENT_VALUE_CHANGED, NULL);
+            if (kb && lv_obj_is_valid(kb)) {
+                lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (edit_panel && lv_obj_is_valid(edit_panel) && current_widget && current_widget->container && lv_obj_is_valid(current_widget->container)) {
+                if (current_widget->getY() > 300) {
+                    lv_obj_align(edit_panel, LV_ALIGN_TOP_MID, 0, 10);
+                } else {
+                    lv_obj_align(edit_panel, LV_ALIGN_BOTTOM_MID, 0, -10);
+                }
+            }
+            if (target == ta_icon_search && ta_icon_search && lv_obj_is_valid(ta_icon_search)) {
+                lv_event_send(ta_icon_search, LV_EVENT_VALUE_CHANGED, NULL);
+            }
         }
     }, LV_EVENT_ALL, NULL);
 }
 
 void HaDialogEdit::buildSizeTab(lv_obj_t* parent, HAWidget* w) {
     UIHelper::createButton(parent, 80, 80, LV_ALIGN_LEFT_MID, 20, -50, 0xAA0000, LV_SYMBOL_MINUS, [](lv_event_t* e){ 
-        int nw = current_widget->getW() - 40; if (nw < 100) nw = 100; current_widget->setSize(nw, current_widget->getH()); 
+        if(current_widget) { int nw = current_widget->getW() - 40; if (nw < 100) nw = 100; current_widget->setSize(nw, current_widget->getH()); }
     });
     UIHelper::createLabel(parent, "Breite", &lv_font_montserrat_24, LV_ALIGN_CENTER, 0, -50);
     UIHelper::createButton(parent, 80, 80, LV_ALIGN_RIGHT_MID, -20, -50, 0x27AE60, LV_SYMBOL_PLUS, [](lv_event_t* e){ 
-        current_widget->setSize(current_widget->getW() + 40, current_widget->getH()); 
+        if(current_widget) current_widget->setSize(current_widget->getW() + 40, current_widget->getH()); 
     });
 
     UIHelper::createButton(parent, 80, 80, LV_ALIGN_LEFT_MID, 20, 50, 0xAA0000, LV_SYMBOL_MINUS, [](lv_event_t* e){ 
-        int nh = current_widget->getH() - 40; if (nh < 80) nh = 80; current_widget->setSize(current_widget->getW(), nh); 
+        if(current_widget) { int nh = current_widget->getH() - 40; if (nh < 80) nh = 80; current_widget->setSize(current_widget->getW(), nh); }
     });
     UIHelper::createLabel(parent, "Hoehe", &lv_font_montserrat_24, LV_ALIGN_CENTER, 0, 50);
     UIHelper::createButton(parent, 80, 80, LV_ALIGN_RIGHT_MID, -20, 50, 0x27AE60, LV_SYMBOL_PLUS, [](lv_event_t* e){ 
-        current_widget->setSize(current_widget->getW(), current_widget->getH() + 40); 
+        if(current_widget) current_widget->setSize(current_widget->getW(), current_widget->getH() + 40); 
     });
 }
 
@@ -248,7 +331,10 @@ void HaDialogEdit::buildDisplayTab(lv_obj_t* parent, HAWidget* w) {
 
     UIHelper::createLabel(parent, "Bereich:", &lv_font_montserrat_16, LV_ALIGN_TOP_LEFT, 10, 110);
     String cat_opts = "";
-    for(int i = 0; i < num_icon_categories; i++) { cat_opts += icon_categories[i].name; if(i < num_icon_categories - 1) cat_opts += "\n"; }
+    for(int i = 0; i < num_icon_categories; i++) { 
+        cat_opts += icon_categories[i].name; 
+        if(i < num_icon_categories - 1) cat_opts += "\n"; 
+    }
     dd_icon_cat = UIHelper::createDropdown(parent, 500, 40, LV_ALIGN_TOP_LEFT, 100, 100, cat_opts.c_str(), 0, dd_icon_cat_event_cb);
 
     UIHelper::createLabel(parent, "Icon:", &lv_font_montserrat_16, LV_ALIGN_TOP_LEFT, 10, 160);
@@ -261,7 +347,9 @@ void HaDialogEdit::buildDisplayTab(lv_obj_t* parent, HAWidget* w) {
             int pos = 0, idx = 0; bool found = false;
             while (pos != -1) {
                 int next = opts.indexOf('\n', pos);
-                if (((next == -1) ? opts.substring(pos) : opts.substring(pos, next)) == w->getMdiIcon()) { sel_cat = c; sel_icon = idx; found = true; break; }
+                if (((next == -1) ? opts.substring(pos) : opts.substring(pos, next)) == w->getMdiIcon()) { 
+                    sel_cat = c; sel_icon = idx; found = true; break; 
+                }
                 idx++; pos = (next == -1) ? -1 : next + 1;
             }
             if (found) break;
@@ -270,7 +358,10 @@ void HaDialogEdit::buildDisplayTab(lv_obj_t* parent, HAWidget* w) {
     lv_dropdown_set_selected(dd_icon_cat, sel_cat);
     lv_dropdown_set_options(dd_icon, icon_categories[sel_cat].options);
     lv_dropdown_set_selected(dd_icon, sel_icon);
-    if (last_search_term.length() >= 2) icon_search_event_cb(NULL);
+    
+    if (last_search_term.length() >= 2) {
+        icon_search_event_cb(NULL);
+    }
 
     UIHelper::createLabel(parent, "Personalisierte Farben:", nullptr, LV_ALIGN_TOP_LEFT, 10, 205, 0x00A0FF);
     btn_color_on = UIHelper::createButton(parent, 280, 50, LV_ALIGN_TOP_LEFT, 10, 230, 0x555555, "Laden...", [](lv_event_t* e){ 
@@ -278,20 +369,27 @@ void HaDialogEdit::buildDisplayTab(lv_obj_t* parent, HAWidget* w) {
             selected_color_on = color; updateColorBtn(btn_color_on, selected_color_on, "Aktiv:");
         });
     });
+    
     btn_color_off = UIHelper::createButton(parent, 280, 50, LV_ALIGN_TOP_LEFT, 320, 230, 0x555555, "Laden...", [](lv_event_t* e){ 
         playToneI2S(800, 100, true); HaColorPicker::show(selected_color_off, [](String color) {
             selected_color_off = color; updateColorBtn(btn_color_off, selected_color_off, "Inaktiv:");
         });
     });
 
-    selected_color_on = w->getColorOn(); selected_color_off = w->getColorOff();
-    updateColorBtn(btn_color_on, selected_color_on, "Aktiv:"); updateColorBtn(btn_color_off, selected_color_off, "Inaktiv:");
+    selected_color_on = w->getColorOn(); 
+    selected_color_off = w->getColorOff();
+    updateColorBtn(btn_color_on, selected_color_on, "Aktiv:"); 
+    updateColorBtn(btn_color_off, selected_color_off, "Inaktiv:");
 }
 
 void HaDialogEdit::buildLayoutTab(lv_obj_t* parent, HAWidget* w) {
     int y = 15;
-    UIHelper::createButton(parent, 150, 40, LV_ALIGN_TOP_LEFT, 10, y, 0x2980B9, "Nach vorne", [](lv_event_t* e){ if(current_widget) lv_obj_move_foreground(current_widget->container); });
-    UIHelper::createButton(parent, 150, 40, LV_ALIGN_TOP_LEFT, 170, y, 0x8E44AD, "Nach hinten", [](lv_event_t* e){ if(current_widget) lv_obj_move_background(current_widget->container); });
+    UIHelper::createButton(parent, 150, 40, LV_ALIGN_TOP_LEFT, 10, y, 0x2980B9, "Nach vorne", [](lv_event_t* e){ 
+        if(current_widget && current_widget->container && lv_obj_is_valid(current_widget->container)) lv_obj_move_foreground(current_widget->container); 
+    });
+    UIHelper::createButton(parent, 150, 40, LV_ALIGN_TOP_LEFT, 170, y, 0x8E44AD, "Nach hinten", [](lv_event_t* e){ 
+        if(current_widget && current_widget->container && lv_obj_is_valid(current_widget->container)) lv_obj_move_background(current_widget->container); 
+    });
     
     y += 60;
     UIHelper::createLabel(parent, "Icon:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, y+10);
@@ -321,36 +419,39 @@ void HaDialogEdit::buildLayoutTab(lv_obj_t* parent, HAWidget* w) {
 
 void HaDialogEdit::buildChartTab(lv_obj_t* parent, HAWidget* w) {
     int cy = 10;
-    cb_chart = UIHelper::createCheckbox(parent, "Als Diagramm (Verlauf) anzeigen", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy, w->getShowChart());
+    cb_chart = UIHelper::createCheckbox(parent, "Als Diagramm anzeigen", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy, w->getShowChart());
     cy += 40;
 
     auto s_cb = [](lv_event_t* e) {
         lv_obj_t* slider = lv_event_get_target(e);
+        if (!slider || !lv_obj_is_valid(slider)) return;
         int val = lv_slider_get_value(slider);
-        lv_obj_t* lbl = (lv_obj_t*)lv_event_get_user_data(e);
         
-        if (slider == slider_chart_w || slider == slider_chart_h) lv_label_set_text_fmt(lbl, "%d %%", val);
-        else lv_label_set_text_fmt(lbl, "%d px", val);
+        lv_obj_t* lbl = (lv_obj_t*)lv_event_get_user_data(e);
+        if (lbl && lv_obj_is_valid(lbl)) {
+            if (slider == slider_chart_w || slider == slider_chart_h) lv_label_set_text_fmt(lbl, "%d %%", val);
+            else lv_label_set_text_fmt(lbl, "%d px", val);
+        }
     };
 
     UIHelper::createLabel(parent, "Breite:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lv_obj_t* lbl_c_w_v = UIHelper::createLabel(parent, (String(w->getChartWPct()) + " %").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_chart_w = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 50, 100, w->getChartWPct(), s_cb, lbl_c_w_v);
+    lbl_c_w_val = UIHelper::createLabel(parent, (String(w->getChartWPct()) + " %").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
+    slider_chart_w = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 50, 100, w->getChartWPct(), s_cb, lbl_c_w_val);
     cy += 40;
 
     UIHelper::createLabel(parent, "Hoehe:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lv_obj_t* lbl_c_h_v = UIHelper::createLabel(parent, (String(w->getChartHPct()) + " %").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_chart_h = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 20, 100, w->getChartHPct(), s_cb, lbl_c_h_v);
+    lbl_c_h_val = UIHelper::createLabel(parent, (String(w->getChartHPct()) + " %").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
+    slider_chart_h = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 20, 100, w->getChartHPct(), s_cb, lbl_c_h_val);
     cy += 40;
 
     UIHelper::createLabel(parent, "X-Pos:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lv_obj_t* lbl_c_x_v = UIHelper::createLabel(parent, (String(w->getChartXOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_chart_x = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -100, 100, w->getChartXOfs(), s_cb, lbl_c_x_v);
+    lbl_c_x_val = UIHelper::createLabel(parent, (String(w->getChartXOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
+    slider_chart_x = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -100, 100, w->getChartXOfs(), s_cb, lbl_c_x_val);
     cy += 40;
 
     UIHelper::createLabel(parent, "Y-Pos:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lv_obj_t* lbl_c_y_v = UIHelper::createLabel(parent, (String(w->getChartYOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_chart_y = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -200, 100, w->getChartYOfs(), s_cb, lbl_c_y_v);
+    lbl_c_y_val = UIHelper::createLabel(parent, (String(w->getChartYOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
+    slider_chart_y = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -200, 100, w->getChartYOfs(), s_cb, lbl_c_y_val);
     cy += 50;
 
     UIHelper::createLabel(parent, "Min. Wert:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy+10);
@@ -366,31 +467,44 @@ void HaDialogEdit::buildVacuumTab(lv_obj_t* parent, HAWidget* w) {
     int cy = 10;
     auto v_cb = [](lv_event_t* e) {
         lv_obj_t* slider = lv_event_get_target(e);
+        if (!slider || !lv_obj_is_valid(slider)) return;
         int val = lv_slider_get_value(slider);
-        lv_obj_t* lbl = (lv_obj_t*)lv_event_get_user_data(e);
-        lv_label_set_text_fmt(lbl, "%d px", val);
         
-        if (current_widget) current_widget->setChartConfig(false, lv_slider_get_value(slider_vac_w), lv_slider_get_value(slider_vac_h), lv_slider_get_value(slider_vac_gap), lv_slider_get_value(slider_vac_y), "", "");
+        lv_obj_t* lbl = (lv_obj_t*)lv_event_get_user_data(e);
+        if (lbl && lv_obj_is_valid(lbl)) {
+            lv_label_set_text_fmt(lbl, "%d px", val);
+        }
+        
+        if (current_widget && slider_vac_w && lv_obj_is_valid(slider_vac_w) && 
+            slider_vac_h && lv_obj_is_valid(slider_vac_h) && 
+            slider_vac_gap && lv_obj_is_valid(slider_vac_gap) && 
+            slider_vac_y && lv_obj_is_valid(slider_vac_y)) {
+            current_widget->setChartConfig(false, 
+                lv_slider_get_value(slider_vac_w), 
+                lv_slider_get_value(slider_vac_h), 
+                lv_slider_get_value(slider_vac_gap), 
+                lv_slider_get_value(slider_vac_y), "", "");
+        }
     };
 
     UIHelper::createLabel(parent, "Breite:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lv_obj_t* lbl_v_w_v = UIHelper::createLabel(parent, (String(w->getChartWPct()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_vac_w = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 30, 100, w->getChartWPct(), v_cb, lbl_v_w_v);
+    lbl_v_w_val = UIHelper::createLabel(parent, (String(w->getChartWPct()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
+    slider_vac_w = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 30, 100, w->getChartWPct(), v_cb, lbl_v_w_val);
     cy += 50;
 
     UIHelper::createLabel(parent, "Hoehe:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lv_obj_t* lbl_v_h_v = UIHelper::createLabel(parent, (String(w->getChartHPct()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_vac_h = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 20, 80, w->getChartHPct(), v_cb, lbl_v_h_v);
+    lbl_v_h_val = UIHelper::createLabel(parent, (String(w->getChartHPct()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
+    slider_vac_h = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 20, 80, w->getChartHPct(), v_cb, lbl_v_h_val);
     cy += 50;
 
     UIHelper::createLabel(parent, "Abstand:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lv_obj_t* lbl_v_gap_v = UIHelper::createLabel(parent, (String(w->getChartXOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_vac_gap = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 0, 80, w->getChartXOfs(), v_cb, lbl_v_gap_v);
+    lbl_v_gap_val = UIHelper::createLabel(parent, (String(w->getChartXOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
+    slider_vac_gap = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 0, 80, w->getChartXOfs(), v_cb, lbl_v_gap_val);
     cy += 50;
 
     UIHelper::createLabel(parent, "Y-Pos:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lv_obj_t* lbl_v_y_v = UIHelper::createLabel(parent, (String(w->getChartYOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_vac_y = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -50, 100, w->getChartYOfs(), v_cb, lbl_v_y_v);
+    lbl_v_y_val = UIHelper::createLabel(parent, (String(w->getChartYOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
+    slider_vac_y = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -50, 100, w->getChartYOfs(), v_cb, lbl_v_y_val);
 }
 
 void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
@@ -432,7 +546,10 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     lv_obj_add_event_cb(kb, [](lv_event_t* e){
         if (lv_event_get_code(e) == LV_EVENT_READY || lv_event_get_code(e) == LV_EVENT_CANCEL) {
             lv_obj_t* ta = lv_keyboard_get_textarea(lv_event_get_target(e));
-            if (ta) { lv_obj_clear_state(ta, LV_STATE_FOCUSED); lv_event_send(ta, LV_EVENT_DEFOCUSED, NULL); }
+            if (ta && lv_obj_is_valid(ta)) { 
+                lv_obj_clear_state(ta, LV_STATE_FOCUSED); 
+                lv_event_send(ta, LV_EVENT_DEFOCUSED, NULL); 
+            }
         }
     }, LV_EVENT_ALL, NULL);
 
@@ -471,12 +588,20 @@ void HaDialogEdit::handleWidgetDeleteDrop(HAWidget* w) {
         
         UIHelper::createButton(panel, 200, 60, LV_ALIGN_BOTTOM_RIGHT, -20, -30, 0xAA0000, "Ja, loeschen", [](lv_event_t* e) {
             HAWidget* wid = (HAWidget*)lv_event_get_user_data(e);
-            lv_obj_add_flag(wid->container, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_del_async(overlay); resetState(); 
+            if (wid && wid->container && lv_obj_is_valid(wid->container)) {
+                lv_obj_add_flag(wid->container, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (overlay && lv_obj_is_valid(overlay)) {
+                lv_obj_del_async(overlay); 
+            }
+            resetState(); 
         }, w);
 
         UIHelper::createButton(panel, 200, 60, LV_ALIGN_BOTTOM_LEFT, 20, -30, 0x333333, "Abbrechen", [](lv_event_t* e) { 
-            lv_obj_del_async(overlay); resetState(); 
+            if (overlay && lv_obj_is_valid(overlay)) {
+                lv_obj_del_async(overlay); 
+            }
+            resetState(); 
         });
     }
 }

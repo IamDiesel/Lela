@@ -37,13 +37,24 @@ private:
     static lv_obj_t* slider_text_margin;
     static lv_obj_t* slider_state_margin;
 
+    // --- DIE FEHLENDEN LABELS ---
     static lv_obj_t* lbl_i_m_val;
     static lv_obj_t* lbl_t_m_val;
     static lv_obj_t* lbl_s_m_val;
+    static lv_obj_t* lbl_c_w_val;
+    static lv_obj_t* lbl_c_h_val;
+    static lv_obj_t* lbl_c_x_val;
+    static lv_obj_t* lbl_c_y_val;
+    static lv_obj_t* lbl_v_w_val;
+    static lv_obj_t* lbl_v_h_val;
+    static lv_obj_t* lbl_v_gap_val;
+    static lv_obj_t* lbl_v_y_val;
 
     static lv_obj_t* btn_color_on;
     static lv_obj_t* btn_color_off;
     
+    // --- DER FEHLENDE FARBSCHALTER ---
+    static bool picking_color_on;
     static String selected_color_on;
     static String selected_color_off;
     static String last_search_term;

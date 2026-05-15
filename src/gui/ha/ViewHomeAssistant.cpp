@@ -10,7 +10,6 @@
 #include "HaDialogImport.h"
 #include "HaDialogMedia.h" 
 #include "HaDialogVacuum.h" 
-#include "HaDialogLight.h"
 #include "HaColorPicker.h"
 #include <algorithm> 
 
@@ -305,6 +304,7 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
         lv_obj_center(lbl_addw);
 
     } else {
+        // --- BEARBEITUNGSMODUS BEENDEN (Der Fix ist hier!) ---
         lv_obj_add_flag(tab_btns, LV_OBJ_FLAG_CLICKABLE); 
         
         lv_obj_set_style_bg_color(btn_edit, lv_color_hex(0x333333), 0);
@@ -327,16 +327,19 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
         if (act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
         currentActiveTab = act_tab;
         
-        std::sort(widgets.begin(), widgets.end(), [](HAWidget* a, HAWidget* b) {
-            if (a->container && b->container) {
-                return lv_obj_get_index(a->container) < lv_obj_get_index(b->container);
-            }
-            return false;
+        // DER ENTSCHEIDENDE FIX: std::stable_sort mit null-sicheren Vergleichen (Striktes Weak Ordering)
+        std::stable_sort(widgets.begin(), widgets.end(), [](HAWidget* a, HAWidget* b) {
+            int idxA = (a && a->container && lv_obj_is_valid(a->container)) ? lv_obj_get_index(a->container) : 999999;
+            int idxB = (b && b->container && lv_obj_is_valid(b->container)) ? lv_obj_get_index(b->container) : 999999;
+            return idxA < idxB;
         });
 
         HaConfigLogic::dashboards[act_tab].widgets.clear();
+        HaConfigLogic::dashboards[act_tab].widgets.reserve(widgets.size());
         for(HAWidget* w : widgets) {
+            if (!w || !w->container || !lv_obj_is_valid(w->container)) continue; 
             if (lv_obj_has_flag(w->container, LV_OBJ_FLAG_HIDDEN)) continue; 
+            
             if (w->getTabIndex() == act_tab) {
                 HAWidgetDef def;
                 def.entity_id = w->getEntityId();
@@ -385,17 +388,13 @@ lv_obj_t* ViewHomeAssistant::build() {
     HaDialogImport::resetState(); 
     HaDialogMedia::resetState(); 
     
-    // Sicherheitshalber auch die neuen Module resetten/verstecken
     if(HaColorPicker::isActive()) HaColorPicker::hide();
-    if(HaDialogLight::isActive()) HaDialogLight::hide();
 
     pendingHaReload = false; 
     HAWidget::editModeActive = false; 
     
-    // --- DIE NEUEN CALLBACKS ---
     HAWidget::onEditRequested = HaDialogEdit::showWidgetEditDialog;
     HAWidget::onDeleteRequested = HaDialogEdit::handleWidgetDeleteDrop;
-    HAWidget::onLightControlRequested = HaDialogLight::show; // Verweist jetzt auf die eigene Klasse!
     HAWidget::onMediaControlRequested = HaDialogMedia::showMediaControlDialog;
     HAWidget::onVacuumControlRequested = HaDialogVacuum::showVacuumDialog; 
     
@@ -451,6 +450,9 @@ lv_obj_t* ViewHomeAssistant::build() {
             
             new_widget->setAlignments(wDef.icon_align, wDef.text_align, wDef.state_align, wDef.icon_margin, wDef.text_margin, wDef.state_margin);
             new_widget->setSnapToGrid(wDef.snap_to_grid); 
+            
+            // ---> DER FIX: Wir uebergeben dem geladenen Widget nun auch seine Button/Chart-Konfiguration! <---
+            new_widget->setChartConfig(wDef.show_chart, wDef.chart_w_pct, wDef.chart_h_pct, wDef.chart_x_ofs, wDef.chart_y_ofs, wDef.chart_min, wDef.chart_max);
             
             widgets.push_back(new_widget);
         }
@@ -521,7 +523,6 @@ void ViewHomeAssistant::update() {
     }
 }
 
-// FIX: Event-Callbacks trennen, bevor das Widget zerstoert wird
 void ViewHomeAssistant::clearWidgets() {
     for (HAWidget* w : widgets) {
         if (w->container && lv_obj_is_valid(w->container)) {

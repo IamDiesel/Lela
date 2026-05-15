@@ -3,6 +3,17 @@
 #include <ArduinoJson.h>
 #include <algorithm> 
 #include "lvgl.h" 
+#include <esp_heap_caps.h> // NEU: Für den PSRAM Zugriff
+
+// --- NEU: Wir zwingen ArduinoJson, das 32MB PSRAM zu nutzen! ---
+class ConfigRamAllocator : public ArduinoJson::Allocator {
+public:
+    void* allocate(size_t size) override { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
+    void deallocate(void* pointer) override { heap_caps_free(pointer); }
+    void* reallocate(void* pointer, size_t new_size) override { return heap_caps_realloc(pointer, new_size, MALLOC_CAP_SPIRAM); }
+};
+static ConfigRamAllocator configAlloc;
+// ---------------------------------------------------------------
 
 std::vector<HADashboardDef> HaConfigLogic::dashboards;
 
@@ -32,7 +43,8 @@ void HaConfigLogic::Load() {
     file.readBytes(buf.get(), size);
     file.close();
 
-    JsonDocument doc;
+    // Nutze den PSRAM Allocator
+    JsonDocument doc(&configAlloc);
     DeserializationError error = deserializeJson(doc, buf.get());
     if (error) return;
 
@@ -45,7 +57,6 @@ void HaConfigLogic::Load() {
         for (JsonObject wObj : widgets) {
             HAWidgetDef wDef;
             
-            // FIX: V7 kompatible Abfragen
             if (!wObj["entity"].isNull()) wDef.entity_id = wObj["entity"].as<String>();
             if (!wObj["type"].isNull()) wDef.type = wObj["type"].as<String>();
             
@@ -72,7 +83,6 @@ void HaConfigLogic::Load() {
             
             wDef.snap_to_grid = !wObj["snap_to_grid"].isNull() ? wObj["snap_to_grid"].as<bool>() : true;
             
-            // Diagramm Settings
             wDef.show_chart = wObj["show_chart"] | false;
             wDef.chart_w_pct = wObj["chart_w_pct"] | 95;
             wDef.chart_h_pct = wObj["chart_h_pct"] | 50;
@@ -81,7 +91,6 @@ void HaConfigLogic::Load() {
             wDef.chart_min = wObj["chart_min"] | "";
             wDef.chart_max = wObj["chart_max"] | "";
             
-            // Media Player Settings
             wDef.media_content_type = wObj["media_content_type"] | "";
             wDef.media_content_id = wObj["media_content_id"] | "";
             
@@ -92,7 +101,8 @@ void HaConfigLogic::Load() {
 }
 
 void HaConfigLogic::Save() {
-    JsonDocument doc;
+    // Nutze den PSRAM Allocator, um OOM Crashes zu verhindern
+    JsonDocument doc(&configAlloc);
     JsonArray tabs = doc["tabs"].to<JsonArray>();
     
     for (const auto& t : dashboards) {
