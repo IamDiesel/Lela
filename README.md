@@ -9,13 +9,6 @@ Lela OS ist eine auf FreeRTOS und LVGL basierende Smart-Home-Betriebssystemumgeb
 <img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/76344272-6600-479e-a90e-29b8496e24bb" />
 <img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/351dd6f1-f55c-44d4-82c0-ea6ff94155e8" />
 
-
-
-
-
-
-
-
 ## Inhaltsverzeichnis
 1. [Systemarchitektur & Features](#1-systemarchitektur--features)
 2. [Hardware-Voraussetzungen](#2-hardware-voraussetzungen)
@@ -23,7 +16,8 @@ Lela OS ist eine auf FreeRTOS und LVGL basierende Smart-Home-Betriebssystemumgeb
 4. [Software & Abhängigkeiten](#4-software--abhängigkeiten)
 5. [Installation & Build-Prozess](#5-installation--build-prozess)
 6. [Ersteinrichtung (Web-Setup)](#6-ersteinrichtung-web-setup)
-7. [Lizenz](#7-lizenz)
+7. [Eigene Icons generieren (Icon Studio)](#7-eigene-icons-generieren-icon-studio)
+8. [Lizenz](#8-lizenz)
 
 ---
 
@@ -42,17 +36,18 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 ### 1.2 Home Assistant Integration
 * **WebSocket-Verbindung:** Persistenter, bidirektionaler Echtzeitkanal zu Home Assistant (ohne REST-Polling).
 * **Speichereffizienz:** Das System abonniert und parst (via ArduinoJson) nur State-Updates von Entitäten, die aktiv auf dem Dashboard platziert sind.
-* **Dienst-Steuerung:** Steuerung von Schaltern, Tasten, Lichtern (inkl. RGB/W-Farbwahl und Helligkeit) sowie Mediaplayern.
+* **Dienst-Steuerung:** Steuerung von Schaltern, Tasten, Lichtern (inkl. RGB/W-Farbwahl und Helligkeit), Mediaplayern sowie **Saugrobotern** (inkl. Saugstufen-Auswahl und Lokalisierung).
 * **Lovelace-Parser:** Import bestehender Home Assistant Dashboards (Lovelace JSON) in native C++ LVGL-Widgets.
 
 ### 1.3 On-Device Dashboard-Editor
 * **Layout-Engine:** Freies Platzieren von Widgets per Drag & Drop mit 10px-Snap-to-Grid.
-* **Z-Order Management:** Ebenensteuerung (Vordergrund/Hintergrund) für sich überlappende Elemente.
-* **Widget-Konfiguration:** Einstellungen für Margin, Alignment, Farben und Icons direkt über Touch-Eingaben und On-Screen-Keyboard.
-* **Backup/Restore:** JSON-basierter Export und Import des Layouts über das lokale Web-Portal.
+* **Stabile Rendering-Pipeline:** Sicheres Z-Order-Management beim Widget-Editing.
+* **Widget-Konfiguration:** Einstellungen für Margin, Alignment, Farben und Icons direkt über Touch-Eingaben und On-Screen-Keyboard. Optionale Skalierung für dynamische Sub-Elemente (z. B. Vacuum-Buttons).
+* **Backup/Restore (PSRAM optimiert):** JSON-basierter Export und Import des Layouts über das lokale Web-Portal. Das Speichern großer Konfigurationen wird via Custom Allocator in den 32MB PSRAM ausgelagert, um den internen RAM zu schonen (Out-Of-Memory Schutz).
 
 ### 1.4 Datenvisualisierung (Sensor-Charts)
 * **Dynamische Graphen:** Rendering von Sensordaten als Area-Charts über LVGL.
+* **Smartes UI-Design:** Dynamische LVGL-`recolor`-Einheiten (dezent und kontrastarm) sowie semi-transparente Wasserzeichen-Icons für maximale Lesbarkeit der Sensorwerte in Kachel-Ansichten.
 * **Historisierung:** Lokales Array für 50 Messwerte inkl. NTP-Zeitstempel (HH:MM) für die X-Achse.
 * **Auto-Scaling:** Skalierung der Y-Achse auf Basis von Min/Max-Werten mit dynamischem Padding. Manuelle Fixierung von Wertebereichen möglich.
 * **Hold-Logik:** Interpolation fehlender Datenpunkte in festen Zeitintervallen (10s) zur Wahrung der Zeitachsen-Integrität.
@@ -77,6 +72,7 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * *(Optional)* IP-Kamera oder ein ausgemustertes Smartphone mit der App [BabyCam](https://play.google.com/store/apps/details?id=com.arjonasoftware.babycam) für den MJPEG- und Audio-Stream.
 * *(Optional)* BLE-fähige Drucksensormatte
   * *Hinweis zur Sensormatte:* Details zur Hardware, Funktionsweise und dem dazugehörigen ESP32-Repeater finden sich [hier im CatMat-Repository](https://github.com/IamDiesel/CatMat/tree/main/bt_repeater).
+* *(Optional)* T-Dongle S3 [GIT](https://github.com/Xinyuan-LilyGO/T-Dongle-S3) von Lilygo als Bluetooth Coprozessor. Co-Prozessor SW siehe [GIT](https://github.com/IamDiesel/T-Dongle-S3-bt-coprocessor)
 
 ---
 
@@ -87,10 +83,12 @@ Der Quellcode ist modular in folgende Hauptbereiche unterteilt:
 * `src/config/`: Systemweite Konstanten, globale Variablen und Zugangsdaten (`secrets.h`).
 * `src/doc/`: Zusätzliche Dokumentationen und Setup-Hinweise.
 * `src/gui/`: Die vollständige LVGL-Benutzeroberfläche.
-  * `core/`: Haupt-Views (Dashboard, Settings, Topbar).
-  * `ha/`: Die C++ Widget-Klassen für Home Assistant und die zuhörigen Edit-Dialoge.
+  * `core/`: Haupt-Views (Dashboard, Settings, Topbar) und `GuiManager`.
+  * `ha/`: C++ LVGL-Integration für Home Assistant.
+    * `HaWidgets/`: Modulare Widget-Klassen (Base, Light, Sensor, Vacuum, Media).
+    * `HaDialogs/`: Gekapselte UI-Popups (Edit, Add, Light, Vacuum, ColorPicker) und die `UIHelper`-Factory für sauberen LVGL-Code.
   * `baby/` & `cat/`: Spezialisierte Ansichten für die Video/Audio- und Sensor-Überwachung.
-* `src/ha/`: Logik für die Home Assistant WebSocket-Kommunikation, JSON-Parsing und Config-Management.
+* `src/ha/`: Logik für die Home Assistant WebSocket-Kommunikation, JSON-Parsing und Config-Management (`HaConfigLogic`).
 * `src/media/`: Audio- und Video-Streaming-Dienste sowie Puffer-Verwaltung.
 * `src/system/`: Hardwarenahe Logik (BLE-Scanning, MQTT, WLAN-Handling, lokaler Webserver und LVGL-Treiber-Initialisierung).
 
@@ -105,7 +103,7 @@ Das Projekt wird mit **PlatformIO** (Framework: Arduino) kompiliert. Alle erford
 
 **Verwendete Haupt-Bibliotheken:**
 * **`m5stack/M5Unified`** (`^0.2.2`): Hardware-Abstraktion für Display, Touch und I2S-Audio des M5Stack.
-* **`bblanchon/ArduinoJson`** (`^7.3.0`): Für performantes, speichersicheres JSON-Parsing.
+* **`bblanchon/ArduinoJson`** (`^7.3.0`): Für performantes, PSRAM-optimiertes JSON-Parsing.
 * **`gilmaimon/ArduinoWebsockets`** (`^0.5.4`): Für den bidirektionalen Home Assistant Echtzeit-Feed.
 * **`earlephilhower/ESP8266Audio`** (`^1.9.9`): Für die I2S-Audiosignalausgabe (MP3/AAC/WAV).
 * **`lvgl/lvgl`** (`~8.4.0`): Die Basis der Grafik-Engine, konfiguriert über die lokale `lv_conf.h`.
@@ -126,7 +124,7 @@ Aufgrund spezifischer Abhängigkeiten im Espressif/PlatformIO Ökosystem für de
 1. **Python Click-Modul Downgrade (PlatformIO Bug):**
    Öffne das VS Code Terminal und führe folgenden Befehl aus, um das Modul auf eine kompatible Version zu setzen:
    
-        C:\Users\<DeinNutzername>\.platformio\penv\Scripts\pip.exe install "click==8.1.7"
+       C:\Users\<DeinNutzername>\.platformio\penv\Scripts\pip.exe install "click==8.1.7"
    
 2. **ESP8266Audio PDM-Kompilierungsfehler:**
    Damit die Audio-Bibliothek auf dem P4-Chip fehlerfrei kompiliert, muss nach dem ersten Laden der Bibliotheken eine fehlerhafte PDM-Datei gelöscht werden. Navigiere im Dateibaum zu:
@@ -154,38 +152,29 @@ Wenn das Gerät zum ersten Mal startet (oder sein konfiguriertes WLAN nicht find
 
 ---
 
-### 7. Eigene Icons generieren (Icon Studio)
-Im Verzeichnis python_lvgl_mdi_icon_studio liegt ein Python-Tool (iconConverter.py), mit dem die LVGL-Icon-Datei (lela_icons.c) komfortabel um eigene Material Design Icons erweitert werden kann.
+## 7. Eigene Icons generieren (Icon Studio)
+Im Verzeichnis `python_lvgl_mdi_icon_studio` liegt ein Python-Tool (`iconConverter.py`), mit dem die LVGL-Icon-Datei (`lela_icons.c`) komfortabel um eigene Material Design Icons erweitert werden kann.
 
 <img width="1144" height="827" alt="image" src="https://github.com/user-attachments/assets/6187b960-2d38-4d36-ad63-866d4d1e6975" />
 
-Vorbereitungen
+### Vorbereitungen
 Damit das Skript funktioniert, müssen folgende Abhängigkeiten auf dem PC installiert sein:
 
-Node.js (wird für das LVGL-Font-Tool npx benötigt).
+* **Node.js** (wird für das LVGL-Font-Tool `npx` benötigt).
+* **Python 3** inkl. der Bibliothek `PyQt5`.
+  * Installation via Terminal: `pip install PyQt5`
 
-Python 3 inkl. der Bibliothek PyQt5.
+**Lade die Font- und CSS-Dateien herunter:**
+1. Gehe auf das Repo [Templarian/MaterialDesign-Webfont (master)](https://github.com/Templarian/MaterialDesign-Webfont).
+2. Lade die Datei `materialdesignicons-webfont.ttf` (aus dem Ordner `fonts`) herunter.
+3. Lade die Datei `materialdesignicons.css` (aus dem Ordner `css`) herunter.
+4. Lege beide Dateien direkt in denselben Ordner wie das `iconConverter.py` Skript.
 
-Installation via Terminal: pip install PyQt5
-
-Lade die Font- und CSS-Dateien herunter:
-
-Gehe auf das Repo Templarian/MaterialDesign-Webfont (master)
-
-Lade die Datei materialdesignicons-webfont.ttf (aus dem Ordner fonts) herunter.
-
-Lade die Datei materialdesignicons.css (aus dem Ordner css) herunter.
-
-Lege beide Dateien direkt in denselben Ordner wie das iconConverter.py Skript.
-
-Icons kompilieren
-Führe das Skript aus: python iconConverter.py
-
-Es öffnet sich eine Benutzeroberfläche (Lela OS - Icon Studio). Wähle dort die gewünschten Icons aus.
-
-Nach dem Bestätigen generiert das Skript über npx lv_font_conv vollautomatisch eine neue C-Datei (lela_icons.c).
-
-Ersetze die bestehende lela_icons.c im Projekt (src/gui/fonts/) durch die neu generierte Datei.
+### Icons kompilieren
+1. Führe das Skript aus: `python iconConverter.py`
+2. Es öffnet sich eine Benutzeroberfläche (Lela OS - Icon Studio). Wähle dort die gewünschten Icons aus.
+3. Nach dem Bestätigen generiert das Skript über `npx lv_font_conv` vollautomatisch eine neue C-Datei (`lela_icons.c`).
+4. Ersetze die bestehende `lela_icons.c` im Projekt (`src/gui/fonts/`) durch die neu generierte Datei.
 
 ---
 
