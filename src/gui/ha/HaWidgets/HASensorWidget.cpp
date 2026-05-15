@@ -27,7 +27,7 @@ HASensorWidget::HASensorWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     time_t now; 
     time(&now);
     
-    for(int i = 0; i < 50; i++) { 
+    for (int i = 0; i < 50; i++) { 
         timestamps[i] = now - ((49 - i) * 10); 
         is_held[i] = true; 
     }
@@ -81,6 +81,7 @@ void HASensorWidget::buildUI() {
         ser = lv_chart_add_series(chart, lv_color_hex(0x3498DB), LV_CHART_AXIS_PRIMARY_Y);
         
         state_label = lv_label_create(container);
+        lv_label_set_recolor(state_label, true); 
         lv_obj_set_style_text_font(state_label, &lv_font_montserrat_16, 0); 
         lv_obj_set_style_text_color(state_label, lv_color_white(), 0);
         lv_label_set_text(state_label, "--"); 
@@ -95,6 +96,7 @@ void HASensorWidget::buildUI() {
         lv_obj_clear_flag(icon_label, LV_OBJ_FLAG_HIDDEN); 
         
         state_label = lv_label_create(container);
+        lv_label_set_recolor(state_label, true); 
         lv_obj_set_style_text_font(state_label, &lv_font_montserrat_28, 0); 
         lv_obj_set_style_text_color(state_label, lv_color_white(), 0);
         lv_label_set_text(state_label, "--");
@@ -140,7 +142,7 @@ void HASensorWidget::setChartConfig(bool show, int w_p, int h_p, int x_ofs, int 
     time_t now; 
     time(&now);
     
-    for(int i = 0; i < 50; i++) { 
+    for (int i = 0; i < 50; i++) { 
         timestamps[i] = now - ((49 - i) * 10); 
         is_held[i] = true; 
     }
@@ -170,14 +172,13 @@ void HASensorWidget::addChartValue(float val, bool held) {
         return;
     }
     
-    for(int i = 0; i < 49; i++) { 
+    for (int i = 0; i < 49; i++) { 
         timestamps[i] = timestamps[i+1]; 
         is_held[i] = is_held[i+1]; 
     }
     
     time_t now; 
     time(&now); 
-    
     timestamps[49] = now; 
     is_held[49] = held;
 
@@ -258,11 +259,21 @@ void HASensorWidget::setAlignments(int i_align, int t_align, int s_align, int i_
         int ox = 0;
         int oy = 0;
         switch(align_val) { 
-            case LV_ALIGN_TOP_MID: oy = margin; break; 
-            case LV_ALIGN_BOTTOM_MID: oy = -margin; break; 
-            case LV_ALIGN_LEFT_MID: ox = margin; break; 
-            case LV_ALIGN_RIGHT_MID: ox = -margin; break; 
-            case LV_ALIGN_CENTER: oy = margin; break; 
+            case LV_ALIGN_TOP_MID: 
+                oy = margin; 
+                break; 
+            case LV_ALIGN_BOTTOM_MID: 
+                oy = -margin; 
+                break; 
+            case LV_ALIGN_LEFT_MID: 
+                ox = margin; 
+                break; 
+            case LV_ALIGN_RIGHT_MID: 
+                ox = -margin; 
+                break; 
+            case LV_ALIGN_CENTER: 
+                oy = margin; 
+                break; 
         }
         lv_obj_align(obj, align_val, ox, oy);
     };
@@ -293,9 +304,11 @@ void HASensorWidget::updateState(String state) {
     String display_text = state;
     
     if (unit.length() > 0 && state != "unavailable" && state != "unknown") {
-        display_text += " " + unit;
+        display_text += " #888888 " + unit + "#"; 
+        
         if (!show_chart) { 
             lv_obj_set_style_text_font(icon_label, &lv_font_montserrat_48, 0); 
+            lv_obj_set_style_text_opa(icon_label, 60, 0); 
             lv_label_set_text(icon_label, unit.c_str()); 
         } else if (unit_label) {
             lv_label_set_text_fmt(unit_label, "[%s]", unit.c_str());
@@ -303,6 +316,7 @@ void HASensorWidget::updateState(String state) {
     } else {
         if (!show_chart) { 
             lv_obj_set_style_text_font(icon_label, &lela_icons, 0); 
+            lv_obj_set_style_text_opa(icon_label, 255, 0); 
             lv_label_set_text(icon_label, getIconForEntity(entity_id, mdi_icon).c_str()); 
         }
     }
@@ -318,5 +332,4 @@ void HASensorWidget::updateState(String state) {
 }
 
 void HASensorWidget::onClick() {
-    // Sensor hat keine Klick-Aktion
 }

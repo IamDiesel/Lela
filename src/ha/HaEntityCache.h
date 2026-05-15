@@ -30,6 +30,7 @@ public:
     static bool EntityExists(String entity_id);
     static String GetEntityName(String entity_id);
     static int GetBattery(String entity_id);
+    static String GetFanSpeed(String entity_id);
 
 private:
     static SemaphoreHandle_t mutex;
@@ -49,4 +50,5 @@ private:
     static std::map<String, std::vector<String>> sourceList;
     static std::map<String, String> source;
     static std::map<String, int> battery;
+    static std::map<String, String> fanSpeed;
 };

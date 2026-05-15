@@ -4,7 +4,6 @@
 #include "HaEntityCache.h"
 #include "HaServiceCaller.h"
 
-// --- GLOBALE VARIABLEN ---
 extern std::vector<String> availableDashboardUrls;
 extern std::vector<String> availableDashboardTitles;
 extern volatile bool pendingDashboardList;
@@ -30,20 +29,16 @@ struct MediaBrowserItem {
     bool can_expand;
     bool can_play;
 };
+
 extern std::vector<MediaBrowserItem> currentMediaFolder;
 extern volatile bool pendingMediaBrowserUpdate;
 extern volatile bool pendingMediaBrowserError;
 
-// --- NETZWERK KERN ---
 void HaWebsocketLogic_Start();
 void HaWebsocketLogic_Stop();
 bool HaWebsocketLogic_IsConnected();
 uint32_t HaWebsocketLogic_GetNextMessageId();
 void HaWebsocketLogic_SendPayload(const String& payload);
-
-// =========================================================================
-// LEGACY WRAPPER (Verhindert Fehler in alten UI Dateien wie HAWidgets.cpp)
-// =========================================================================
 
 inline String HaWebsocketLogic_GetState(String id) { return HaEntityCache::GetState(id); }
 inline String HaWebsocketLogic_GetCachedIcon(String id) { return HaEntityCache::GetCachedIcon(id); }
@@ -63,7 +58,6 @@ inline void HaWebsocketLogic_UpdateTrackedEntities() { HaEntityCache::UpdateTrac
 inline int HaWebsocketLogic_GetBattery(String id) { return HaEntityCache::GetBattery(id); }
 inline void HaWebsocketLogic_CallVacuumService(String id, String s) { HaServiceCaller::CallVacuumService(id, s); }
 inline void HaWebsocketLogic_CallVacuumSetFanSpeed(String id, String s) { HaServiceCaller::CallVacuumSetFanSpeed(id, s); }
-
 inline void HaWebsocketLogic_CallService(String d, String s, String id) { HaServiceCaller::CallService(d, s, id); }
 inline void HaWebsocketLogic_CallLightService(String id, int bri, int r, int g, int b, int w) { HaServiceCaller::CallLightService(id, bri, r, g, b, w); }
 inline void HaWebsocketLogic_CallMediaService(String id, String s) { HaServiceCaller::CallMediaService(id, s); }
@@ -74,3 +68,5 @@ inline void HaWebsocketLogic_CallPlayMedia(String id, String t, String cid) { Ha
 inline void HaWebsocketLogic_RequestDashboardList(int t) { HaServiceCaller::RequestDashboardList(t); }
 inline void HaWebsocketLogic_RequestDashboardViews(String u) { HaServiceCaller::RequestDashboardViews(u); }
 inline void HaWebsocketLogic_RequestDashboardCards(String u, int v) { HaServiceCaller::RequestDashboardCards(u, v); }
+
+inline String HaWebsocketLogic_GetFanSpeed(String id) { return HaEntityCache::GetFanSpeed(id); }

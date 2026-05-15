@@ -1,11 +1,11 @@
 #include "HaEntityCache.h"
+#include "HaWebsocketLogic.h"
 #include "HaConfigLogic.h"
-#include <algorithm>
 
 volatile bool HaEntityCache::triggerRestStateFetch = false;
-SemaphoreHandle_t HaEntityCache::mutex = NULL;
-
+SemaphoreHandle_t HaEntityCache::mutex = nullptr;
 std::vector<String> HaEntityCache::trackedEntities;
+
 std::map<String, String> HaEntityCache::states;
 std::map<String, String> HaEntityCache::icons;
 std::map<String, String> HaEntityCache::names;
@@ -19,25 +19,36 @@ std::map<String, String> HaEntityCache::mediaArtist;
 std::map<String, float> HaEntityCache::mediaVolume;
 std::map<String, std::vector<String>> HaEntityCache::sourceList;
 std::map<String, String> HaEntityCache::source;
-std::map<String, int> HaEntityCache::battery; // NEU: Batterie Map
+std::map<String, int> HaEntityCache::battery;
+std::map<String, String> HaEntityCache::fanSpeed;
 
 void HaEntityCache::Init() {
-    if (mutex == NULL) mutex = xSemaphoreCreateMutex();
+    mutex = xSemaphoreCreateMutex();
 }
 
 void HaEntityCache::ClearAll() {
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        states.clear(); icons.clear(); names.clear(); brightness.clear();
-        rgb.clear(); white.clear(); isRGBW.clear(); units.clear();
-        mediaTitle.clear(); mediaArtist.clear(); mediaVolume.clear();
-        sourceList.clear(); source.clear(); trackedEntities.clear();
-        battery.clear(); // NEU
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        states.clear();
+        icons.clear();
+        names.clear();
+        brightness.clear();
+        rgb.clear();
+        white.clear();
+        isRGBW.clear();
+        units.clear();
+        mediaTitle.clear();
+        mediaArtist.clear();
+        mediaVolume.clear();
+        sourceList.clear();
+        source.clear();
+        battery.clear();
+        fanSpeed.clear();
         xSemaphoreGive(mutex);
     }
 }
 
 void HaEntityCache::UpdateTrackedEntities() {
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
         trackedEntities.clear();
         for (const auto& tab : HaConfigLogic::dashboards) {
             for (const auto& w : tab.widgets) {
@@ -46,208 +57,236 @@ void HaEntityCache::UpdateTrackedEntities() {
                 }
             }
         }
-        triggerRestStateFetch = true; 
         xSemaphoreGive(mutex);
     }
+    triggerRestStateFetch = true;
 }
 
 void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
-    String entityId = doc["entity_id"] | "";
-    String newState = doc["state"] | "";
-    
-    bool isRelevant = false;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        if (std::find(trackedEntities.begin(), trackedEntities.end(), entityId) != trackedEntities.end()) {
-            isRelevant = true;
+    String entity_id = doc["entity_id"].as<String>();
+
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        if (std::find(trackedEntities.begin(), trackedEntities.end(), entity_id) != trackedEntities.end()) {
+            states[entity_id] = doc["state"].as<String>();
+            JsonObject attr = doc["attributes"];
+            
+            if (!attr.isNull()) {
+                icons[entity_id] = attr["icon"] | "";
+                names[entity_id] = attr["friendly_name"] | "";
+                units[entity_id] = attr["unit_of_measurement"] | "";
+                battery[entity_id] = attr["battery_level"] | -1;
+                fanSpeed[entity_id] = attr["fan_speed"] | "";
+                
+                if (entity_id.startsWith("light.")) {
+                    brightness[entity_id] = attr["brightness"] | -1;
+                    
+                    JsonArray c_m_s = attr["supported_color_modes"];
+                    isRGBW[entity_id] = false;
+                    
+                    if (!c_m_s.isNull()) {
+                        for (JsonVariant v : c_m_s) {
+                            if (v.as<String>() == "rgbw") {
+                                isRGBW[entity_id] = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    JsonArray rgb_color = attr["rgb_color"];
+                    if (!rgb_color.isNull() && rgb_color.size() >= 3) {
+                        uint8_t r = rgb_color[0];
+                        uint8_t g = rgb_color[1];
+                        uint8_t b = rgb_color[2];
+                        rgb[entity_id] = (uint32_t)(r << 16) | (g << 8) | b;
+                    } else {
+                        rgb[entity_id] = 0xFFFFFFFF;
+                    }
+                    
+                    JsonArray rgbw_color = attr["rgbw_color"];
+                    if (!rgbw_color.isNull() && rgbw_color.size() >= 4) {
+                        white[entity_id] = rgbw_color[3];
+                    } else {
+                        white[entity_id] = -1;
+                    }
+                } else if (entity_id.startsWith("media_player.")) {
+                    mediaTitle[entity_id] = attr["media_title"] | "";
+                    mediaArtist[entity_id] = attr["media_artist"] | "";
+                    mediaVolume[entity_id] = attr["volume_level"] | -1.0f;
+                    source[entity_id] = attr["source"] | "";
+                    
+                    JsonArray s_list = attr["source_list"];
+                    sourceList[entity_id].clear();
+                    
+                    if (!s_list.isNull()) {
+                        for (JsonVariant v : s_list) {
+                            sourceList[entity_id].push_back(v.as<String>());
+                        }
+                    }
+                }
+            }
         }
-        xSemaphoreGive(mutex);
-    }
-    
-    if (!isRelevant || entityId.length() == 0) return;
-
-    String unit = doc["attributes"]["unit_of_measurement"] | "";
-    String name = doc["attributes"]["friendly_name"] | "";
-    String icon = doc["attributes"]["icon"] | "";
-    
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        states[entityId] = newState;
-        if (name.length() > 0) names[entityId] = name;
-        if (icon.length() > 0) icons[entityId] = icon;
-        
-        if (unit.length() > 0 && newState != "unavailable" && newState != "unknown") units[entityId] = unit;
-        else units[entityId] = "";
-        
-        JsonObject attrs = doc["attributes"];
-        int bri = attrs["brightness"] | -1;
-        if (bri >= 0) brightness[entityId] = bri;
-
-        JsonArray rgb_arr = attrs["rgb_color"];
-        JsonArray rgbw_arr = attrs["rgbw_color"];
-
-        if (!rgbw_arr.isNull() && rgbw_arr.size() == 4) {
-            isRGBW[entityId] = true;
-            rgb[entityId] = (rgbw_arr[0].as<uint32_t>() << 16) | (rgbw_arr[1].as<uint32_t>() << 8) | rgbw_arr[2].as<uint32_t>();
-            white[entityId] = rgbw_arr[3].as<int>();
-        } else if (!rgb_arr.isNull() && rgb_arr.size() == 3) {
-            isRGBW[entityId] = false;
-            rgb[entityId] = (rgb_arr[0].as<uint32_t>() << 16) | (rgb_arr[1].as<uint32_t>() << 8) | rgb_arr[2].as<uint32_t>();
-        }
-
-        String mTitle = attrs["media_title"] | "";
-        String mArtist = attrs["media_artist"] | "";
-        float mVol = attrs["volume_level"] | -1.0f;
-        String mSource = attrs["source"] | "";
-        JsonArray sList = attrs["source_list"];
-
-        if (mTitle.length() > 0) mediaTitle[entityId] = mTitle;
-        if (mArtist.length() > 0) mediaArtist[entityId] = mArtist;
-        if (mVol >= 0) mediaVolume[entityId] = mVol;
-        if (mSource.length() > 0) source[entityId] = mSource;
-        if (!sList.isNull()) {
-            std::vector<String> sources;
-            for (JsonVariant v : sList) sources.push_back(v.as<String>());
-            sourceList[entityId] = sources;
-        }
-
-        // NEU: Batterie Status
-        int bat = attrs["battery_level"] | attrs["battery"] | -1;
-        if (bat >= 0) battery[entityId] = bat;
-
         xSemaphoreGive(mutex);
     }
 }
 
 String HaEntityCache::GetState(String entity_id) {
-    String result = "";
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (states.find(entity_id) != states.end()) result = states[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        String res = states[entity_id];
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return "";
 }
 
 String HaEntityCache::GetCachedIcon(String entity_id) {
-    String result = "";
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (icons.find(entity_id) != icons.end()) result = icons[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        String res = icons[entity_id];
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return "";
 }
 
 int HaEntityCache::GetBrightness(String entity_id) {
-    int result = -1;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (brightness.find(entity_id) != brightness.end()) result = brightness[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        int res = -1;
+        if (brightness.count(entity_id)) {
+            res = brightness[entity_id];
+        }
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return -1;
 }
 
 uint32_t HaEntityCache::GetRGB(String entity_id) {
-    uint32_t result = 0xFFFFFFFF;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (rgb.find(entity_id) != rgb.end()) result = rgb[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        uint32_t res = 0xFFFFFFFF;
+        if (rgb.count(entity_id)) {
+            res = rgb[entity_id];
+        }
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return 0xFFFFFFFF;
 }
 
 int HaEntityCache::GetWhite(String entity_id) {
-    int result = -1;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (white.find(entity_id) != white.end()) result = white[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        int res = -1;
+        if (white.count(entity_id)) {
+            res = white[entity_id];
+        }
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return -1;
 }
 
 bool HaEntityCache::IsRGBW(String entity_id) {
-    bool result = false;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (isRGBW.find(entity_id) != isRGBW.end()) result = isRGBW[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        bool res = false;
+        if (isRGBW.count(entity_id)) {
+            res = isRGBW[entity_id];
+        }
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return false;
 }
 
 String HaEntityCache::GetUnit(String entity_id) {
-    String result = "";
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (units.find(entity_id) != units.end()) result = units[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        String res = units[entity_id];
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return "";
 }
 
 String HaEntityCache::GetMediaTitle(String entity_id) {
-    String result = "";
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (mediaTitle.find(entity_id) != mediaTitle.end()) result = mediaTitle[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        String res = mediaTitle[entity_id];
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return "";
 }
 
 String HaEntityCache::GetMediaArtist(String entity_id) {
-    String result = "";
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (mediaArtist.find(entity_id) != mediaArtist.end()) result = mediaArtist[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        String res = mediaArtist[entity_id];
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return "";
 }
 
 float HaEntityCache::GetMediaVolume(String entity_id) {
-    float result = -1.0f;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (mediaVolume.find(entity_id) != mediaVolume.end()) result = mediaVolume[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        float res = -1.0f;
+        if (mediaVolume.count(entity_id)) {
+            res = mediaVolume[entity_id];
+        }
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return -1.0f;
 }
 
 std::vector<String> HaEntityCache::GetMediaSourceList(String entity_id) {
-    std::vector<String> result;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (sourceList.find(entity_id) != sourceList.end()) result = sourceList[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        std::vector<String> res = sourceList[entity_id];
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return std::vector<String>();
 }
 
 String HaEntityCache::GetMediaSource(String entity_id) {
-    String result = "";
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (source.find(entity_id) != source.end()) result = source[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        String res = source[entity_id];
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return "";
 }
 
 bool HaEntityCache::EntityExists(String entity_id) {
-    bool result = false;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        result = (states.find(entity_id) != states.end() || names.find(entity_id) != names.end() || icons.find(entity_id) != icons.end());
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        bool res = states.find(entity_id) != states.end();
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return false;
 }
 
 String HaEntityCache::GetEntityName(String entity_id) {
-    String result = "";
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (names.find(entity_id) != names.end()) result = names[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        String res = names[entity_id];
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return "";
 }
 
 int HaEntityCache::GetBattery(String entity_id) {
-    int result = -1;
-    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (battery.find(entity_id) != battery.end()) result = battery[entity_id];
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        int res = -1;
+        if (battery.count(entity_id)) {
+            res = battery[entity_id];
+        }
         xSemaphoreGive(mutex);
+        return res;
     }
-    return result;
+    return -1;
+}
+
+String HaEntityCache::GetFanSpeed(String entity_id) {
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        String res = fanSpeed[entity_id];
+        xSemaphoreGive(mutex);
+        return res;
+    }
+    return "";
 }
