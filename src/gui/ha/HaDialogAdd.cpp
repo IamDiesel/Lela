@@ -74,8 +74,8 @@ void HaDialogAdd::showAddWidgetDialog() {
 
     dd_widget_type = lv_dropdown_create(panel);
     
-    // FIX: Neue Optionen inkl. Media Player, Cover und Fan
-    lv_dropdown_set_options(dd_widget_type, "light\nswitch\ninput_boolean\nmedia_player\ncover\nfan\ninput_button\nbutton\nscene\nscript\nautomation\nsensor\nbinary_sensor\nweather\nperson\ndevice_tracker");
+    // FIX: Vacuum als Option hinzugefügt
+    lv_dropdown_set_options(dd_widget_type, "light\nswitch\ninput_boolean\nmedia_player\nvacuum\ncover\nfan\ninput_button\nbutton\nscene\nscript\nautomation\nsensor\nbinary_sensor\nweather\nperson\ndevice_tracker");
     
     lv_obj_set_width(dd_widget_type, 400);
     lv_obj_set_style_text_font(dd_widget_type, &lv_font_montserrat_24, 0);
@@ -138,11 +138,11 @@ void HaDialogAdd::showAddWidgetDialog() {
             
             String cached_icon = HaWebsocketLogic_GetCachedIcon(e_id);
             
-            // FIX: Zuweisung des richtigen Widget-Typs (Fallbacks landen sicher beim Light-Widget, was dank des letzten Updates nun ein generisches Toggle ist!)
             String w_type = "light";
             if (e_type == "sensor" || e_type == "binary_sensor" || e_type == "weather" || e_type == "person" || e_type == "device_tracker") w_type = "sensor";
             else if (e_type == "button" || e_type == "input_button" || e_type == "script" || e_type == "scene" || e_type == "automation") w_type = "action";
             else if (e_type == "media_player") w_type = "media_player";
+            else if (e_type == "vacuum") w_type = "vacuum"; // FIX: Mapping für Vacuum hinzugefügt
             
             if (input_txt.length() > 0) {
                 uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
@@ -158,6 +158,15 @@ void HaDialogAdd::showAddWidgetDialog() {
                 def.mdi_icon = cached_icon; 
                 def.color_on = "";
                 def.color_off = "";
+                
+                // NEU: Wenn es ein Vacuum ist, setzen wir direkt die passenden Button-Werte ein
+                if (w_type == "vacuum") {
+                    def.show_chart = false;
+                    def.chart_w_pct = 60;   // Breite der Tasten
+                    def.chart_h_pct = 40;   // Höhe der Tasten
+                    def.chart_x_ofs = 10;   // Lücke
+                    def.chart_y_ofs = 10;   // Abstand nach unten
+                }
                 
                 HaConfigLogic::dashboards[act_tab].widgets.push_back(def);
                 HaConfigLogic::Save();

@@ -25,6 +25,15 @@ protected:
     
     bool snap_to_grid; 
 
+    // Variablen-Recycling: Fuer Sensoren (Diagramme) UND Vacuum (Button Layout)
+    bool show_chart = false;
+    int chart_w_pct = 60;
+    int chart_h_pct = 40;
+    int chart_x_ofs = 10;
+    int chart_y_ofs = 10;
+    String chart_min = "";
+    String chart_max = "";
+
     lv_obj_t* icon_label;
     lv_obj_t* name_label;
     String current_state;
@@ -34,61 +43,59 @@ protected:
 public:
     lv_obj_t* container;
     static bool editModeActive;
- 
+    
     static void (*onEditRequested)(HAWidget*);
     static void (*onDeleteRequested)(HAWidget*);
     static void (*onLightControlRequested)(HAWidget* w); 
     static void (*onMediaControlRequested)(HAWidget* w); 
-    static void (*onVacuumControlRequested)(HAWidget* w);
+    static void (*onVacuumControlRequested)(HAWidget* w); 
 
-    HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off);
+    HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off);
     virtual ~HAWidget();
 
-    virtual void updateState(String state);
+    virtual void setAlignments(int i_align, int t_align, int s_align, int i_margin, int t_margin, int s_margin);
+    void setName(String n);
+    void setMdiIcon(String mdi);
+    void setColors(String on, String off);
+    void setSize(int w, int h);
+    void setPosition(int x, int y, bool snap);
+    void setSnapToGrid(bool snap) { this->snap_to_grid = snap; }
+    
+    virtual void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max) {
+        show_chart = show; chart_w_pct = w_p; chart_h_pct = h_p; chart_x_ofs = x_ofs; chart_y_ofs = y_ofs; chart_min = c_min; chart_max = c_max;
+    }
 
-    int getTabIndex() { return tab_index; }
-    String getType() { return type; }
     String getEntityId() { return entity_id; }
+    String getType() { return type; }
     String getName() { return widget_name; }
-    String getMdiIcon() { return mdi_icon; } 
-    String getColorOn() { return color_on; }   
-    String getColorOff() { return color_off; } 
-    
-    int getIconAlign() { return icon_align; } 
-    int getTextAlign() { return text_align; } 
-    int getStateAlign() { return state_align; } 
-    
-    int getIconMargin() { return icon_margin; } 
-    int getTextMargin() { return text_margin; } 
-    int getStateMargin() { return state_margin; } 
-    
-    bool getSnapToGrid() { return snap_to_grid; } 
-    
-    virtual bool getShowChart() { return false; }
-    virtual int getChartWPct() { return 95; }
-    virtual int getChartHPct() { return 50; }
-    virtual int getChartXOfs() { return 0; }
-    virtual int getChartYOfs() { return -15; }
-    virtual String getChartMin() { return ""; }
-    virtual String getChartMax() { return ""; }
-    virtual void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max) {}
-    
-    virtual String getMediaContentType() { return ""; }
-    virtual String getMediaContentId() { return ""; }
-
+    String getMdiIcon() { return mdi_icon; }
+    String getColorOn() { return color_on; }
+    String getColorOff() { return color_off; }
     int getX() { return lv_obj_get_x(container); }
     int getY() { return lv_obj_get_y(container); }
     int getW() { return lv_obj_get_width(container); }
     int getH() { return lv_obj_get_height(container); }
-
-    void setSize(int w, int h);
-    void setName(String n);            
-    void setMdiIcon(String mdi);       
-    void setColors(String on, String off); 
-    void setSnapToGrid(bool snap) { snap_to_grid = snap; } 
+    int getTabIndex() { return tab_index; }
     
-    virtual void setAlignments(int i_align, int t_align, int s_align, int i_margin, int t_margin, int s_margin); 
+    int getIconAlign() { return icon_align; }
+    int getTextAlign() { return text_align; }
+    int getStateAlign() { return state_align; }
+    int getIconMargin() { return icon_margin; }
+    int getTextMargin() { return text_margin; }
+    int getStateMargin() { return state_margin; }
+    bool getSnapToGrid() { return snap_to_grid; }
+    
+    virtual bool getShowChart() { return show_chart; }
+    virtual int getChartWPct() { return chart_w_pct; }
+    virtual int getChartHPct() { return chart_h_pct; }
+    virtual int getChartXOfs() { return chart_x_ofs; }
+    virtual int getChartYOfs() { return chart_y_ofs; }
+    virtual String getChartMin() { return chart_min; }
+    virtual String getChartMax() { return chart_max; }
+    virtual String getMediaContentType() { return ""; }
+    virtual String getMediaContentId() { return ""; }
 
+    virtual void updateState(String state);
     virtual void onClick() = 0; 
 };
 
@@ -101,50 +108,31 @@ public:
 
 class HASensorWidget : public HAWidget {
 private:
-    lv_obj_t* state_label;
-    
-    bool showChart;
-    int chart_w_pct;
-    int chart_h_pct;
-    int chart_x_ofs;
-    int chart_y_ofs;
-    String chart_min;
-    String chart_max;
-    
     lv_obj_t* chart;
-    lv_chart_series_t* ser;
-    lv_obj_t* unit_label; 
+    lv_chart_series_t * ser;
+    lv_obj_t* state_label;
+    lv_obj_t* unit_label;
     
-    uint32_t timestamps[50];
-    bool is_held[50];
-    float last_value;
-    uint32_t last_update_millis;
-    lv_timer_t* hold_timer;
-    
-    float current_min;
-    float current_max;
+    float current_min, current_max;
     bool first_value_received;
     
-    void buildUI(); 
-    void addChartValue(float val, bool held);
+    time_t timestamps[50];
+    bool is_held[50];
+    lv_timer_t* hold_timer;
+    float last_value;
+    uint32_t last_update_millis;
+
     static void chart_draw_event_cb(lv_event_t * e);
     static void hold_timer_cb(lv_timer_t * t);
-    
+    void addChartValue(float val, bool held);
+    void buildUI();
+
 public:
-    HASensorWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off, bool showChart = false, int chart_w = 95, int chart_h = 50, int chart_x = 0, int chart_y = -15, String c_min = "", String c_max = "");
-    virtual ~HASensorWidget() override; 
-    
+    HASensorWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off, bool showChart, int chart_w, int chart_h, int chart_x, int chart_y, String c_min, String c_max);
+    ~HASensorWidget();
     void updateState(String state) override;
     void onClick() override;
-    void setAlignments(int i_align, int t_align, int s_align, int i_margin, int t_margin, int s_margin) override; 
-    
-    bool getShowChart() override { return showChart; }
-    int getChartWPct() override { return chart_w_pct; }
-    int getChartHPct() override { return chart_h_pct; }
-    int getChartXOfs() override { return chart_x_ofs; }
-    int getChartYOfs() override { return chart_y_ofs; }
-    String getChartMin() override { return chart_min; }
-    String getChartMax() override { return chart_max; }
+    void setAlignments(int i_align, int t_align, int s_align, int i_margin, int t_margin, int s_margin) override;
     void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max) override;
 };
 
@@ -167,10 +155,9 @@ private:
     String media_content_type;
     String media_content_id;
 public:
-    HAMediaItemWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off, String m_c_type, String m_c_id);
+    HAMediaItemWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off, String m_c_type, String m_c_id);
     void updateState(String state) override;
     void onClick() override;
-    
     String getMediaContentType() override { return media_content_type; }
     String getMediaContentId() override { return media_content_id; }
 };
@@ -184,5 +171,6 @@ private:
 public:
     HAVacuumWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off);
     void updateState(String state) override;
-    void onClick() override; // <-- DIESE ZEILE HAT GEFEHLT
+    void onClick() override;
+    void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max) override;
 };

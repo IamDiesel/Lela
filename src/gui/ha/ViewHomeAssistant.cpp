@@ -9,7 +9,7 @@
 #include "HaDialogAdd.h"
 #include "HaDialogImport.h"
 #include "HaDialogMedia.h" 
-#include "HaDialogVacuum.h" // <-- NEU
+#include "HaDialogVacuum.h" 
 #include <algorithm> 
 
 lv_obj_t* ViewHomeAssistant::screen = nullptr;
@@ -383,12 +383,11 @@ lv_obj_t* ViewHomeAssistant::build() {
 
     pendingHaReload = false; HAWidget::editModeActive = false; 
     
-    // --- NEU: Zuweisung der Dialog Callbacks für das Bearbeiten, Licht, Media und Vacuum ---
     HAWidget::onEditRequested = HaDialogEdit::showWidgetEditDialog;
     HAWidget::onDeleteRequested = HaDialogEdit::handleWidgetDeleteDrop;
     HAWidget::onLightControlRequested = HaDialogEdit::showLightControlDialog;
     HAWidget::onMediaControlRequested = HaDialogMedia::showMediaControlDialog;
-    HAWidget::onVacuumControlRequested = HaDialogVacuum::showVacuumDialog; // <-- HINZUGEFÜGT
+    HAWidget::onVacuumControlRequested = HaDialogVacuum::showVacuumDialog; 
     
     screen = lv_obj_create(NULL);
     if (!screen) return nullptr;
@@ -430,7 +429,7 @@ lv_obj_t* ViewHomeAssistant::build() {
             else if (wDef.type == "action") new_widget = new HAActionWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
             else if (wDef.type == "media_player") new_widget = new HAMediaWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
             else if (wDef.type == "media_item") new_widget = new HAMediaItemWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.media_content_type, wDef.media_content_id);
-            else if (wDef.type == "vacuum") new_widget = new HAVacuumWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()); // <-- HINZUGEFÜGT
+            else if (wDef.type == "vacuum") new_widget = new HAVacuumWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()); 
             else new_widget = new HALightWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
             
             new_widget->setAlignments(wDef.icon_align, wDef.text_align, wDef.state_align, wDef.icon_margin, wDef.text_margin, wDef.state_margin);
@@ -475,13 +474,21 @@ void ViewHomeAssistant::update() {
     HaDialogImport::checkPendingEvents();
     HaDialogMedia::update();
     
+    static uint32_t reloadWait = 0;
     if (pendingHaReload) { 
-        pendingHaReload = false; 
-        clearWidgets(); 
-        
-        lv_obj_t* new_scr = ViewHomeAssistant::build();
-        lv_scr_load_anim(new_scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+        if (reloadWait == 0) reloadWait = millis();
+        if (millis() - reloadWait > 150) {
+            pendingHaReload = false; 
+            reloadWait = 0;
+            
+            clearWidgets(); 
+            
+            lv_obj_t* new_scr = ViewHomeAssistant::build();
+            lv_scr_load_anim(new_scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+        }
         return; 
+    } else {
+        reloadWait = 0;
     }
 
     if (gui.getCurrentScreen() != SCREEN_HA) return;
@@ -497,9 +504,13 @@ void ViewHomeAssistant::update() {
     }
 }
 
+// FIX: Event-Callbacks trennen, bevor das Widget zerstoert wird
 void ViewHomeAssistant::clearWidgets() {
     for (HAWidget* w : widgets) {
-        w->container = nullptr;
+        if (w->container && lv_obj_is_valid(w->container)) {
+            lv_obj_remove_event_cb(w->container, nullptr); 
+        }
+        w->container = nullptr; 
         delete w;
     }
     widgets.clear();

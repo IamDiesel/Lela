@@ -153,6 +153,7 @@ void HaServiceCaller::RequestDashboardCards(String url_path, int view_index) {
     HaWebsocketLogic_SendPayload(payload);
 }
 
+// --- NEU: Vacuum Befehle ---
 void HaServiceCaller::CallVacuumService(String entity_id, String service) {
     if (!HaWebsocketLogic_IsConnected()) return;
     JsonDocument doc(&callerAlloc);

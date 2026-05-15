@@ -17,6 +17,7 @@ public:
     static void RequestDashboardViews(String url_path);
     static void RequestDashboardCards(String url_path, int view_index);
 
+    // NEU: Vacuum Befehle
     static void CallVacuumService(String entity_id, String service);
     static void CallVacuumSetFanSpeed(String entity_id, String speed);
 };

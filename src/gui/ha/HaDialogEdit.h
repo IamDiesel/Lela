@@ -21,15 +21,25 @@ private:
     static lv_obj_t* cb_chart; 
     static lv_obj_t* slider_chart_w;
     static lv_obj_t* slider_chart_h;
-    static lv_obj_t* slider_chart_x; // NEU: X-Offset Slider
-    static lv_obj_t* slider_chart_y; // NEU: Y-Offset Slider
+    static lv_obj_t* slider_chart_x; 
+    static lv_obj_t* slider_chart_y; 
     static lv_obj_t* lbl_c_w_val;
     static lv_obj_t* lbl_c_h_val;
-    static lv_obj_t* lbl_c_x_val;    // NEU
-    static lv_obj_t* lbl_c_y_val;    // NEU
+    static lv_obj_t* lbl_c_x_val;    
+    static lv_obj_t* lbl_c_y_val;    
     static lv_obj_t* ta_chart_min;
     static lv_obj_t* ta_chart_max;
     
+    // --- VACUUM UI (NEU) ---
+    static lv_obj_t* slider_vac_w;
+    static lv_obj_t* slider_vac_h;
+    static lv_obj_t* slider_vac_gap;
+    static lv_obj_t* slider_vac_y;
+    static lv_obj_t* lbl_v_w_val;
+    static lv_obj_t* lbl_v_h_val;
+    static lv_obj_t* lbl_v_gap_val;
+    static lv_obj_t* lbl_v_y_val;
+
     static lv_obj_t* slider_icon_margin;
     static lv_obj_t* slider_text_margin;
     static lv_obj_t* lbl_i_m_val;
@@ -61,10 +71,6 @@ private:
     static void close_color_picker_cb(lv_event_t * e);
     static void openColorPicker();
     static void updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix);
-
-    static void slider_light_event_cb(lv_event_t * e);
-    static void cw_light_event_cb(lv_event_t * e);
-    static void btn_light_toggle_event_cb(lv_event_t * e);
 
 public:
     static void showWidgetEditDialog(HAWidget* widget);

@@ -29,6 +29,15 @@ lv_obj_t* HaDialogEdit::lbl_c_y_val = nullptr;
 lv_obj_t* HaDialogEdit::ta_chart_min = nullptr;
 lv_obj_t* HaDialogEdit::ta_chart_max = nullptr;
 
+lv_obj_t* HaDialogEdit::slider_vac_w = nullptr;
+lv_obj_t* HaDialogEdit::slider_vac_h = nullptr;
+lv_obj_t* HaDialogEdit::slider_vac_gap = nullptr;
+lv_obj_t* HaDialogEdit::slider_vac_y = nullptr;
+lv_obj_t* HaDialogEdit::lbl_v_w_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_v_h_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_v_gap_val = nullptr;
+lv_obj_t* HaDialogEdit::lbl_v_y_val = nullptr;
+
 lv_obj_t* HaDialogEdit::slider_icon_margin = nullptr;
 lv_obj_t* HaDialogEdit::slider_text_margin = nullptr;
 lv_obj_t* HaDialogEdit::lbl_i_m_val = nullptr;
@@ -60,36 +69,26 @@ static String search_results_options = "";
 
 static int orig_w = 0, orig_h = 0, orig_i_align = 0, orig_t_align = 0, orig_s_align = 0;
 static int orig_i_margin = 0, orig_t_margin = 0, orig_s_margin = 0;
+static int orig_c_w = 0, orig_c_h = 0, orig_c_x = 0, orig_c_y = 0;
 
 static lv_obj_t* dd_icon_pos = nullptr;
 static lv_obj_t* dd_text_pos = nullptr;
 
 static int idxToAlign(int idx) {
     switch(idx) {
-        case 0: return LV_ALIGN_TOP_MID;                 
-        case 1: return LV_ALIGN_CENTER;                  
-        case 2: return LV_ALIGN_BOTTOM_MID;        
-        case 3: return LV_ALIGN_LEFT_MID;              
-        case 4: return LV_ALIGN_RIGHT_MID;                
-        default: return LV_ALIGN_CENTER;
+        case 0: return LV_ALIGN_TOP_MID; case 1: return LV_ALIGN_CENTER; case 2: return LV_ALIGN_BOTTOM_MID; case 3: return LV_ALIGN_LEFT_MID; case 4: return LV_ALIGN_RIGHT_MID; default: return LV_ALIGN_CENTER;
     }
 }
 static int alignToIdx(int align) {
     switch(align) {
-        case LV_ALIGN_TOP_MID: return 0;
-        case LV_ALIGN_CENTER: return 1;
-        case LV_ALIGN_BOTTOM_MID: return 2;
-        case LV_ALIGN_LEFT_MID: return 3;
-        case LV_ALIGN_RIGHT_MID: return 4;
+        case LV_ALIGN_TOP_MID: return 0; case LV_ALIGN_CENTER: return 1; case LV_ALIGN_BOTTOM_MID: return 2; case LV_ALIGN_LEFT_MID: return 3; case LV_ALIGN_RIGHT_MID: return 4;
     }
     return 1; 
 }
 
 void HaDialogEdit::icon_search_event_cb(lv_event_t * e) {
     if (!ta_icon_search) return;
-    last_search_term = String(lv_textarea_get_text(ta_icon_search));
-    last_search_term.toLowerCase();
-
+    last_search_term = String(lv_textarea_get_text(ta_icon_search)); last_search_term.toLowerCase();
     if (last_search_term.length() < 2) {
         if (dd_icon_cat && dd_icon) {
             int cat_idx = lv_dropdown_get_selected(dd_icon_cat);
@@ -97,66 +96,49 @@ void HaDialogEdit::icon_search_event_cb(lv_event_t * e) {
         }
         return;
     }
-
-    search_results_options = "--- Suchergebnisse ---";
-    int count = 0;
-    
+    search_results_options = "--- Suchergebnisse ---"; int count = 0;
     for (int c = 1; c < num_icon_categories; c++) {
-        String opts = String(icon_categories[c].options);
-        int pos = 0;
+        String opts = String(icon_categories[c].options); int pos = 0;
         while ((pos = opts.indexOf("mdi:", pos)) != -1) {
             int end = opts.indexOf('\n', pos);
             String icon_name = (end == -1) ? opts.substring(pos) : opts.substring(pos, end);
             String search_target = icon_name; search_target.toLowerCase();
-            
-            if (search_target.indexOf(last_search_term) != -1) {
-                search_results_options += "\n" + icon_name;
-                count++;
-            }
+            if (search_target.indexOf(last_search_term) != -1) { search_results_options += "\n" + icon_name; count++; }
             pos = (end == -1) ? opts.length() : end + 1;
             if (count >= 50) break;
         }
         if (count >= 50) break;
     }
-
     if (count == 0) search_results_options += "\nKeine Treffer";
-    lv_dropdown_set_options(dd_icon, search_results_options.c_str());
-    lv_dropdown_set_selected(dd_icon, count > 0 ? 1 : 0);
+    lv_dropdown_set_options(dd_icon, search_results_options.c_str()); lv_dropdown_set_selected(dd_icon, count > 0 ? 1 : 0);
 }
 
 void HaDialogEdit::dd_icon_cat_event_cb(lv_event_t * e) {
-    lv_obj_t * dd = lv_event_get_target(e);
-    int cat_idx = lv_dropdown_get_selected(dd);
-    lv_dropdown_set_options(dd_icon, icon_categories[cat_idx].options);
-    lv_dropdown_set_selected(dd_icon, 0); 
-    
-    if (last_search_term.length() > 0) {
-        last_search_term = "";
-        lv_textarea_set_text(ta_icon_search, "");
-    }
+    lv_obj_t * dd = lv_event_get_target(e); int cat_idx = lv_dropdown_get_selected(dd);
+    lv_dropdown_set_options(dd_icon, icon_categories[cat_idx].options); lv_dropdown_set_selected(dd_icon, 0); 
+    if (last_search_term.length() > 0) { last_search_term = ""; lv_textarea_set_text(ta_icon_search, ""); }
 }
 
+// FIX: Radikales Zurücksetzen der Pointer, um "Geister-Slider" (Dangling Pointers) zu verhindern
 void HaDialogEdit::resetState() {
     action_overlay = nullptr; edit_panel = nullptr; edit_name_preview = nullptr;
     light_control_overlay = nullptr; cur_light_slider = nullptr; cur_light_w_slider = nullptr;
     cur_light_cw = nullptr; color_picker_overlay = nullptr;
     dd_state_pos = nullptr; slider_state_margin = nullptr; lbl_s_m_val = nullptr;
-    cb_chart = nullptr; slider_chart_w = nullptr; slider_chart_h = nullptr;
-    slider_chart_x = nullptr; slider_chart_y = nullptr;
+    cb_chart = nullptr; slider_chart_w = nullptr; slider_chart_h = nullptr; slider_chart_x = nullptr; slider_chart_y = nullptr;
     ta_chart_min = nullptr; ta_chart_max = nullptr; 
     lbl_c_w_val = nullptr; lbl_c_h_val = nullptr; lbl_c_x_val = nullptr; lbl_c_y_val = nullptr;
+    slider_vac_w = nullptr; slider_vac_h = nullptr; slider_vac_gap = nullptr; slider_vac_y = nullptr;
 }
 
 void HaDialogEdit::updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix) {
     lv_obj_t* label = lv_obj_get_child(btn, 0);
     if(hexColor.length() > 0 && hexColor.startsWith("#")) {
         lv_obj_set_style_bg_color(btn, lv_color_hex(strtol(hexColor.substring(1).c_str(), NULL, 16)), 0);
-        lv_label_set_text_fmt(label, "%s %s", prefix, hexColor.c_str());
-        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+        lv_label_set_text_fmt(label, "%s %s", prefix, hexColor.c_str()); lv_obj_set_style_text_color(label, lv_color_white(), 0);
     } else {
         lv_obj_set_style_bg_color(btn, lv_color_hex(0x555555), 0);
-        lv_label_set_text_fmt(label, "%s Standard", prefix);
-        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+        lv_label_set_text_fmt(label, "%s Standard", prefix); lv_obj_set_style_text_color(label, lv_color_white(), 0);
     }
 }
 
@@ -166,48 +148,33 @@ void HaDialogEdit::close_color_picker_cb(lv_event_t * e) {
 }
 
 void HaDialogEdit::color_tile_event_cb(lv_event_t * e) {
-    playToneI2S(800, 100, true);
-    const char* hex = (const char*)lv_event_get_user_data(e);
-    if(picking_color_on) {
-        selected_color_on = String(hex); updateColorBtn(btn_color_on, selected_color_on, "Aktiv:");
-    } else {
-        selected_color_off = String(hex); updateColorBtn(btn_color_off, selected_color_off, "Inaktiv:");
-    }
+    playToneI2S(800, 100, true); const char* hex = (const char*)lv_event_get_user_data(e);
+    if(picking_color_on) { selected_color_on = String(hex); updateColorBtn(btn_color_on, selected_color_on, "Aktiv:"); } 
+    else { selected_color_off = String(hex); updateColorBtn(btn_color_off, selected_color_off, "Inaktiv:"); }
     close_color_picker_cb(NULL);
 }
 
 void HaDialogEdit::openColorPicker() {
     if(color_picker_overlay) return;
     color_picker_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(color_picker_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(color_picker_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(color_picker_overlay, 200, 0);
-    lv_obj_add_flag(color_picker_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(color_picker_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_event_cb(color_picker_overlay, close_color_picker_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_size(color_picker_overlay, 1280, 720); lv_obj_set_style_bg_color(color_picker_overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(color_picker_overlay, 200, 0); lv_obj_add_flag(color_picker_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(color_picker_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); lv_obj_add_event_cb(color_picker_overlay, close_color_picker_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t* panel = lv_obj_create(color_picker_overlay);
-    lv_obj_set_size(panel, 820, 520);
-    lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t* panel = lv_obj_create(color_picker_overlay); lv_obj_set_size(panel, 820, 520); lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0); lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE); lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
     
     static const char* palette[] = { "#F44336", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5", "#2196F3", "#03A9F4", "#00BCD4", "#009688", "#4CAF50", "#8BC34A", "#CDDC39", "#FFEB3B", "#FFC107", "#FF9800", "#FF5722", "#795548", "#9E9E9E", "#607D8B", "#FFFFFF", "#AAAAAA", "#555555", "#222222", "" };
 
     for(int i=0; i<24; i++) {
-        lv_obj_t* tile = lv_btn_create(panel);
-        lv_obj_set_size(tile, 90, 90); lv_obj_set_style_radius(tile, 10, 0);
+        lv_obj_t* tile = lv_btn_create(panel); lv_obj_set_size(tile, 90, 90); lv_obj_set_style_radius(tile, 10, 0);
         if (String(palette[i]) == "") {
             lv_obj_set_style_bg_color(tile, lv_color_hex(0x111111), 0);
             lv_obj_t* l = lv_label_create(tile); lv_label_set_text(l, LV_SYMBOL_CLOSE "\nReset");
             lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0); lv_obj_center(l);
-        } else {
-            lv_obj_set_style_bg_color(tile, lv_color_hex(strtol(palette[i]+1, NULL, 16)), 0);
-        }
+        } else { lv_obj_set_style_bg_color(tile, lv_color_hex(strtol(palette[i]+1, NULL, 16)), 0); }
         lv_obj_add_event_cb(tile, color_tile_event_cb, LV_EVENT_CLICKED, (void*)palette[i]);
     }
 }
@@ -295,22 +262,21 @@ void HaDialogEdit::showLightControlDialog(HAWidget* w) {
     lv_obj_t* lbl_close = lv_label_create(btn_close);
     lv_label_set_text(lbl_close, LV_SYMBOL_CLOSE);
     lv_obj_center(lbl_close);
-    lv_obj_add_event_cb(btn_close, [](lv_event_t* e) { lv_obj_del_async(light_control_overlay); light_control_overlay = nullptr; }, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_close, [](lv_event_t* e) { 
+        lv_obj_del_async(light_control_overlay); 
+        light_control_overlay = nullptr; 
+        resetState(); // FIX
+    }, LV_EVENT_CLICKED, NULL);
 }
 
 void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     if (action_overlay != nullptr || light_control_overlay != nullptr) return; 
     current_widget = w;
     
-    orig_w = w->getW(); 
-    orig_h = w->getH(); 
-    orig_i_align = w->getIconAlign(); 
-    orig_t_align = w->getTextAlign();
-    orig_s_align = w->getStateAlign();
-    
-    orig_i_margin = w->getIconMargin();
-    orig_t_margin = w->getTextMargin();
-    orig_s_margin = w->getStateMargin();
+    orig_w = w->getW(); orig_h = w->getH(); 
+    orig_i_align = w->getIconAlign(); orig_t_align = w->getTextAlign(); orig_s_align = w->getStateAlign();
+    orig_i_margin = w->getIconMargin(); orig_t_margin = w->getTextMargin(); orig_s_margin = w->getStateMargin();
+    orig_c_w = w->getChartWPct(); orig_c_h = w->getChartHPct(); orig_c_x = w->getChartXOfs(); orig_c_y = w->getChartYOfs();
     
     playToneI2S(800, 100, true);
     action_overlay = lv_obj_create(ViewHomeAssistant::screen);
@@ -337,9 +303,11 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     lv_obj_t* tab_layout = lv_tabview_add_tab(tv, "Layout");
     
     lv_obj_t* tab_chart = nullptr;
-    if (w->getType() == "sensor") {
-        tab_chart = lv_tabview_add_tab(tv, "Diagramm");
-    }
+    lv_obj_t* tab_vac = nullptr;
+    
+    if (w->getType() == "sensor") tab_chart = lv_tabview_add_tab(tv, "Diagramm");
+    else if (w->getType() == "vacuum") tab_vac = lv_tabview_add_tab(tv, "Buttons");
+
     lv_obj_set_style_text_font(lv_tabview_get_tab_btns(tv), &lv_font_montserrat_24, 0);
 
     // --- TAB GROESSE ---
@@ -518,18 +486,13 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
         lv_label_set_text_fmt(lbl_s_m_val, "%d px", orig_s_margin);
         lv_obj_set_style_text_font(lbl_s_m_val, &lv_font_montserrat_20, 0);
         lv_obj_set_pos(lbl_s_m_val, 570, y_offs + 10);
-
-        y_offs += 60;
     }
 
     auto layout_change_cb = [](lv_event_t* e) {
         if (!current_widget) return;
         lv_label_set_text_fmt(lbl_i_m_val, "%d px", (int)lv_slider_get_value(slider_icon_margin));
         lv_label_set_text_fmt(lbl_t_m_val, "%d px", (int)lv_slider_get_value(slider_text_margin));
-        
-        if (lbl_s_m_val && slider_state_margin) {
-            lv_label_set_text_fmt(lbl_s_m_val, "%d px", (int)lv_slider_get_value(slider_state_margin));
-        }
+        if (lbl_s_m_val && slider_state_margin) lv_label_set_text_fmt(lbl_s_m_val, "%d px", (int)lv_slider_get_value(slider_state_margin));
 
         current_widget->setAlignments(
             idxToAlign(lv_dropdown_get_selected(dd_icon_pos)), 
@@ -554,11 +517,11 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     cb_snap = lv_checkbox_create(tab_layout);
     lv_checkbox_set_text(cb_snap, "Am Raster einrasten (Snap 10px)");
     lv_obj_set_style_text_font(cb_snap, &lv_font_montserrat_20, 0);
-    lv_obj_set_pos(cb_snap, 10, y_offs);
+    lv_obj_set_pos(cb_snap, 10, y_offs + 60);
     if (w->getSnapToGrid()) lv_obj_add_state(cb_snap, LV_STATE_CHECKED);
     else lv_obj_clear_state(cb_snap, LV_STATE_CHECKED);
 
-    // --- TAB DIAGRAMM (NEU) ---
+    // --- TAB DIAGRAMM (NUR SENSOR) ---
     if (tab_chart) {
         int cy = 10;
         
@@ -577,81 +540,100 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
             lv_label_set_text_fmt(lbl_c_y_val, "%d px", (int)lv_slider_get_value(slider_chart_y));
         };
 
-        // Breite
         lv_obj_t* lbl_cw = lv_label_create(tab_chart); lv_label_set_text(lbl_cw, "Breite:");
         lv_obj_set_style_text_font(lbl_cw, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cw, 10, cy);
-        
-        slider_chart_w = lv_slider_create(tab_chart);
-        lv_obj_set_size(slider_chart_w, 250, 20); lv_obj_set_pos(slider_chart_w, 120, cy+2);
-        lv_slider_set_range(slider_chart_w, 50, 100);
-        lv_slider_set_value(slider_chart_w, w->getChartWPct(), LV_ANIM_OFF);
-        
+        slider_chart_w = lv_slider_create(tab_chart); lv_obj_set_size(slider_chart_w, 250, 20); lv_obj_set_pos(slider_chart_w, 120, cy+2);
+        lv_slider_set_range(slider_chart_w, 50, 100); lv_slider_set_value(slider_chart_w, w->getChartWPct(), LV_ANIM_OFF);
         lbl_c_w_val = lv_label_create(tab_chart); lv_label_set_text_fmt(lbl_c_w_val, "%d %%", w->getChartWPct());
         lv_obj_set_style_text_font(lbl_c_w_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_c_w_val, 400, cy);
-        lv_obj_add_event_cb(slider_chart_w, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        cy += 40;
+        lv_obj_add_event_cb(slider_chart_w, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL); cy += 40;
 
-        // Höhe
         lv_obj_t* lbl_ch = lv_label_create(tab_chart); lv_label_set_text(lbl_ch, "Hoehe:");
         lv_obj_set_style_text_font(lbl_ch, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_ch, 10, cy);
-        
-        slider_chart_h = lv_slider_create(tab_chart);
-        lv_obj_set_size(slider_chart_h, 250, 20); lv_obj_set_pos(slider_chart_h, 120, cy+2);
-        lv_slider_set_range(slider_chart_h, 20, 100);
-        lv_slider_set_value(slider_chart_h, w->getChartHPct(), LV_ANIM_OFF);
-        
+        slider_chart_h = lv_slider_create(tab_chart); lv_obj_set_size(slider_chart_h, 250, 20); lv_obj_set_pos(slider_chart_h, 120, cy+2);
+        lv_slider_set_range(slider_chart_h, 20, 100); lv_slider_set_value(slider_chart_h, w->getChartHPct(), LV_ANIM_OFF);
         lbl_c_h_val = lv_label_create(tab_chart); lv_label_set_text_fmt(lbl_c_h_val, "%d %%", w->getChartHPct());
         lv_obj_set_style_text_font(lbl_c_h_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_c_h_val, 400, cy);
-        lv_obj_add_event_cb(slider_chart_h, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        cy += 40;
+        lv_obj_add_event_cb(slider_chart_h, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL); cy += 40;
         
-        // Offset X
         lv_obj_t* lbl_cx = lv_label_create(tab_chart); lv_label_set_text(lbl_cx, "X-Pos:");
         lv_obj_set_style_text_font(lbl_cx, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cx, 10, cy);
-        
-        slider_chart_x = lv_slider_create(tab_chart);
-        lv_obj_set_size(slider_chart_x, 250, 20); lv_obj_set_pos(slider_chart_x, 120, cy+2);
-        lv_slider_set_range(slider_chart_x, -100, 100);
-        lv_slider_set_value(slider_chart_x, w->getChartXOfs(), LV_ANIM_OFF);
-        
+        slider_chart_x = lv_slider_create(tab_chart); lv_obj_set_size(slider_chart_x, 250, 20); lv_obj_set_pos(slider_chart_x, 120, cy+2);
+        lv_slider_set_range(slider_chart_x, -100, 100); lv_slider_set_value(slider_chart_x, w->getChartXOfs(), LV_ANIM_OFF);
         lbl_c_x_val = lv_label_create(tab_chart); lv_label_set_text_fmt(lbl_c_x_val, "%d px", w->getChartXOfs());
         lv_obj_set_style_text_font(lbl_c_x_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_c_x_val, 400, cy);
-        lv_obj_add_event_cb(slider_chart_x, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        cy += 40;
+        lv_obj_add_event_cb(slider_chart_x, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL); cy += 40;
         
-        // Offset Y
         lv_obj_t* lbl_cy = lv_label_create(tab_chart); lv_label_set_text(lbl_cy, "Y-Pos:");
         lv_obj_set_style_text_font(lbl_cy, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cy, 10, cy);
-        
-        // ==========================================
-        // FIX: Y-Offset Bereich auf -200 erweitert!
-        // ==========================================
-        slider_chart_y = lv_slider_create(tab_chart);
-        lv_obj_set_size(slider_chart_y, 250, 20); lv_obj_set_pos(slider_chart_y, 120, cy+2);
-        lv_slider_set_range(slider_chart_y, -200, 100);
-        lv_slider_set_value(slider_chart_y, w->getChartYOfs(), LV_ANIM_OFF);
-        
+        slider_chart_y = lv_slider_create(tab_chart); lv_obj_set_size(slider_chart_y, 250, 20); lv_obj_set_pos(slider_chart_y, 120, cy+2);
+        lv_slider_set_range(slider_chart_y, -200, 100); lv_slider_set_value(slider_chart_y, w->getChartYOfs(), LV_ANIM_OFF);
         lbl_c_y_val = lv_label_create(tab_chart); lv_label_set_text_fmt(lbl_c_y_val, "%d px", w->getChartYOfs());
         lv_obj_set_style_text_font(lbl_c_y_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_c_y_val, 400, cy);
-        lv_obj_add_event_cb(slider_chart_y, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        cy += 50;
+        lv_obj_add_event_cb(slider_chart_y, chart_slider_cb, LV_EVENT_VALUE_CHANGED, NULL); cy += 50;
 
-        // Min/Max Werte
         lv_obj_t* lbl_cmin = lv_label_create(tab_chart); lv_label_set_text(lbl_cmin, "Min. Wert:");
         lv_obj_set_style_text_font(lbl_cmin, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cmin, 10, cy+10);
-        ta_chart_min = lv_textarea_create(tab_chart); 
-        lv_obj_set_size(ta_chart_min, 150, 40); lv_obj_set_pos(ta_chart_min, 120, cy);
-        lv_textarea_set_placeholder_text(ta_chart_min, "Auto");
-        lv_textarea_set_text(ta_chart_min, w->getChartMin().c_str());
-        lv_textarea_set_one_line(ta_chart_min, true);
+        ta_chart_min = lv_textarea_create(tab_chart); lv_obj_set_size(ta_chart_min, 150, 40); lv_obj_set_pos(ta_chart_min, 120, cy);
+        lv_textarea_set_placeholder_text(ta_chart_min, "Auto"); lv_textarea_set_text(ta_chart_min, w->getChartMin().c_str()); lv_textarea_set_one_line(ta_chart_min, true);
 
         lv_obj_t* lbl_cmax = lv_label_create(tab_chart); lv_label_set_text(lbl_cmax, "Max. Wert:");
         lv_obj_set_style_text_font(lbl_cmax, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_cmax, 300, cy+10);
-        ta_chart_max = lv_textarea_create(tab_chart); 
-        lv_obj_set_size(ta_chart_max, 150, 40); lv_obj_set_pos(ta_chart_max, 420, cy);
-        lv_textarea_set_placeholder_text(ta_chart_max, "Auto");
-        lv_textarea_set_text(ta_chart_max, w->getChartMax().c_str());
-        lv_textarea_set_one_line(ta_chart_max, true);
+        ta_chart_max = lv_textarea_create(tab_chart); lv_obj_set_size(ta_chart_max, 150, 40); lv_obj_set_pos(ta_chart_max, 420, cy);
+        lv_textarea_set_placeholder_text(ta_chart_max, "Auto"); lv_textarea_set_text(ta_chart_max, w->getChartMax().c_str()); lv_textarea_set_one_line(ta_chart_max, true);
+    }
+
+    // --- TAB VACUUM BUTTONS ---
+    if (tab_vac) {
+        int cy = 10;
+
+        auto vac_slider_cb = [](lv_event_t* e) {
+            lv_label_set_text_fmt(lbl_v_w_val, "%d px", (int)lv_slider_get_value(slider_vac_w));
+            lv_label_set_text_fmt(lbl_v_h_val, "%d px", (int)lv_slider_get_value(slider_vac_h));
+            lv_label_set_text_fmt(lbl_v_gap_val, "%d px", (int)lv_slider_get_value(slider_vac_gap));
+            lv_label_set_text_fmt(lbl_v_y_val, "%d px", (int)lv_slider_get_value(slider_vac_y));
+            if (current_widget) {
+                current_widget->setChartConfig(false,
+                    lv_slider_get_value(slider_vac_w),
+                    lv_slider_get_value(slider_vac_h),
+                    lv_slider_get_value(slider_vac_gap),
+                    lv_slider_get_value(slider_vac_y),
+                    "", ""
+                );
+            }
+        };
+
+        lv_obj_t* lbl_vw = lv_label_create(tab_vac); lv_label_set_text(lbl_vw, "Breite:");
+        lv_obj_set_style_text_font(lbl_vw, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_vw, 10, cy);
+        slider_vac_w = lv_slider_create(tab_vac); lv_obj_set_size(slider_vac_w, 250, 20); lv_obj_set_pos(slider_vac_w, 120, cy+2);
+        lv_slider_set_range(slider_vac_w, 30, 100); lv_slider_set_value(slider_vac_w, w->getChartWPct(), LV_ANIM_OFF);
+        lbl_v_w_val = lv_label_create(tab_vac); lv_label_set_text_fmt(lbl_v_w_val, "%d px", w->getChartWPct());
+        lv_obj_set_style_text_font(lbl_v_w_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_v_w_val, 400, cy);
+        lv_obj_add_event_cb(slider_vac_w, vac_slider_cb, LV_EVENT_VALUE_CHANGED, NULL); cy += 50;
+
+        lv_obj_t* lbl_vh = lv_label_create(tab_vac); lv_label_set_text(lbl_vh, "Hoehe:");
+        lv_obj_set_style_text_font(lbl_vh, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_vh, 10, cy);
+        slider_vac_h = lv_slider_create(tab_vac); lv_obj_set_size(slider_vac_h, 250, 20); lv_obj_set_pos(slider_vac_h, 120, cy+2);
+        lv_slider_set_range(slider_vac_h, 20, 80); lv_slider_set_value(slider_vac_h, w->getChartHPct(), LV_ANIM_OFF);
+        lbl_v_h_val = lv_label_create(tab_vac); lv_label_set_text_fmt(lbl_v_h_val, "%d px", w->getChartHPct());
+        lv_obj_set_style_text_font(lbl_v_h_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_v_h_val, 400, cy);
+        lv_obj_add_event_cb(slider_vac_h, vac_slider_cb, LV_EVENT_VALUE_CHANGED, NULL); cy += 50;
+
+        lv_obj_t* lbl_vgap = lv_label_create(tab_vac); lv_label_set_text(lbl_vgap, "Abstand:");
+        lv_obj_set_style_text_font(lbl_vgap, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_vgap, 10, cy);
+        slider_vac_gap = lv_slider_create(tab_vac); lv_obj_set_size(slider_vac_gap, 250, 20); lv_obj_set_pos(slider_vac_gap, 120, cy+2);
+        lv_slider_set_range(slider_vac_gap, 0, 80); lv_slider_set_value(slider_vac_gap, w->getChartXOfs(), LV_ANIM_OFF);
+        lbl_v_gap_val = lv_label_create(tab_vac); lv_label_set_text_fmt(lbl_v_gap_val, "%d px", w->getChartXOfs());
+        lv_obj_set_style_text_font(lbl_v_gap_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_v_gap_val, 400, cy);
+        lv_obj_add_event_cb(slider_vac_gap, vac_slider_cb, LV_EVENT_VALUE_CHANGED, NULL); cy += 50;
+
+        lv_obj_t* lbl_vy = lv_label_create(tab_vac); lv_label_set_text(lbl_vy, "Y-Pos:");
+        lv_obj_set_style_text_font(lbl_vy, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_vy, 10, cy);
+        slider_vac_y = lv_slider_create(tab_vac); lv_obj_set_size(slider_vac_y, 250, 20); lv_obj_set_pos(slider_vac_y, 120, cy+2);
+        lv_slider_set_range(slider_vac_y, -50, 100); lv_slider_set_value(slider_vac_y, w->getChartYOfs(), LV_ANIM_OFF);
+        lbl_v_y_val = lv_label_create(tab_vac); lv_label_set_text_fmt(lbl_v_y_val, "%d px", w->getChartYOfs());
+        lv_obj_set_style_text_font(lbl_v_y_val, &lv_font_montserrat_20, 0); lv_obj_set_pos(lbl_v_y_val, 400, cy);
+        lv_obj_add_event_cb(slider_vac_y, vac_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
     }
 
     // --- KEYBOARD ---
@@ -666,7 +648,6 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
             lv_keyboard_set_textarea(kb, ta);
             if (ta == ta_chart_min || ta == ta_chart_max) lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
             else lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_LOWER);
-            
             lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
             lv_obj_align(edit_panel, LV_ALIGN_TOP_MID, 0, 10);
         }
@@ -693,6 +674,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     }, LV_EVENT_ALL, NULL);
 
     // --- GLOBALE BUTTONS ---
+    // FIX: Setzt die statischen Pointer IMMER auf null zurück, wenn das Fenster geschlossen wird!
     lv_obj_t* btn_ok = lv_btn_create(edit_panel);
     lv_obj_set_size(btn_ok, 180, 50); lv_obj_align(btn_ok, LV_ALIGN_BOTTOM_RIGHT, -20, -15);
     lv_obj_set_style_bg_color(btn_ok, lv_color_hex(0x27AE60), 0);
@@ -722,9 +704,19 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
                 String(lv_textarea_get_text(ta_chart_min)),
                 String(lv_textarea_get_text(ta_chart_max))
             );
+        } else if (current_widget->getType() == "vacuum" && slider_vac_w) {
+            current_widget->setChartConfig(false,
+                lv_slider_get_value(slider_vac_w),
+                lv_slider_get_value(slider_vac_h),
+                lv_slider_get_value(slider_vac_gap),
+                lv_slider_get_value(slider_vac_y),
+                "", ""
+            );
         }
 
-        lv_obj_del_async(action_overlay); action_overlay = nullptr;
+        lv_obj_del_async(action_overlay); 
+        action_overlay = nullptr;
+        resetState(); // FIX
     }, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t* btn_cancel = lv_btn_create(edit_panel);
@@ -736,8 +728,13 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
         if (current_widget) { 
             current_widget->setSize(orig_w, orig_h); 
             current_widget->setAlignments(orig_i_align, orig_t_align, orig_s_align, orig_i_margin, orig_t_margin, orig_s_margin); 
+            if (current_widget->getType() == "vacuum") {
+                current_widget->setChartConfig(false, orig_c_w, orig_c_h, orig_c_x, orig_c_y, "", "");
+            }
         }
-        lv_obj_del_async(action_overlay); action_overlay = nullptr;
+        lv_obj_del_async(action_overlay); 
+        action_overlay = nullptr;
+        resetState(); // FIX
     }, LV_EVENT_CLICKED, NULL);
 }
 
@@ -770,13 +767,19 @@ void HaDialogEdit::handleWidgetDeleteDrop(HAWidget* w) {
         lv_obj_add_event_cb(btn_del, [](lv_event_t* e) {
             HAWidget* wid = (HAWidget*)lv_event_get_user_data(e);
             lv_obj_add_flag(wid->container, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_del_async(action_overlay); action_overlay = nullptr;
+            lv_obj_del_async(action_overlay); 
+            action_overlay = nullptr;
+            resetState(); // FIX
         }, LV_EVENT_CLICKED, w);
 
         lv_obj_t* btn_cancel = lv_btn_create(panel);
         lv_obj_set_size(btn_cancel, 200, 60); lv_obj_align(btn_cancel, LV_ALIGN_BOTTOM_LEFT, 20, -30);
         lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x333333), 0);
         lv_label_set_text(lv_label_create(btn_cancel), "Abbrechen"); lv_obj_center(lv_obj_get_child(btn_cancel, 0));
-        lv_obj_add_event_cb(btn_cancel, [](lv_event_t* e) { lv_obj_del_async(action_overlay); action_overlay = nullptr; }, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_event_cb(btn_cancel, [](lv_event_t* e) { 
+            lv_obj_del_async(action_overlay); 
+            action_overlay = nullptr; 
+            resetState(); // FIX
+        }, LV_EVENT_CLICKED, NULL);
     }
 }
