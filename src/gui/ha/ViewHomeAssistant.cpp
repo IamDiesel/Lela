@@ -10,6 +10,8 @@
 #include "HaDialogImport.h"
 #include "HaDialogMedia.h" 
 #include "HaDialogVacuum.h" 
+#include "HaDialogLight.h"
+#include "HaColorPicker.h"
 #include <algorithm> 
 
 lv_obj_t* ViewHomeAssistant::screen = nullptr;
@@ -378,14 +380,22 @@ lv_obj_t* ViewHomeAssistant::build() {
     btn_rename_tab = nullptr; btn_add_widget = nullptr; btn_tab_left = nullptr;
     btn_tab_right = nullptr; kb_overlay = nullptr; 
 
-    HaDialogEdit::resetState(); HaDialogAdd::resetState();
-    HaDialogImport::resetState(); HaDialogMedia::resetState(); 
-
-    pendingHaReload = false; HAWidget::editModeActive = false; 
+    HaDialogEdit::resetState(); 
+    HaDialogAdd::resetState();
+    HaDialogImport::resetState(); 
+    HaDialogMedia::resetState(); 
     
+    // Sicherheitshalber auch die neuen Module resetten/verstecken
+    if(HaColorPicker::isActive()) HaColorPicker::hide();
+    if(HaDialogLight::isActive()) HaDialogLight::hide();
+
+    pendingHaReload = false; 
+    HAWidget::editModeActive = false; 
+    
+    // --- DIE NEUEN CALLBACKS ---
     HAWidget::onEditRequested = HaDialogEdit::showWidgetEditDialog;
     HAWidget::onDeleteRequested = HaDialogEdit::handleWidgetDeleteDrop;
-    HAWidget::onLightControlRequested = HaDialogEdit::showLightControlDialog;
+    HAWidget::onLightControlRequested = HaDialogLight::show; // Verweist jetzt auf die eigene Klasse!
     HAWidget::onMediaControlRequested = HaDialogMedia::showMediaControlDialog;
     HAWidget::onVacuumControlRequested = HaDialogVacuum::showVacuumDialog; 
     
@@ -425,12 +435,19 @@ lv_obj_t* ViewHomeAssistant::build() {
         for (const auto& wDef : HaConfigLogic::dashboards[i].widgets) {
             HAWidget* new_widget = nullptr;
             
-            if (wDef.type == "sensor") new_widget = new HASensorWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.show_chart, wDef.chart_w_pct, wDef.chart_h_pct, wDef.chart_x_ofs, wDef.chart_y_ofs, wDef.chart_min, wDef.chart_max);
-            else if (wDef.type == "action") new_widget = new HAActionWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
-            else if (wDef.type == "media_player") new_widget = new HAMediaWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
-            else if (wDef.type == "media_item") new_widget = new HAMediaItemWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.media_content_type, wDef.media_content_id);
-            else if (wDef.type == "vacuum") new_widget = new HAVacuumWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()); 
-            else new_widget = new HALightWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
+            if (wDef.type == "sensor") {
+                new_widget = new HASensorWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.show_chart, wDef.chart_w_pct, wDef.chart_h_pct, wDef.chart_x_ofs, wDef.chart_y_ofs, wDef.chart_min, wDef.chart_max);
+            } else if (wDef.type == "action") {
+                new_widget = new HAActionWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
+            } else if (wDef.type == "media_player") {
+                new_widget = new HAMediaWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
+            } else if (wDef.type == "media_item") {
+                new_widget = new HAMediaItemWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.media_content_type, wDef.media_content_id);
+            } else if (wDef.type == "vacuum") {
+                new_widget = new HAVacuumWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()); 
+            } else {
+                new_widget = new HALightWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
+            }
             
             new_widget->setAlignments(wDef.icon_align, wDef.text_align, wDef.state_align, wDef.icon_margin, wDef.text_margin, wDef.state_margin);
             new_widget->setSnapToGrid(wDef.snap_to_grid); 
