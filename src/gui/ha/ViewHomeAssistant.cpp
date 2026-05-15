@@ -10,7 +10,8 @@
 #include "HaDialogImport.h"
 #include "HaDialogMedia.h" 
 #include "HaDialogVacuum.h" 
-#include "HaColorPicker.h"
+#include "HaDialogLight.h" // <-- FEHLTE
+#include "HaColorPicker.h" 
 #include <algorithm> 
 
 lv_obj_t* ViewHomeAssistant::screen = nullptr;
@@ -66,10 +67,14 @@ void ViewHomeAssistant::btn_back_event_cb(lv_event_t * e) {
 }
 
 void ViewHomeAssistant::btn_import_event_cb(lv_event_t * e) {
-    if (HaDialogImport::isAnyOverlayActive()) return; 
+    if (HaDialogImport::isAnyOverlayActive()) {
+        return; 
+    }
     playToneI2S(800, 100, true);
     uint16_t act_tab = lv_tabview_get_tab_act(tabview);
-    if(act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
+    if(act_tab >= HaConfigLogic::dashboards.size()) {
+        act_tab = 0;
+    }
     HaDialogImport::showLoadingPopup("Lade Dashboards..."); 
     HaWebsocketLogic_RequestDashboardList(act_tab);
 }
@@ -87,10 +92,14 @@ void ViewHomeAssistant::btn_delete_tab_event_cb(lv_event_t * e) {
 }
 
 void ViewHomeAssistant::btn_rename_tab_event_cb(lv_event_t * e) {
-    if (kb_overlay != nullptr) return; 
+    if (kb_overlay != nullptr) {
+        return; 
+    }
     playToneI2S(800, 100, true); 
     editingTabIndex = lv_tabview_get_tab_act(tabview);
-    if (editingTabIndex >= (int)HaConfigLogic::dashboards.size()) editingTabIndex = 0; 
+    if (editingTabIndex >= (int)HaConfigLogic::dashboards.size()) {
+        editingTabIndex = 0; 
+    }
     
     kb_overlay = lv_obj_create(screen);
     lv_obj_set_size(kb_overlay, 1280, 720);
@@ -114,14 +123,19 @@ void ViewHomeAssistant::btn_rename_tab_event_cb(lv_event_t * e) {
     lv_obj_add_event_cb(kb, [](lv_event_t* e){
         lv_event_code_t code = lv_event_get_code(e);
         lv_obj_t* keyboard = lv_event_get_target(e);
-        if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) lv_obj_clear_state(lv_keyboard_get_textarea(keyboard), LV_STATE_FOCUSED);
+        if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
+            lv_obj_clear_state(lv_keyboard_get_textarea(keyboard), LV_STATE_FOCUSED);
+        }
     }, LV_EVENT_ALL, NULL);
 
     lv_obj_t * btn_kb_cancel = lv_btn_create(kb_overlay);
     lv_obj_set_size(btn_kb_cancel, 80, 80);
     lv_obj_align_to(btn_kb_cancel, ta_new_tab, LV_ALIGN_OUT_RIGHT_MID, 20, 0);
     lv_obj_set_style_bg_color(btn_kb_cancel, lv_color_hex(0xAA0000), 0);
-    lv_obj_add_event_cb(btn_kb_cancel, [](lv_event_t* e) { lv_obj_del_async(kb_overlay); kb_overlay = nullptr; }, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_kb_cancel, [](lv_event_t* e) { 
+        lv_obj_del_async(kb_overlay); 
+        kb_overlay = nullptr; 
+    }, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t * lbl_kb_cancel = lv_label_create(btn_kb_cancel);
     lv_label_set_text(lbl_kb_cancel, LV_SYMBOL_CLOSE);
@@ -150,16 +164,23 @@ void ViewHomeAssistant::kb_event_cb(lv_event_t * e) {
             HaConfigLogic::Save();
             HaWebsocketLogic_UpdateTrackedEntities(); 
         }
-        lv_obj_del_async(kb_overlay); kb_overlay = nullptr; pendingHaReload = true; 
+        lv_obj_del_async(kb_overlay); 
+        kb_overlay = nullptr; 
+        pendingHaReload = true; 
     } else if (code == LV_EVENT_CANCEL) {
         playToneI2S(600, 100, true);
-        lv_obj_del_async(kb_overlay); kb_overlay = nullptr;
-        if (editingTabIndex == -1) lv_tabview_set_act(tabview, currentActiveTab, LV_ANIM_OFF);
+        lv_obj_del_async(kb_overlay); 
+        kb_overlay = nullptr;
+        if (editingTabIndex == -1) {
+            lv_tabview_set_act(tabview, currentActiveTab, LV_ANIM_OFF);
+        }
     }
 }
 
 void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
-    if (HAWidget::editModeActive) return; 
+    if (HAWidget::editModeActive) {
+        return; 
+    }
     
     lv_obj_t * tv = lv_event_get_target(e);
     uint16_t tab_id = lv_tabview_get_tab_act(tv);
@@ -190,7 +211,9 @@ void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
         lv_obj_add_event_cb(kb, [](lv_event_t* e){
             lv_event_code_t code = lv_event_get_code(e);
             lv_obj_t* keyboard = lv_event_get_target(e);
-            if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) lv_obj_clear_state(lv_keyboard_get_textarea(keyboard), LV_STATE_FOCUSED);
+            if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
+                lv_obj_clear_state(lv_keyboard_get_textarea(keyboard), LV_STATE_FOCUSED);
+            }
         }, LV_EVENT_ALL, NULL);
 
         lv_obj_t * btn_kb_cancel = lv_btn_create(kb_overlay);
@@ -198,9 +221,11 @@ void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
         lv_obj_align_to(btn_kb_cancel, ta_new_tab, LV_ALIGN_OUT_RIGHT_MID, 20, 0);
         lv_obj_set_style_bg_color(btn_kb_cancel, lv_color_hex(0xAA0000), 0);
         lv_obj_add_event_cb(btn_kb_cancel, [](lv_event_t* e) {
-            lv_obj_del_async(kb_overlay); kb_overlay = nullptr; 
+            lv_obj_del_async(kb_overlay); 
+            kb_overlay = nullptr; 
             lv_tabview_set_act(tabview, currentActiveTab, LV_ANIM_OFF);
         }, LV_EVENT_CLICKED, NULL);
+        
         lv_obj_t * lbl_kb_cancel = lv_label_create(btn_kb_cancel);
         lv_label_set_text(lbl_kb_cancel, LV_SYMBOL_CLOSE);
         lv_obj_center(lbl_kb_cancel);
@@ -208,7 +233,9 @@ void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
         lv_obj_add_event_cb(kb, kb_event_cb, LV_EVENT_ALL, NULL);
         lv_tabview_set_act(tv, currentActiveTab, LV_ANIM_OFF); 
     } else {
-        if (currentActiveTab != tab_id) currentActiveTab = tab_id;
+        if (currentActiveTab != tab_id) {
+            currentActiveTab = tab_id;
+        }
     }
 }
 
@@ -237,11 +264,15 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
             playToneI2S(800, 100, true);
             uint16_t act_tab = lv_tabview_get_tab_act(tabview);
             if (act_tab > 0 && act_tab < HaConfigLogic::dashboards.size()) {
-                HaConfigLogic::MoveTabLeft(act_tab); HaConfigLogic::Save();
-                currentActiveTab = act_tab - 1; pendingHaReload = true;
+                HaConfigLogic::MoveTabLeft(act_tab); 
+                HaConfigLogic::Save();
+                currentActiveTab = act_tab - 1; 
+                pendingHaReload = true;
             }
         }, LV_EVENT_CLICKED, NULL);
-        lv_obj_t* lbl_tl = lv_label_create(btn_tab_left); lv_label_set_text(lbl_tl, LV_SYMBOL_LEFT); lv_obj_center(lbl_tl);
+        lv_obj_t* lbl_tl = lv_label_create(btn_tab_left); 
+        lv_label_set_text(lbl_tl, LV_SYMBOL_LEFT); 
+        lv_obj_center(lbl_tl);
 
         btn_tab_right = lv_btn_create(screen);
         lv_obj_set_size(btn_tab_right, 80, 50);
@@ -251,11 +282,15 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
             playToneI2S(800, 100, true);
             uint16_t act_tab = lv_tabview_get_tab_act(tabview);
             if (act_tab >= 0 && act_tab < HaConfigLogic::dashboards.size() - 1) {
-                HaConfigLogic::MoveTabRight(act_tab); HaConfigLogic::Save();
-                currentActiveTab = act_tab + 1; pendingHaReload = true;
+                HaConfigLogic::MoveTabRight(act_tab); 
+                HaConfigLogic::Save();
+                currentActiveTab = act_tab + 1; 
+                pendingHaReload = true;
             }
         }, LV_EVENT_CLICKED, NULL);
-        lv_obj_t* lbl_tr = lv_label_create(btn_tab_right); lv_label_set_text(lbl_tr, LV_SYMBOL_RIGHT); lv_obj_center(lbl_tr);
+        lv_obj_t* lbl_tr = lv_label_create(btn_tab_right); 
+        lv_label_set_text(lbl_tr, LV_SYMBOL_RIGHT); 
+        lv_obj_center(lbl_tr);
 
         trash_btn = lv_btn_create(screen);
         lv_obj_set_size(trash_btn, 100, 100);
@@ -304,7 +339,6 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
         lv_obj_center(lbl_addw);
 
     } else {
-        // --- BEARBEITUNGSMODUS BEENDEN (Der Fix ist hier!) ---
         lv_obj_add_flag(tab_btns, LV_OBJ_FLAG_CLICKABLE); 
         
         lv_obj_set_style_bg_color(btn_edit, lv_color_hex(0x333333), 0);
@@ -315,19 +349,41 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
             lv_label_set_text(lv_obj_get_child(btn_back, 0), LV_SYMBOL_LEFT " ZURUECK");
         }
 
-        if (btn_tab_left) { lv_obj_del_async(btn_tab_left); btn_tab_left = nullptr; }
-        if (btn_tab_right) { lv_obj_del_async(btn_tab_right); btn_tab_right = nullptr; }
-        if (btn_import) { lv_obj_del_async(btn_import); btn_import = nullptr; }
-        if (btn_delete_tab) { lv_obj_del_async(btn_delete_tab); btn_delete_tab = nullptr; }
-        if (btn_rename_tab) { lv_obj_del_async(btn_rename_tab); btn_rename_tab = nullptr; }
-        if (btn_add_widget) { lv_obj_del_async(btn_add_widget); btn_add_widget = nullptr; }
-        if (trash_btn) { lv_obj_del_async(trash_btn); trash_btn = nullptr; }
+        if (btn_tab_left) { 
+            lv_obj_del_async(btn_tab_left); 
+            btn_tab_left = nullptr; 
+        }
+        if (btn_tab_right) { 
+            lv_obj_del_async(btn_tab_right); 
+            btn_tab_right = nullptr; 
+        }
+        if (btn_import) { 
+            lv_obj_del_async(btn_import); 
+            btn_import = nullptr; 
+        }
+        if (btn_delete_tab) { 
+            lv_obj_del_async(btn_delete_tab); 
+            btn_delete_tab = nullptr; 
+        }
+        if (btn_rename_tab) { 
+            lv_obj_del_async(btn_rename_tab); 
+            btn_rename_tab = nullptr; 
+        }
+        if (btn_add_widget) { 
+            lv_obj_del_async(btn_add_widget); 
+            btn_add_widget = nullptr; 
+        }
+        if (trash_btn) { 
+            lv_obj_del_async(trash_btn); 
+            trash_btn = nullptr; 
+        }
 
         uint16_t act_tab = lv_tabview_get_tab_act(tabview);
-        if (act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
+        if (act_tab >= HaConfigLogic::dashboards.size()) {
+            act_tab = 0;
+        }
         currentActiveTab = act_tab;
         
-        // DER ENTSCHEIDENDE FIX: std::stable_sort mit null-sicheren Vergleichen (Striktes Weak Ordering)
         std::stable_sort(widgets.begin(), widgets.end(), [](HAWidget* a, HAWidget* b) {
             int idxA = (a && a->container && lv_obj_is_valid(a->container)) ? lv_obj_get_index(a->container) : 999999;
             int idxB = (b && b->container && lv_obj_is_valid(b->container)) ? lv_obj_get_index(b->container) : 999999;
@@ -336,17 +392,27 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
 
         HaConfigLogic::dashboards[act_tab].widgets.clear();
         HaConfigLogic::dashboards[act_tab].widgets.reserve(widgets.size());
-        for(HAWidget* w : widgets) {
-            if (!w || !w->container || !lv_obj_is_valid(w->container)) continue; 
-            if (lv_obj_has_flag(w->container, LV_OBJ_FLAG_HIDDEN)) continue; 
+
+        for (HAWidget* w : widgets) {
+            if (!w || !w->container || !lv_obj_is_valid(w->container)) {
+                continue; 
+            }
+            if (lv_obj_has_flag(w->container, LV_OBJ_FLAG_HIDDEN)) {
+                continue; 
+            }
             
             if (w->getTabIndex() == act_tab) {
                 HAWidgetDef def;
                 def.entity_id = w->getEntityId();
                 def.type = w->getType();
-                def.x = w->getX(); def.y = w->getY(); def.w = w->getW(); def.h = w->getH();
-                def.name = w->getName(); def.mdi_icon = w->getMdiIcon(); 
-                def.color_on = w->getColorOn(); def.color_off = w->getColorOff(); 
+                def.x = w->getX(); 
+                def.y = w->getY(); 
+                def.w = w->getW(); 
+                def.h = w->getH();
+                def.name = w->getName(); 
+                def.mdi_icon = w->getMdiIcon(); 
+                def.color_on = w->getColorOn(); 
+                def.color_off = w->getColorOff(); 
                 
                 def.icon_align = w->getIconAlign();
                 def.text_align = w->getTextAlign();
@@ -379,27 +445,41 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
 }
 
 lv_obj_t* ViewHomeAssistant::build() {
-    trash_btn = nullptr; btn_import = nullptr; btn_delete_tab = nullptr;
-    btn_rename_tab = nullptr; btn_add_widget = nullptr; btn_tab_left = nullptr;
-    btn_tab_right = nullptr; kb_overlay = nullptr; 
+    trash_btn = nullptr; 
+    btn_import = nullptr; 
+    btn_delete_tab = nullptr;
+    btn_rename_tab = nullptr; 
+    btn_add_widget = nullptr; 
+    btn_tab_left = nullptr;
+    btn_tab_right = nullptr; 
+    kb_overlay = nullptr; 
 
     HaDialogEdit::resetState(); 
     HaDialogAdd::resetState();
     HaDialogImport::resetState(); 
     HaDialogMedia::resetState(); 
     
-    if(HaColorPicker::isActive()) HaColorPicker::hide();
+    if (HaColorPicker::isActive()) {
+        HaColorPicker::hide();
+    }
+    if (HaDialogLight::isActive()) {
+        HaDialogLight::hide();
+    }
 
     pendingHaReload = false; 
     HAWidget::editModeActive = false; 
     
+    // DER FIX IST HIER:
     HAWidget::onEditRequested = HaDialogEdit::showWidgetEditDialog;
     HAWidget::onDeleteRequested = HaDialogEdit::handleWidgetDeleteDrop;
+    HAWidget::onLightControlRequested = HaDialogLight::show; // <--- DIESE ZEILE HATTE GEFEHLT!
     HAWidget::onMediaControlRequested = HaDialogMedia::showMediaControlDialog;
     HAWidget::onVacuumControlRequested = HaDialogVacuum::showVacuumDialog; 
     
     screen = lv_obj_create(NULL);
-    if (!screen) return nullptr;
+    if (!screen) {
+        return nullptr;
+    }
 
     lv_obj_set_style_bg_color(screen, isDarkMode ? lv_color_hex(0x111111) : lv_color_white(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
@@ -450,8 +530,6 @@ lv_obj_t* ViewHomeAssistant::build() {
             
             new_widget->setAlignments(wDef.icon_align, wDef.text_align, wDef.state_align, wDef.icon_margin, wDef.text_margin, wDef.state_margin);
             new_widget->setSnapToGrid(wDef.snap_to_grid); 
-            
-            // ---> DER FIX: Wir uebergeben dem geladenen Widget nun auch seine Button/Chart-Konfiguration! <---
             new_widget->setChartConfig(wDef.show_chart, wDef.chart_w_pct, wDef.chart_h_pct, wDef.chart_x_ofs, wDef.chart_y_ofs, wDef.chart_min, wDef.chart_max);
             
             widgets.push_back(new_widget);
@@ -482,7 +560,9 @@ lv_obj_t* ViewHomeAssistant::build() {
     lv_obj_center(label_edit);
 
     if (HaConfigLogic::dashboards.size() > 0) {
-        if (currentActiveTab >= HaConfigLogic::dashboards.size()) currentActiveTab = 0;
+        if (currentActiveTab >= HaConfigLogic::dashboards.size()) {
+            currentActiveTab = 0;
+        }
         lv_tabview_set_act(tabview, currentActiveTab, LV_ANIM_OFF);
     }
 
@@ -495,7 +575,9 @@ void ViewHomeAssistant::update() {
     
     static uint32_t reloadWait = 0;
     if (pendingHaReload) { 
-        if (reloadWait == 0) reloadWait = millis();
+        if (reloadWait == 0) {
+            reloadWait = millis();
+        }
         if (millis() - reloadWait > 150) {
             pendingHaReload = false; 
             reloadWait = 0;
@@ -510,7 +592,9 @@ void ViewHomeAssistant::update() {
         reloadWait = 0;
     }
 
-    if (gui.getCurrentScreen() != SCREEN_HA) return;
+    if (gui.getCurrentScreen() != SCREEN_HA) {
+        return;
+    }
     ViewTopbar_Update();
 
     static uint32_t lastWidgetUpdate = 0;
@@ -518,7 +602,9 @@ void ViewHomeAssistant::update() {
         lastWidgetUpdate = millis();
         for (HAWidget* w : widgets) {
             String state = HaWebsocketLogic_GetState(w->getEntityId());
-            if (state.length() > 0) w->updateState(state);
+            if (state.length() > 0) {
+                w->updateState(state);
+            }
         }
     }
 }

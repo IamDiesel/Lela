@@ -22,6 +22,13 @@ std::map<String, String> HaEntityCache::source;
 std::map<String, int> HaEntityCache::battery;
 std::map<String, String> HaEntityCache::fanSpeed;
 
+// --- HIER WAREN DIE FEHLENDEN DEFINITIONEN ---
+std::map<String, bool> HaEntityCache::supportsBrightness;
+std::map<String, bool> HaEntityCache::supportsColor;
+std::map<String, bool> HaEntityCache::supportsTemp;
+std::map<String, int> HaEntityCache::colorTemp;
+// ---------------------------------------------
+
 void HaEntityCache::Init() {
     mutex = xSemaphoreCreateMutex();
 }
@@ -43,6 +50,12 @@ void HaEntityCache::ClearAll() {
         source.clear();
         battery.clear();
         fanSpeed.clear();
+        
+        supportsBrightness.clear();
+        supportsColor.clear();
+        supportsTemp.clear();
+        colorTemp.clear();
+        
         xSemaphoreGive(mutex);
     }
 }
@@ -79,18 +92,36 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                 
                 if (entity_id.startsWith("light.")) {
                     brightness[entity_id] = attr["brightness"] | -1;
-                    
-                    JsonArray c_m_s = attr["supported_color_modes"];
+                    colorTemp[entity_id] = attr["color_temp"] | -1;
+
+                    bool s_bri = false;
+                    bool s_col = false;
+                    bool s_tmp = false;
                     isRGBW[entity_id] = false;
-                    
+
+                    JsonArray c_m_s = attr["supported_color_modes"];
                     if (!c_m_s.isNull()) {
                         for (JsonVariant v : c_m_s) {
-                            if (v.as<String>() == "rgbw") {
+                            String mode = v.as<String>();
+                            if (mode == "brightness") {
+                                s_bri = true;
+                            } else if (mode == "color_temp") {
+                                s_bri = true;
+                                s_tmp = true;
+                            } else if (mode == "hs" || mode == "rgb" || mode == "xy") {
+                                s_bri = true;
+                                s_col = true;
+                            } else if (mode == "rgbw" || mode == "rgbww") {
+                                s_bri = true;
+                                s_col = true;
                                 isRGBW[entity_id] = true;
-                                break;
                             }
                         }
                     }
+
+                    supportsBrightness[entity_id] = s_bri;
+                    supportsColor[entity_id] = s_col;
+                    supportsTemp[entity_id] = s_tmp;
                     
                     JsonArray rgb_color = attr["rgb_color"];
                     if (!rgb_color.isNull() && rgb_color.size() >= 3) {
@@ -289,4 +320,52 @@ String HaEntityCache::GetFanSpeed(String entity_id) {
         return res;
     }
     return "";
+}
+
+bool HaEntityCache::SupportsBrightness(String entity_id) {
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        bool res = false;
+        if (supportsBrightness.count(entity_id)) {
+            res = supportsBrightness[entity_id];
+        }
+        xSemaphoreGive(mutex);
+        return res;
+    }
+    return false;
+}
+
+bool HaEntityCache::SupportsColor(String entity_id) {
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        bool res = false;
+        if (supportsColor.count(entity_id)) {
+            res = supportsColor[entity_id];
+        }
+        xSemaphoreGive(mutex);
+        return res;
+    }
+    return false;
+}
+
+bool HaEntityCache::SupportsColorTemp(String entity_id) {
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        bool res = false;
+        if (supportsTemp.count(entity_id)) {
+            res = supportsTemp[entity_id];
+        }
+        xSemaphoreGive(mutex);
+        return res;
+    }
+    return false;
+}
+
+int HaEntityCache::GetColorTemp(String entity_id) {
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        int res = -1;
+        if (colorTemp.count(entity_id)) {
+            res = colorTemp[entity_id];
+        }
+        xSemaphoreGive(mutex);
+        return res;
+    }
+    return -1;
 }

@@ -32,6 +32,12 @@ public:
     static int GetBattery(String entity_id);
     static String GetFanSpeed(String entity_id);
 
+    // --- NEU: Licht Fähigkeiten und Farbtemperatur ---
+    static bool SupportsBrightness(String entity_id);
+    static bool SupportsColor(String entity_id);
+    static bool SupportsColorTemp(String entity_id);
+    static int GetColorTemp(String entity_id);
+
 private:
     static SemaphoreHandle_t mutex;
     static std::vector<String> trackedEntities;
@@ -51,4 +57,10 @@ private:
     static std::map<String, String> source;
     static std::map<String, int> battery;
     static std::map<String, String> fanSpeed;
+
+    // --- NEU: Caching der Fähigkeiten ---
+    static std::map<String, bool> supportsBrightness;
+    static std::map<String, bool> supportsColor;
+    static std::map<String, bool> supportsTemp;
+    static std::map<String, int> colorTemp;
 };

@@ -49,7 +49,7 @@ String getIconForEntity(String entity_id, String mdi_icon) {
         String l = mdi_icon; 
         l.replace(" ", "");
         int start = 0;
-        while(start < l.length()) {
+        while (start < l.length()) {
             int end = l.indexOf(',', start);
             if (end == -1) {
                 end = l.length();
@@ -169,11 +169,21 @@ void HAWidget::setAlignments(int i_align, int t_align, int s_align, int i_margin
         int ox = 0;
         int oy = 0;
         switch(align_val) {
-            case LV_ALIGN_TOP_MID: oy = margin; break;
-            case LV_ALIGN_BOTTOM_MID: oy = -margin; break;
-            case LV_ALIGN_LEFT_MID: ox = margin; break;
-            case LV_ALIGN_RIGHT_MID: ox = -margin; break;
-            case LV_ALIGN_CENTER: oy = margin; break; 
+            case LV_ALIGN_TOP_MID: 
+                oy = margin; 
+                break;
+            case LV_ALIGN_BOTTOM_MID: 
+                oy = -margin; 
+                break;
+            case LV_ALIGN_LEFT_MID: 
+                ox = margin; 
+                break;
+            case LV_ALIGN_RIGHT_MID: 
+                ox = -margin; 
+                break;
+            case LV_ALIGN_CENTER: 
+                oy = margin; 
+                break; 
         }
         lv_obj_align(obj, align_val, ox, oy);
     };
@@ -289,8 +299,12 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
                 lv_coord_t x = lv_obj_get_x(obj) + vect.x; 
                 lv_coord_t y = lv_obj_get_y(obj) + vect.y;
                 
-                if (x < 0) x = 0; 
-                if (y < 0) y = 0;
+                if (x < 0) {
+                    x = 0; 
+                }
+                if (y < 0) {
+                    y = 0;
+                }
                 
                 lv_obj_set_pos(obj, x, y);
             }
@@ -318,7 +332,12 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
             widget->onClick();
         } else if (code == LV_EVENT_LONG_PRESSED) {
             if (widget->getType() == "light" && widget->getEntityId().startsWith("light.") && HAWidget::onLightControlRequested) {
-                HAWidget::onLightControlRequested(widget);
+                // NEU: Nur oeffnen, wenn die Lampe irgendetwas davon unterstuetzt!
+                if (HaWebsocketLogic_SupportsBrightness(widget->getEntityId()) || 
+                    HaWebsocketLogic_SupportsColor(widget->getEntityId()) || 
+                    HaWebsocketLogic_SupportsColorTemp(widget->getEntityId())) {
+                    HAWidget::onLightControlRequested(widget);
+                }
             } else if ((widget->getType() == "media_player" || widget->getType() == "media_item") && HAWidget::onMediaControlRequested) {
                 HAWidget::onMediaControlRequested(widget);
             } else if (widget->getType() == "vacuum" && HAWidget::onVacuumControlRequested) {

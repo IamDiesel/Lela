@@ -68,5 +68,9 @@ inline void HaWebsocketLogic_CallPlayMedia(String id, String t, String cid) { Ha
 inline void HaWebsocketLogic_RequestDashboardList(int t) { HaServiceCaller::RequestDashboardList(t); }
 inline void HaWebsocketLogic_RequestDashboardViews(String u) { HaServiceCaller::RequestDashboardViews(u); }
 inline void HaWebsocketLogic_RequestDashboardCards(String u, int v) { HaServiceCaller::RequestDashboardCards(u, v); }
-
 inline String HaWebsocketLogic_GetFanSpeed(String id) { return HaEntityCache::GetFanSpeed(id); }
+inline bool HaWebsocketLogic_SupportsBrightness(String id) { return HaEntityCache::SupportsBrightness(id); }
+inline bool HaWebsocketLogic_SupportsColor(String id) { return HaEntityCache::SupportsColor(id); }
+inline bool HaWebsocketLogic_SupportsColorTemp(String id) { return HaEntityCache::SupportsColorTemp(id); }
+inline int HaWebsocketLogic_GetColorTemp(String id) { return HaEntityCache::GetColorTemp(id); }
+inline void HaWebsocketLogic_CallLightServiceTemp(String id, int bri, int mireds) { HaServiceCaller::CallLightServiceTemp(id, bri, mireds); }

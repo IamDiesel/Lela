@@ -5,6 +5,7 @@ class HaServiceCaller {
 public:
     static void CallService(String domain, String service, String entity_id);
     static void CallLightService(String entity_id, int brightness, int r, int g, int b, int w);
+    static void CallLightServiceTemp(String entity_id, int brightness, int color_temp);
     
     static void CallMediaService(String entity_id, String service);
     static void CallMediaVolumeService(String entity_id, float volume);

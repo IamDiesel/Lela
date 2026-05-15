@@ -47,6 +47,31 @@ void HaServiceCaller::CallLightService(String entity_id, int brightness, int r, 
     HaWebsocketLogic_SendPayload(payload);
 }
 
+void HaServiceCaller::CallLightServiceTemp(String entity_id, int brightness, int color_temp) {
+    if (!HaWebsocketLogic_IsConnected()) {
+        return;
+    }
+    
+    JsonDocument doc(&callerAlloc);
+    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    doc["type"] = "call_service";
+    doc["domain"] = "light";
+    doc["service"] = "turn_on";
+    doc["target"]["entity_id"] = entity_id;
+
+    JsonObject service_data = doc["service_data"].to<JsonObject>();
+    if (brightness >= 0) {
+        service_data["brightness"] = brightness;
+    }
+    if (color_temp >= 0) {
+        service_data["color_temp"] = color_temp;
+    }
+
+    String payload; 
+    serializeJson(doc, payload);
+    HaWebsocketLogic_SendPayload(payload);
+}
+
 void HaServiceCaller::CallMediaService(String entity_id, String service) {
     if (!HaWebsocketLogic_IsConnected()) return;
     JsonDocument doc(&callerAlloc);
