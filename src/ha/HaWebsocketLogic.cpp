@@ -339,7 +339,7 @@ void onMessageCallback(WebsocketsMessage message) {
     headerFilter["success"] = true;
 
     JsonDocument headerDoc(&psramAlloc);
-    DeserializationError err = deserializeJson(headerDoc, payload, DeserializationOption::Filter(headerFilter));
+    DeserializationError err = deserializeJson(headerDoc, payload, DeserializationOption::Filter(headerFilter), DeserializationOption::NestingLimit(200));
     if (err) return;
 
     String type = headerDoc["type"] | "";
@@ -407,7 +407,7 @@ void onMessageCallback(WebsocketsMessage message) {
                 viewFilter["result"]["result"]["views"][0]["title"] = true; viewFilter["result"]["result"]["views"][0]["path"] = true; viewFilter["result"]["result"]["views"][0]["icon"] = true;
                 
                 JsonDocument doc(&psramAlloc);
-                DeserializationError viewErr = deserializeJson(doc, payload, DeserializationOption::Filter(viewFilter));
+                DeserializationError viewErr = deserializeJson(doc, payload, DeserializationOption::Filter(viewFilter), DeserializationOption::NestingLimit(200));
                 if (!viewErr) {
                     JsonArray views = doc["result"]["views"];
                     if (views.isNull()) views = doc["result"]["result"]["views"];

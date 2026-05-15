@@ -42,8 +42,10 @@ String getIconForEntity(String entity_id, String mdi_icon) {
             start = end + 1;
         }
     }
+    if (entity_id.startsWith("switch.") || entity_id.startsWith("input_boolean.") || entity_id.startsWith("button.") || entity_id.startsWith("input_button.")) return getSafeIcon("mdi:power"); 
+    if (entity_id.startsWith("script.") || entity_id.startsWith("automation.") || entity_id.startsWith("scene.")) return getSafeIcon("mdi:play");
     if (entity_id.startsWith("light.")) return getSafeIcon("mdi:lightbulb"); 
-    if (entity_id.startsWith("switch.") || entity_id.startsWith("input_boolean.")) return getSafeIcon("mdi:power"); 
+    //if (entity_id.startsWith("switch.") || entity_id.startsWith("input_boolean.")) return getSafeIcon("mdi:power"); 
     if (entity_id.startsWith("media_player.")) return getSafeIcon("mdi:television");
     if (entity_id.startsWith("camera.")) return getSafeIcon("mdi:cctv");
     if (entity_id.startsWith("climate.") || entity_id.indexOf("temp") != -1) return getSafeIcon("mdi:thermometer");
