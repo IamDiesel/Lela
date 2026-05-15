@@ -1,10 +1,10 @@
 #pragma once
 #include <Arduino.h>
-#include <map>
 #include <vector>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
+#include "HaEntityCache.h"
+#include "HaServiceCaller.h"
 
+// --- GLOBALE VARIABLEN ---
 extern std::vector<String> availableDashboardUrls;
 extern std::vector<String> availableDashboardTitles;
 extern volatile bool pendingDashboardList;
@@ -14,10 +14,15 @@ extern String importErrorMessage;
 extern std::vector<String> availableViewTitles;
 extern volatile bool pendingViewList;
 extern String currentImportUrl;
-
 extern volatile bool isImporting;
 
-// NEU: Struktur fuer den Medien-Browser
+extern uint32_t lastLovelaceReqId;
+extern uint32_t lastLovelaceDashboardsReqId;
+extern uint32_t lastMediaBrowseReqId; 
+extern bool requestingViewsOnly; 
+extern int targetViewIndex;
+extern int currentImportTab;
+
 struct MediaBrowserItem {
     String title;
     String media_content_type;
@@ -29,41 +34,40 @@ extern std::vector<MediaBrowserItem> currentMediaFolder;
 extern volatile bool pendingMediaBrowserUpdate;
 extern volatile bool pendingMediaBrowserError;
 
+// --- NETZWERK KERN ---
 void HaWebsocketLogic_Start();
 void HaWebsocketLogic_Stop();
-
-String HaWebsocketLogic_GetState(String entity_id);
-String HaWebsocketLogic_GetCachedIcon(String entity_id);
-
-int HaWebsocketLogic_GetBrightness(String entity_id);
-uint32_t HaWebsocketLogic_GetRGB(String entity_id);
-int HaWebsocketLogic_GetWhite(String entity_id);
-bool HaWebsocketLogic_IsRGBW(String entity_id);
-
-String HaWebsocketLogic_GetUnit(String entity_id);
-String HaWebsocketLogic_GetMediaTitle(String entity_id);
-String HaWebsocketLogic_GetMediaArtist(String entity_id);
-float HaWebsocketLogic_GetMediaVolume(String entity_id);
-std::vector<String> HaWebsocketLogic_GetMediaSourceList(String entity_id);
-String HaWebsocketLogic_GetMediaSource(String entity_id);
-
-bool HaWebsocketLogic_EntityExists(String entity_id);
-String HaWebsocketLogic_GetEntityName(String entity_id);
-
 bool HaWebsocketLogic_IsConnected();
-void HaWebsocketLogic_CallService(String domain, String service, String entity_id);
-void HaWebsocketLogic_CallLightService(String entity_id, int brightness, int r, int g, int b, int w);
+uint32_t HaWebsocketLogic_GetNextMessageId();
+void HaWebsocketLogic_SendPayload(const String& payload);
 
-void HaWebsocketLogic_CallMediaService(String entity_id, String service);
-void HaWebsocketLogic_CallMediaVolumeService(String entity_id, float volume);
-void HaWebsocketLogic_CallMediaSelectSource(String entity_id, String source);
+// =========================================================================
+// LEGACY WRAPPER (Verhindert Fehler in alten UI Dateien wie HAWidgets.cpp)
+// =========================================================================
 
-// NEU: Medien durchsuchen und abspielen
-void HaWebsocketLogic_RequestBrowseMedia(String entity_id, String media_content_type = "", String media_content_id = "");
-void HaWebsocketLogic_CallPlayMedia(String entity_id, String media_content_type, String media_content_id);
+inline String HaWebsocketLogic_GetState(String id) { return HaEntityCache::GetState(id); }
+inline String HaWebsocketLogic_GetCachedIcon(String id) { return HaEntityCache::GetCachedIcon(id); }
+inline int HaWebsocketLogic_GetBrightness(String id) { return HaEntityCache::GetBrightness(id); }
+inline uint32_t HaWebsocketLogic_GetRGB(String id) { return HaEntityCache::GetRGB(id); }
+inline int HaWebsocketLogic_GetWhite(String id) { return HaEntityCache::GetWhite(id); }
+inline bool HaWebsocketLogic_IsRGBW(String id) { return HaEntityCache::IsRGBW(id); }
+inline String HaWebsocketLogic_GetUnit(String id) { return HaEntityCache::GetUnit(id); }
+inline String HaWebsocketLogic_GetMediaTitle(String id) { return HaEntityCache::GetMediaTitle(id); }
+inline String HaWebsocketLogic_GetMediaArtist(String id) { return HaEntityCache::GetMediaArtist(id); }
+inline float HaWebsocketLogic_GetMediaVolume(String id) { return HaEntityCache::GetMediaVolume(id); }
+inline std::vector<String> HaWebsocketLogic_GetMediaSourceList(String id) { return HaEntityCache::GetMediaSourceList(id); }
+inline String HaWebsocketLogic_GetMediaSource(String id) { return HaEntityCache::GetMediaSource(id); }
+inline bool HaWebsocketLogic_EntityExists(String id) { return HaEntityCache::EntityExists(id); }
+inline String HaWebsocketLogic_GetEntityName(String id) { return HaEntityCache::GetEntityName(id); }
+inline void HaWebsocketLogic_UpdateTrackedEntities() { HaEntityCache::UpdateTrackedEntities(); }
 
-void HaWebsocketLogic_RequestDashboardList(int target_tab_index);
-void HaWebsocketLogic_RequestDashboardViews(String url_path);
-void HaWebsocketLogic_RequestDashboardCards(String url_path, int view_index);
-
-void HaWebsocketLogic_UpdateTrackedEntities();
+inline void HaWebsocketLogic_CallService(String d, String s, String id) { HaServiceCaller::CallService(d, s, id); }
+inline void HaWebsocketLogic_CallLightService(String id, int bri, int r, int g, int b, int w) { HaServiceCaller::CallLightService(id, bri, r, g, b, w); }
+inline void HaWebsocketLogic_CallMediaService(String id, String s) { HaServiceCaller::CallMediaService(id, s); }
+inline void HaWebsocketLogic_CallMediaVolumeService(String id, float v) { HaServiceCaller::CallMediaVolumeService(id, v); }
+inline void HaWebsocketLogic_CallMediaSelectSource(String id, String src) { HaServiceCaller::CallMediaSelectSource(id, src); }
+inline void HaWebsocketLogic_RequestBrowseMedia(String id, String t="", String cid="") { HaServiceCaller::RequestBrowseMedia(id, t, cid); }
+inline void HaWebsocketLogic_CallPlayMedia(String id, String t, String cid) { HaServiceCaller::CallPlayMedia(id, t, cid); }
+inline void HaWebsocketLogic_RequestDashboardList(int t) { HaServiceCaller::RequestDashboardList(t); }
+inline void HaWebsocketLogic_RequestDashboardViews(String u) { HaServiceCaller::RequestDashboardViews(u); }
+inline void HaWebsocketLogic_RequestDashboardCards(String u, int v) { HaServiceCaller::RequestDashboardCards(u, v); }
