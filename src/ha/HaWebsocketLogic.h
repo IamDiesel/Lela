@@ -60,6 +60,9 @@ inline String HaWebsocketLogic_GetMediaSource(String id) { return HaEntityCache:
 inline bool HaWebsocketLogic_EntityExists(String id) { return HaEntityCache::EntityExists(id); }
 inline String HaWebsocketLogic_GetEntityName(String id) { return HaEntityCache::GetEntityName(id); }
 inline void HaWebsocketLogic_UpdateTrackedEntities() { HaEntityCache::UpdateTrackedEntities(); }
+inline int HaWebsocketLogic_GetBattery(String id) { return HaEntityCache::GetBattery(id); }
+inline void HaWebsocketLogic_CallVacuumService(String id, String s) { HaServiceCaller::CallVacuumService(id, s); }
+inline void HaWebsocketLogic_CallVacuumSetFanSpeed(String id, String s) { HaServiceCaller::CallVacuumSetFanSpeed(id, s); }
 
 inline void HaWebsocketLogic_CallService(String d, String s, String id) { HaServiceCaller::CallService(d, s, id); }
 inline void HaWebsocketLogic_CallLightService(String id, int bri, int r, int g, int b, int w) { HaServiceCaller::CallLightService(id, bri, r, g, b, w); }

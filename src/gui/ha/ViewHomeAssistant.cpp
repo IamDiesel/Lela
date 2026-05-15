@@ -9,6 +9,7 @@
 #include "HaDialogAdd.h"
 #include "HaDialogImport.h"
 #include "HaDialogMedia.h" 
+#include "HaDialogVacuum.h" // <-- NEU
 #include <algorithm> 
 
 lv_obj_t* ViewHomeAssistant::screen = nullptr;
@@ -353,7 +354,6 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
                 def.snap_to_grid = w->getSnapToGrid(); 
                 def.show_chart = w->getShowChart();
                 
-                // NEU: Die neuen Offset-Werte beim Speichern auslesen
                 def.chart_w_pct = w->getChartWPct();
                 def.chart_h_pct = w->getChartHPct();
                 def.chart_x_ofs = w->getChartXOfs();
@@ -383,10 +383,12 @@ lv_obj_t* ViewHomeAssistant::build() {
 
     pendingHaReload = false; HAWidget::editModeActive = false; 
     
+    // --- NEU: Zuweisung der Dialog Callbacks für das Bearbeiten, Licht, Media und Vacuum ---
     HAWidget::onEditRequested = HaDialogEdit::showWidgetEditDialog;
     HAWidget::onDeleteRequested = HaDialogEdit::handleWidgetDeleteDrop;
     HAWidget::onLightControlRequested = HaDialogEdit::showLightControlDialog;
     HAWidget::onMediaControlRequested = HaDialogMedia::showMediaControlDialog;
+    HAWidget::onVacuumControlRequested = HaDialogVacuum::showVacuumDialog; // <-- HINZUGEFÜGT
     
     screen = lv_obj_create(NULL);
     if (!screen) return nullptr;
@@ -424,11 +426,11 @@ lv_obj_t* ViewHomeAssistant::build() {
         for (const auto& wDef : HaConfigLogic::dashboards[i].widgets) {
             HAWidget* new_widget = nullptr;
             
-            // NEU: Die neuen Offset-Parameter werden in den Konstruktor durchgereicht
             if (wDef.type == "sensor") new_widget = new HASensorWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.show_chart, wDef.chart_w_pct, wDef.chart_h_pct, wDef.chart_x_ofs, wDef.chart_y_ofs, wDef.chart_min, wDef.chart_max);
             else if (wDef.type == "action") new_widget = new HAActionWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
             else if (wDef.type == "media_player") new_widget = new HAMediaWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
             else if (wDef.type == "media_item") new_widget = new HAMediaItemWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(), wDef.media_content_type, wDef.media_content_id);
+            else if (wDef.type == "vacuum") new_widget = new HAVacuumWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()); // <-- HINZUGEFÜGT
             else new_widget = new HALightWidget(tab, i, wDef.type, wDef.entity_id, wDef.x, wDef.y, wDef.w, wDef.h, wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str());
             
             new_widget->setAlignments(wDef.icon_align, wDef.text_align, wDef.state_align, wDef.icon_margin, wDef.text_margin, wDef.state_margin);

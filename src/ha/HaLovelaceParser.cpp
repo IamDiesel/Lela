@@ -96,9 +96,17 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         foundEntities.push_back(entity);
         
         String widgetType = "light";
+        int currentCardW = cardW;
+        int itemsToAdvance = 1;
+
         if (entity.startsWith("sensor.") || entity.startsWith("binary_sensor.") || entity.startsWith("weather.") || entity.startsWith("sun.")) widgetType = "sensor";
         else if (entity.startsWith("button.") || entity.startsWith("input_button.") || entity.startsWith("script.") || entity.startsWith("automation.") || entity.startsWith("scene.")) widgetType = "action";
         else if (entity.startsWith("media_player.")) widgetType = "media_player";
+        else if (entity.startsWith("vacuum.")) {
+            widgetType = "vacuum";
+            currentCardW = (cardW * 2) + margin; // Doppelte Breite
+            itemsToAdvance = 2; // Belegt 2 Slots im Raster
+        }
 
         if (customIcon.length() == 0) customIcon = HaWebsocketLogic_GetCachedIcon(entity);
         if (customName.length() == 0) customName = HaWebsocketLogic_GetEntityName(entity);
@@ -106,10 +114,11 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         HAWidgetDef wDef;
         wDef.entity_id = entity; wDef.type = widgetType;
         wDef.x = margin + (i % cols) * (cardW + margin); wDef.y = margin + (i / cols) * (cardH + margin);
-        wDef.name = customName; wDef.mdi_icon = customIcon; wDef.w = cardW; wDef.h = cardH;
+        wDef.name = customName; wDef.mdi_icon = customIcon; wDef.w = currentCardW; wDef.h = cardH;
         wDef.icon_align = LV_ALIGN_TOP_MID; wDef.text_align = LV_ALIGN_BOTTOM_MID;
         
-        HaConfigLogic::dashboards[currentImportTab].widgets.push_back(wDef); i++;
+        HaConfigLogic::dashboards[currentImportTab].widgets.push_back(wDef); 
+        i += itemsToAdvance;
     };
 
     std::function<void(JsonVariant)> extractCards = [&](JsonVariant node) {
@@ -123,14 +132,12 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
                         JsonObject itemObj = item.as<JsonObject>();
                         addWidget(itemObj["entity"] | "", itemObj["name"] | "", itemObj["icon"] | "");
                     } else { 
-                        // FIX: Einfach .as<String>() nutzen, da wir wissen, dass es ein nackter String ist
                         addWidget(item.as<String>(), "", ""); 
                     }
                 }
             }
 
             // Fall B: Einzelne Karte
-            // FIX: C++ freundliches und sicheres Auslesen der verschachtelten Keys ohne fehlerhafte Pipe-Ketten
             String entityId = obj["entity"] | "";
             if (entityId.length() == 0) entityId = obj["vacuum"] | "";
             if (entityId.length() == 0) entityId = obj["camera_image"] | "";

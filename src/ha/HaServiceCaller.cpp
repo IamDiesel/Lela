@@ -152,3 +152,28 @@ void HaServiceCaller::RequestDashboardCards(String url_path, int view_index) {
     String payload; serializeJson(doc, payload);
     HaWebsocketLogic_SendPayload(payload);
 }
+
+void HaServiceCaller::CallVacuumService(String entity_id, String service) {
+    if (!HaWebsocketLogic_IsConnected()) return;
+    JsonDocument doc(&callerAlloc);
+    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    doc["type"] = "call_service";
+    doc["domain"] = "vacuum";
+    doc["service"] = service;
+    doc["target"]["entity_id"] = entity_id;
+    String payload; serializeJson(doc, payload);
+    HaWebsocketLogic_SendPayload(payload);
+}
+
+void HaServiceCaller::CallVacuumSetFanSpeed(String entity_id, String speed) {
+    if (!HaWebsocketLogic_IsConnected()) return;
+    JsonDocument doc(&callerAlloc);
+    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    doc["type"] = "call_service";
+    doc["domain"] = "vacuum";
+    doc["service"] = "set_fan_speed";
+    doc["target"]["entity_id"] = entity_id;
+    doc["service_data"]["fan_speed"] = speed;
+    String payload; serializeJson(doc, payload);
+    HaWebsocketLogic_SendPayload(payload);
+}

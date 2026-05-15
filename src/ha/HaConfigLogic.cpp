@@ -41,48 +41,47 @@ void HaConfigLogic::Load() {
         HADashboardDef tDef;
         tDef.name = tObj["name"] | "Tab";
         
-        JsonArray wArray = tObj["widgets"];
-        for (JsonObject wObj : wArray) {
+        JsonArray widgets = tObj["widgets"];
+        for (JsonObject wObj : widgets) {
             HAWidgetDef wDef;
             
-            if (wObj.containsKey("entity")) wDef.entity_id = wObj["entity"].as<String>();
-            else wDef.entity_id = wObj["entity_id"] | "";
+            // FIX: V7 kompatible Abfragen
+            if (!wObj["entity"].isNull()) wDef.entity_id = wObj["entity"].as<String>();
+            if (!wObj["type"].isNull()) wDef.type = wObj["type"].as<String>();
             
-            wDef.type = wObj["type"] | "light";
             wDef.x = wObj["x"] | 20;
             wDef.y = wObj["y"] | 20;
             wDef.w = wObj["w"] | 160;
             wDef.h = wObj["h"] | 105;
+            
             wDef.name = wObj["name"] | "";
             wDef.mdi_icon = wObj["mdi_icon"] | "";
             wDef.color_on = wObj["color_on"] | "";
             wDef.color_off = wObj["color_off"] | "";
             
-            int i_align = wObj["icon_align"] | LV_ALIGN_TOP_MID;
-            int i_margin = 5;
-            if (i_align >= 100) { i_align -= 100; i_margin = 25; }
-            wDef.icon_align = i_align;
-            wDef.icon_margin = wObj.containsKey("icon_margin") ? wObj["icon_margin"].as<int>() : i_margin;
-
-            int t_align = wObj["text_align"] | LV_ALIGN_BOTTOM_MID;
-            int t_margin = 5;
-            if (t_align >= 100) { t_align -= 100; t_margin = 25; }
-            wDef.text_align = t_align;
-            wDef.text_margin = wObj.containsKey("text_margin") ? wObj["text_margin"].as<int>() : t_margin;
+            int i_align = LV_ALIGN_TOP_MID, t_align = LV_ALIGN_BOTTOM_MID, s_align = LV_ALIGN_CENTER;
+            int i_margin = 5, t_margin = 5, s_margin = 0;
             
-            wDef.state_align = wObj["state_align"] | LV_ALIGN_CENTER;
-            wDef.state_margin = wObj["state_margin"] | 0;
+            wDef.icon_align = wObj["icon_align"] | i_align;
+            wDef.text_align = wObj["text_align"] | t_align;
+            wDef.state_align = wObj["state_align"] | s_align;
             
-            wDef.snap_to_grid = wObj.containsKey("snap_to_grid") ? wObj["snap_to_grid"].as<bool>() : true;
+            wDef.icon_margin = !wObj["icon_margin"].isNull() ? wObj["icon_margin"].as<int>() : i_margin;
+            wDef.text_margin = !wObj["text_margin"].isNull() ? wObj["text_margin"].as<int>() : t_margin;
+            wDef.state_margin = wObj["state_margin"] | s_margin;
             
-            wDef.show_chart = wObj["show_chart"] | false; 
+            wDef.snap_to_grid = !wObj["snap_to_grid"].isNull() ? wObj["snap_to_grid"].as<bool>() : true;
+            
+            // Diagramm Settings
+            wDef.show_chart = wObj["show_chart"] | false;
             wDef.chart_w_pct = wObj["chart_w_pct"] | 95;
             wDef.chart_h_pct = wObj["chart_h_pct"] | 50;
-            wDef.chart_x_ofs = wObj["chart_x_ofs"] | 0;     // NEU
-            wDef.chart_y_ofs = wObj["chart_y_ofs"] | -15;   // NEU
+            wDef.chart_x_ofs = wObj["chart_x_ofs"] | 0;
+            wDef.chart_y_ofs = wObj["chart_y_ofs"] | -15;
             wDef.chart_min = wObj["chart_min"] | "";
             wDef.chart_max = wObj["chart_max"] | "";
             
+            // Media Player Settings
             wDef.media_content_type = wObj["media_content_type"] | "";
             wDef.media_content_id = wObj["media_content_id"] | "";
             
@@ -99,10 +98,10 @@ void HaConfigLogic::Save() {
     for (const auto& t : dashboards) {
         JsonObject tObj = tabs.add<JsonObject>();
         tObj["name"] = t.name;
-        JsonArray wArray = tObj["widgets"].to<JsonArray>();
+        JsonArray widgets = tObj["widgets"].to<JsonArray>();
         
         for (const auto& w : t.widgets) {
-            JsonObject wObj = wArray.add<JsonObject>();
+            JsonObject wObj = widgets.add<JsonObject>();
             wObj["entity"] = w.entity_id;
             wObj["type"] = w.type;
             wObj["x"] = w.x;
@@ -113,7 +112,6 @@ void HaConfigLogic::Save() {
             wObj["icon_align"] = w.icon_align;
             wObj["text_align"] = w.text_align;
             wObj["state_align"] = w.state_align;
-            
             wObj["icon_margin"] = w.icon_margin;
             wObj["text_margin"] = w.text_margin;
             wObj["state_margin"] = w.state_margin;
@@ -123,10 +121,10 @@ void HaConfigLogic::Save() {
             wObj["show_chart"] = w.show_chart;
             wObj["chart_w_pct"] = w.chart_w_pct;
             wObj["chart_h_pct"] = w.chart_h_pct;
-            wObj["chart_x_ofs"] = w.chart_x_ofs; // NEU
-            wObj["chart_y_ofs"] = w.chart_y_ofs; // NEU
-            wObj["chart_min"] = w.chart_min;
-            wObj["chart_max"] = w.chart_max;
+            wObj["chart_x_ofs"] = w.chart_x_ofs;
+            wObj["chart_y_ofs"] = w.chart_y_ofs;
+            if (w.chart_min.length() > 0) wObj["chart_min"] = w.chart_min;
+            if (w.chart_max.length() > 0) wObj["chart_max"] = w.chart_max;
             
             if (w.name.length() > 0) wObj["name"] = w.name;
             if (w.mdi_icon.length() > 0) wObj["mdi_icon"] = w.mdi_icon;
@@ -152,12 +150,12 @@ void HaConfigLogic::AddTab(String name) {
 void HaConfigLogic::DeleteTab(int index) {
     if (index >= 0 && index < dashboards.size()) {
         dashboards.erase(dashboards.begin() + index);
-        if (dashboards.size() == 0) AddTab("Tab 1");
+        if (dashboards.size() == 0) AddTab("Wohnen");
     }
 }
 
-void HaConfigLogic::RenameTab(int index, String new_name) {
-    if (index >= 0 && index < dashboards.size()) dashboards[index].name = new_name;
+void HaConfigLogic::RenameTab(int index, String newName) {
+    if (index >= 0 && index < dashboards.size()) dashboards[index].name = newName;
 }
 
 void HaConfigLogic::MoveTabLeft(int index) {

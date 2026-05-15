@@ -16,4 +16,7 @@ public:
     static void RequestDashboardList(int target_tab_index);
     static void RequestDashboardViews(String url_path);
     static void RequestDashboardCards(String url_path, int view_index);
+
+    static void CallVacuumService(String entity_id, String service);
+    static void CallVacuumSetFanSpeed(String entity_id, String speed);
 };

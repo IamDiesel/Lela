@@ -7,6 +7,7 @@ void (*HAWidget::onEditRequested)(HAWidget*) = nullptr;
 void (*HAWidget::onDeleteRequested)(HAWidget*) = nullptr;
 void (*HAWidget::onLightControlRequested)(HAWidget*) = nullptr; 
 void (*HAWidget::onMediaControlRequested)(HAWidget*) = nullptr; 
+void (*HAWidget::onVacuumControlRequested)(HAWidget*) = nullptr; // <-- NEU: Vacuum Callback
 
 static bool widget_is_dragging = false;
 
@@ -164,6 +165,8 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
         else if (code == LV_EVENT_LONG_PRESSED) {
             if (widget->getType() == "light" && widget->getEntityId().startsWith("light.") && HAWidget::onLightControlRequested) HAWidget::onLightControlRequested(widget);
             else if ((widget->getType() == "media_player" || widget->getType() == "media_item") && HAWidget::onMediaControlRequested) HAWidget::onMediaControlRequested(widget);
+            // --- NEU: Longpress Check für Vacuum ---
+            else if (widget->getType() == "vacuum" && HAWidget::onVacuumControlRequested) HAWidget::onVacuumControlRequested(widget); 
         }
     }
 }
@@ -582,4 +585,74 @@ void HAMediaItemWidget::updateState(String state) {
 void HAMediaItemWidget::onClick() { 
     lv_obj_set_style_text_opa(icon_label, 127, 0); 
     HaWebsocketLogic_CallPlayMedia(entity_id, media_content_type, media_content_id); 
+}
+
+// =========================================================
+// VACUUM WIDGET (NEU)
+// =========================================================
+HAVacuumWidget::HAVacuumWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off)
+    : HAWidget(parent, tab_idx, type, entity, x, y, w, h, name, mdi, c_on, c_off) {
+
+    // Text & Icon linksbündig ausrichten (wegen Doppelbreite)
+    lv_obj_align(icon_label, LV_ALIGN_LEFT_MID, 20, -15);
+    lv_obj_align(name_label, LV_ALIGN_LEFT_MID, 20, 20);
+    lv_obj_set_style_text_align(name_label, LV_TEXT_ALIGN_LEFT, 0);
+
+    // Play/Pause Button
+    btn_play_pause = lv_btn_create(container);
+    lv_obj_set_size(btn_play_pause, 55, 55);
+    lv_obj_align(btn_play_pause, LV_ALIGN_RIGHT_MID, -85, 0);
+    lv_obj_set_style_bg_color(btn_play_pause, lv_color_hex(0x2980B9), 0);
+    lbl_play_pause = lv_label_create(btn_play_pause);
+    lv_label_set_text(lbl_play_pause, LV_SYMBOL_PLAY);
+    lv_obj_center(lbl_play_pause);
+
+    lv_obj_add_event_cb(btn_play_pause, [](lv_event_t* e){
+        HAVacuumWidget* w = (HAVacuumWidget*)lv_event_get_user_data(e);
+        if(w->current_state == "cleaning") HaWebsocketLogic_CallVacuumService(w->entity_id, "pause");
+        else HaWebsocketLogic_CallVacuumService(w->entity_id, "start");
+    }, LV_EVENT_CLICKED, this);
+
+    // Stop Button
+    btn_stop = lv_btn_create(container);
+    lv_obj_set_size(btn_stop, 55, 55);
+    lv_obj_align(btn_stop, LV_ALIGN_RIGHT_MID, -15, 0);
+    lv_obj_set_style_bg_color(btn_stop, lv_color_hex(0xC0392B), 0);
+    lbl_stop = lv_label_create(btn_stop);
+    lv_label_set_text(lbl_stop, LV_SYMBOL_STOP);
+    lv_obj_center(lbl_stop);
+
+    lv_obj_add_event_cb(btn_stop, [](lv_event_t* e){
+        HAVacuumWidget* w = (HAVacuumWidget*)lv_event_get_user_data(e);
+        HaWebsocketLogic_CallVacuumService(w->entity_id, "stop");
+    }, LV_EVENT_CLICKED, this);
+
+    updateState("unknown");
+}
+
+void HAVacuumWidget::updateState(String state) {
+    if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) return; 
+    
+    HAWidget::updateState(state);
+    lv_obj_set_style_text_opa(icon_label, 255, 0); 
+
+    if(state == "cleaning") lv_label_set_text(lbl_play_pause, LV_SYMBOL_PAUSE);
+    else lv_label_set_text(lbl_play_pause, LV_SYMBOL_PLAY);
+
+    uint32_t c_on_val = 0x1ABC9C; 
+    if (color_on.length() > 0 && color_on.startsWith("#")) c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
+    uint32_t c_off_val = 0x555555; 
+    if (color_off.length() > 0 && color_off.startsWith("#")) c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
+
+    if (state == "cleaning" || state == "returning" || state == "error") {
+        lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); 
+        lv_obj_set_style_text_color(icon_label, lv_color_hex(c_on_val), 0); 
+    } else {
+        lv_obj_set_style_bg_color(container, lv_color_hex(0x111111), 0); 
+        lv_obj_set_style_text_color(icon_label, lv_color_hex(c_off_val), 0); 
+    }
+}
+
+void HAVacuumWidget::onClick() {
+    // Bleibt absichtlich leer - Interaktion verläuft hier über Buttons oder den Longpress (Popup)
 }

@@ -19,6 +19,7 @@ std::map<String, String> HaEntityCache::mediaArtist;
 std::map<String, float> HaEntityCache::mediaVolume;
 std::map<String, std::vector<String>> HaEntityCache::sourceList;
 std::map<String, String> HaEntityCache::source;
+std::map<String, int> HaEntityCache::battery; // NEU: Batterie Map
 
 void HaEntityCache::Init() {
     if (mutex == NULL) mutex = xSemaphoreCreateMutex();
@@ -30,6 +31,7 @@ void HaEntityCache::ClearAll() {
         rgb.clear(); white.clear(); isRGBW.clear(); units.clear();
         mediaTitle.clear(); mediaArtist.clear(); mediaVolume.clear();
         sourceList.clear(); source.clear(); trackedEntities.clear();
+        battery.clear(); // NEU
         xSemaphoreGive(mutex);
     }
 }
@@ -106,6 +108,11 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
             for (JsonVariant v : sList) sources.push_back(v.as<String>());
             sourceList[entityId] = sources;
         }
+
+        // NEU: Batterie Status
+        int bat = attrs["battery_level"] | attrs["battery"] | -1;
+        if (bat >= 0) battery[entityId] = bat;
+
         xSemaphoreGive(mutex);
     }
 }
@@ -231,6 +238,15 @@ String HaEntityCache::GetEntityName(String entity_id) {
     String result = "";
     if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         if (names.find(entity_id) != names.end()) result = names[entity_id];
+        xSemaphoreGive(mutex);
+    }
+    return result;
+}
+
+int HaEntityCache::GetBattery(String entity_id) {
+    int result = -1;
+    if (mutex != NULL && xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        if (battery.find(entity_id) != battery.end()) result = battery[entity_id];
         xSemaphoreGive(mutex);
     }
     return result;
