@@ -18,10 +18,21 @@ lv_obj_t * splash_status_label = nullptr;
 static const lv_point_t walk_pts[] = {{0,0}, {12,36}, {42,36}, {66,24}, {72,9}, {84,9}, {96,27}, {84,42}, {84,72}, {72,72}, {72,54}, {42,54}, {42,72}, {30,72}, {30,54}, {12,36}};
 static const lv_point_t sit_pts[] = {{66, 72}, {30, 72}, {30, 48}, {36, 24}, {30, 6}, {39, 15}, {57, 15}, {66, 6}, {60, 24}, {66, 48}, {66, 72}};
 
-static void anim_cat_walk_cb(void * var, int32_t v) { lv_obj_set_style_translate_x((lv_obj_t *)var, v, 0); }
-static void anim_bar_cb(void * var, int32_t v) { lv_bar_set_value((lv_obj_t*)var, v, LV_ANIM_OFF); }
-static void anim_zzz_y_cb(void * var, int32_t v) { lv_obj_set_style_translate_y((lv_obj_t *)var, v, 0); }
-static void anim_zzz_opa_cb(void * var, int32_t v) { lv_obj_set_style_opa((lv_obj_t *)var, v, 0); }
+static void anim_cat_walk_cb(void * var, int32_t v) { 
+    lv_obj_set_style_translate_x((lv_obj_t *)var, v, 0); 
+}
+
+static void anim_bar_cb(void * var, int32_t v) { 
+    lv_bar_set_value((lv_obj_t*)var, v, LV_ANIM_OFF); 
+}
+
+static void anim_zzz_y_cb(void * var, int32_t v) { 
+    lv_obj_set_style_translate_y((lv_obj_t *)var, v, 0); 
+}
+
+static void anim_zzz_opa_cb(void * var, int32_t v) { 
+    lv_obj_set_style_opa((lv_obj_t *)var, v, 0); 
+}
 
 static void anim_walk_ready_cb(lv_anim_t * a) {
     lv_obj_t * cat = (lv_obj_t *)a->var;
@@ -43,6 +54,7 @@ static void btn_shutdown_event_cb(lv_event_t * e) {
     
     lv_obj_t * sd_scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(sd_scr, lv_color_hex(0x000000), 0);
+    
     lv_obj_t * lbl = lv_label_create(sd_scr); 
     lv_label_set_text(lbl, "Geraet wird heruntergefahren...\n\n(Power-Taste lange drücken \nzum Aufwecken)"); 
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0); 
@@ -59,23 +71,20 @@ static void btn_shutdown_event_cb(lv_event_t * e) {
 
 static lv_obj_t * screen_off_overlay = nullptr;
 
-// --- DER ENTSCHLACKTE WAKE-UP ---
 static void screen_off_click_cb(lv_event_t * e) {
-    // Einfach die Helligkeit wieder auf den gemerkten Wert setzen
     M5.Display.setBrightness((brightnessPercent * 255) / 100);
     
-    // Schwarzes Overlay loeschen
     if (screen_off_overlay != nullptr) {
         lv_obj_del_async(screen_off_overlay); 
         screen_off_overlay = nullptr;
     }
 }
 
-// --- DER ENTSCHLACKTE SCREEN-OFF ---
 static void btn_screen_off_event_cb(lv_event_t * e) {
-    if (screen_off_overlay != nullptr) return;
+    if (screen_off_overlay != nullptr) {
+        return;
+    }
     
-    // Overlay erstellen (damit man keine Knöpfe blind drückt)
     screen_off_overlay = lv_obj_create(lv_disp_get_layer_sys(NULL));
     lv_obj_set_size(screen_off_overlay, 1280, 720);
     lv_obj_set_style_bg_color(screen_off_overlay, lv_color_black(), 0); 
@@ -85,10 +94,8 @@ static void btn_screen_off_event_cb(lv_event_t * e) {
     lv_obj_add_flag(screen_off_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(screen_off_overlay, screen_off_click_cb, LV_EVENT_PRESSED, NULL);
 
-    // Helligkeit ganz simpel auf 0 setzen
     M5.Display.setBrightness(0);
 
-    // Menue im Hintergrund schliessen
     GuiManager * manager = (GuiManager *)lv_event_get_user_data(e);
     manager->toggleQuickOverlay(); 
 }
@@ -96,7 +103,6 @@ static void btn_screen_off_event_cb(lv_event_t * e) {
 static void alarm_wake_timer_cb(lv_timer_t * timer) {
     if (screen_off_overlay != nullptr) {
         if (alarmActive || babyAlarmActive || disconnectAlarmActive) {
-            // Auch beim Alarm: Simpel das Licht wieder anmachen
             M5.Display.setBrightness((brightnessPercent * 255) / 100);
             lv_obj_del_async(screen_off_overlay);
             screen_off_overlay = nullptr;
@@ -110,7 +116,9 @@ void GuiManager::init() {
     lv_timer_create(alarm_wake_timer_cb, 500, NULL);
 
     lv_obj_t * splash_screen = lv_obj_create(NULL); 
-    if (!splash_screen) return; 
+    if (!splash_screen) {
+        return; 
+    }
 
     lv_obj_set_style_bg_color(splash_screen, lv_color_hex(0x111111), 0); 
     lv_obj_set_style_border_width(splash_screen, 0, 0);
@@ -150,27 +158,66 @@ void GuiManager::init() {
     lv_obj_set_style_pad_all(baby_cont, 0, 0);
 
     static const lv_point_t body_pts[] = {{45, 90}, {135, 90}, {150, 135}, {135, 180}, {45, 180}, {30, 135}, {45, 90}};
-    lv_obj_t * l_body = lv_line_create(baby_cont); lv_line_set_points(l_body, body_pts, 7); lv_obj_set_style_line_width(l_body, 9, 0); lv_obj_set_style_line_color(l_body, baby_col, 0); lv_obj_set_style_line_rounded(l_body, true, 0);
+    lv_obj_t * l_body = lv_line_create(baby_cont); 
+    lv_line_set_points(l_body, body_pts, 7); 
+    lv_obj_set_style_line_width(l_body, 9, 0); 
+    lv_obj_set_style_line_color(l_body, baby_col, 0); 
+    lv_obj_set_style_line_rounded(l_body, true, 0);
     
     static const lv_point_t head_pts[] = {{60, 45}, {120, 45}, {135, 66}, {120, 90}, {60, 90}, {45, 66}, {60, 45}};
-    lv_obj_t * l_head = lv_line_create(baby_cont); lv_line_set_points(l_head, head_pts, 7); lv_obj_set_style_line_width(l_head, 6, 0); lv_obj_set_style_line_color(l_head, lv_color_white(), 0);
+    lv_obj_t * l_head = lv_line_create(baby_cont); 
+    lv_line_set_points(l_head, head_pts, 7); 
+    lv_obj_set_style_line_width(l_head, 6, 0); 
+    lv_obj_set_style_line_color(l_head, lv_color_white(), 0);
     
     static const lv_point_t eye_l_pts[] = {{69, 66}, {75, 72}, {81, 66}};
     static const lv_point_t eye_r_pts[] = {{99, 66}, {105, 72}, {111, 66}};
-    lv_obj_t * l_e_l = lv_line_create(baby_cont); lv_line_set_points(l_e_l, eye_l_pts, 3); lv_obj_set_style_line_width(l_e_l, 3, 0); lv_obj_set_style_line_color(l_e_l, lv_color_white(), 0);
-    lv_obj_t * l_e_r = lv_line_create(baby_cont); lv_line_set_points(l_e_r, eye_r_pts, 3); lv_obj_set_style_line_width(l_e_r, 3, 0); lv_obj_set_style_line_color(l_e_r, lv_color_white(), 0);
+    lv_obj_t * l_e_l = lv_line_create(baby_cont); 
+    lv_line_set_points(l_e_l, eye_l_pts, 3); 
+    lv_obj_set_style_line_width(l_e_l, 3, 0); 
+    lv_obj_set_style_line_color(l_e_l, lv_color_white(), 0);
+    lv_obj_t * l_e_r = lv_line_create(baby_cont); 
+    lv_line_set_points(l_e_r, eye_r_pts, 3); 
+    lv_obj_set_style_line_width(l_e_r, 3, 0); 
+    lv_obj_set_style_line_color(l_e_r, lv_color_white(), 0);
     
     static const lv_point_t paci_pts[] = {{84, 78}, {96, 78}, {96, 84}, {84, 84}, {84, 78}}; 
     static const lv_point_t paci_handle[] = {{87, 84}, {93, 84}, {93, 90}, {87, 90}, {87, 84}}; 
-    lv_obj_t * l_paci = lv_line_create(baby_cont); lv_line_set_points(l_paci, paci_pts, 5); lv_obj_set_style_line_width(l_paci, 6, 0); lv_obj_set_style_line_color(l_paci, lv_color_hex(0xE67E22), 0); 
-    lv_obj_t * l_paci_h = lv_line_create(baby_cont); lv_line_set_points(l_paci_h, paci_handle, 5); lv_obj_set_style_line_width(l_paci_h, 6, 0); lv_obj_set_style_line_color(l_paci_h, lv_color_white(), 0);
+    lv_obj_t * l_paci = lv_line_create(baby_cont); 
+    lv_line_set_points(l_paci, paci_pts, 5); 
+    lv_obj_set_style_line_width(l_paci, 6, 0); 
+    lv_obj_set_style_line_color(l_paci, lv_color_hex(0xE67E22), 0); 
+    lv_obj_t * l_paci_h = lv_line_create(baby_cont); 
+    lv_line_set_points(l_paci_h, paci_handle, 5); 
+    lv_obj_set_style_line_width(l_paci_h, 6, 0); 
+    lv_obj_set_style_line_color(l_paci_h, lv_color_white(), 0);
     
     lv_obj_t * lbl_zzz = lv_label_create(splash_screen); 
     lv_label_set_text(lbl_zzz, "zzzZZZ"); 
     lv_obj_set_style_text_color(lbl_zzz, lv_color_white(), 0); 
     lv_obj_align_to(lbl_zzz, baby_cont, LV_ALIGN_TOP_MID, 30, 15); 
-    lv_anim_t a_zzz_y; lv_anim_init(&a_zzz_y); lv_anim_set_var(&a_zzz_y, lbl_zzz); lv_anim_set_values(&a_zzz_y, 0, -90); lv_anim_set_time(&a_zzz_y, 1500); lv_anim_set_exec_cb(&a_zzz_y, anim_zzz_y_cb); lv_anim_set_path_cb(&a_zzz_y, lv_anim_path_ease_out); lv_anim_set_delay(&a_zzz_y, 500); lv_anim_set_repeat_count(&a_zzz_y, 3); lv_anim_start(&a_zzz_y);
-    lv_anim_t a_zzz_opa; lv_anim_init(&a_zzz_opa); lv_anim_set_var(&a_zzz_opa, lbl_zzz); lv_anim_set_values(&a_zzz_opa, 255, 0); lv_anim_set_time(&a_zzz_opa, 1500); lv_anim_set_exec_cb(&a_zzz_opa, anim_zzz_opa_cb); lv_anim_set_path_cb(&a_zzz_opa, lv_anim_path_linear); lv_anim_set_delay(&a_zzz_opa, 500); lv_anim_set_repeat_count(&a_zzz_opa, 3); lv_anim_start(&a_zzz_opa);
+    
+    lv_anim_t a_zzz_y; 
+    lv_anim_init(&a_zzz_y); 
+    lv_anim_set_var(&a_zzz_y, lbl_zzz); 
+    lv_anim_set_values(&a_zzz_y, 0, -90); 
+    lv_anim_set_time(&a_zzz_y, 1500); 
+    lv_anim_set_exec_cb(&a_zzz_y, anim_zzz_y_cb); 
+    lv_anim_set_path_cb(&a_zzz_y, lv_anim_path_ease_out); 
+    lv_anim_set_delay(&a_zzz_y, 500); 
+    lv_anim_set_repeat_count(&a_zzz_y, 3); 
+    lv_anim_start(&a_zzz_y);
+    
+    lv_anim_t a_zzz_opa; 
+    lv_anim_init(&a_zzz_opa); 
+    lv_anim_set_var(&a_zzz_opa, lbl_zzz); 
+    lv_anim_set_values(&a_zzz_opa, 255, 0); 
+    lv_anim_set_time(&a_zzz_opa, 1500); 
+    lv_anim_set_exec_cb(&a_zzz_opa, anim_zzz_opa_cb); 
+    lv_anim_set_path_cb(&a_zzz_opa, lv_anim_path_linear); 
+    lv_anim_set_delay(&a_zzz_opa, 500); 
+    lv_anim_set_repeat_count(&a_zzz_opa, 3); 
+    lv_anim_start(&a_zzz_opa);
 
     lv_obj_t * cat_walker = lv_line_create(splash_screen); 
     lv_line_set_points(cat_walker, walk_pts, 16); 
@@ -179,7 +226,8 @@ void GuiManager::init() {
     lv_obj_set_style_line_rounded(cat_walker, true, 0); 
     lv_obj_align(cat_walker, LV_ALIGN_CENTER, -240, -66); 
 
-    lv_anim_t a_walk; lv_anim_init(&a_walk); 
+    lv_anim_t a_walk; 
+    lv_anim_init(&a_walk); 
     lv_anim_set_var(&a_walk, cat_walker); 
     lv_anim_set_values(&a_walk, 0, 405); 
     lv_anim_set_time(&a_walk, 2500); 
@@ -188,7 +236,13 @@ void GuiManager::init() {
     lv_anim_set_ready_cb(&a_walk, anim_walk_ready_cb);
     lv_anim_start(&a_walk);
 
-    lv_anim_t a_bar; lv_anim_init(&a_bar); lv_anim_set_var(&a_bar, splash_bar); lv_anim_set_values(&a_bar, 0, 100); lv_anim_set_time(&a_bar, 4500); lv_anim_set_exec_cb(&a_bar, anim_bar_cb); lv_anim_start(&a_bar);
+    lv_anim_t a_bar; 
+    lv_anim_init(&a_bar); 
+    lv_anim_set_var(&a_bar, splash_bar); 
+    lv_anim_set_values(&a_bar, 0, 100); 
+    lv_anim_set_time(&a_bar, 4500); 
+    lv_anim_set_exec_cb(&a_bar, anim_bar_cb); 
+    lv_anim_start(&a_bar);
 
     lv_scr_load(splash_screen);
 
@@ -196,10 +250,14 @@ void GuiManager::init() {
     lv_timer_set_repeat_count(t, 1);
 }
 
-ScreenID GuiManager::getCurrentScreen() const { return currentScreen; }
+ScreenID GuiManager::getCurrentScreen() const { 
+    return currentScreen; 
+}
 
 void GuiManager::switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type) {
-    if (currentScreen == newScreen) return;
+    if (currentScreen == newScreen) {
+        return;
+    }
 
     if (currentScreen == SCREEN_BABY) {
         requestBabyStream = false;
@@ -208,16 +266,32 @@ void GuiManager::switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type) 
     if (newScreen == SCREEN_HA) {
         HaWebsocketLogic_Start();
     } else if (currentScreen == SCREEN_HA && newScreen != SCREEN_HA) {
+        // --- DER WICHTIGE FIX FÜR DIE WISCHGESTE ---
+        // Die Widgets MÜSSEN gelöscht werden, bevor der Screen weggeräumt wird,
+        // um den "Geister-Timer"-Absturz zu verhindern.
+        ViewHomeAssistant::clearWidgets();
+        
+        // Erst danach den Websocket beenden.
         HaWebsocketLogic_Stop(); 
     }
 
     lv_obj_t* nextScr = nullptr;
     switch(newScreen) {
-        case SCREEN_DASHBOARD: nextScr = ViewDashboard::build(); break;
-        case SCREEN_CATMAT:    nextScr = ViewCatMat::build(); break;
-        case SCREEN_BABY:      nextScr = ViewBaby::build(); break;
-        case SCREEN_SETTINGS:  nextScr = ViewSettings::build(); break;
-        case SCREEN_HA:        nextScr = ViewHomeAssistant::build(); break;
+        case SCREEN_DASHBOARD: 
+            nextScr = ViewDashboard::build(); 
+            break;
+        case SCREEN_CATMAT:    
+            nextScr = ViewCatMat::build(); 
+            break;
+        case SCREEN_BABY:      
+            nextScr = ViewBaby::build(); 
+            break;
+        case SCREEN_SETTINGS:  
+            nextScr = ViewSettings::build(); 
+            break;
+        case SCREEN_HA:        
+            nextScr = ViewHomeAssistant::build(); 
+            break;
     }
     
     if (nextScr != nullptr) {
@@ -354,6 +428,7 @@ void GuiManager::volumeSliderWrapper(lv_event_t * e) {
     playToneI2S(1000, 50, true);
     lv_obj_t * slider = (lv_obj_t *)lv_event_get_target(e);
     GuiManager * manager = (GuiManager *)lv_event_get_user_data(e);
+    
     volumePercent = lv_slider_get_value(slider);
     
     manager->preferences.begin("catmat", false);
@@ -367,24 +442,64 @@ void GuiManager::gestureEventWrapper(lv_event_t * e) {
 }
 
 void GuiManager::handleGesture(lv_event_t * e) {
-    if (vidFSMode) return;
+    if (vidFSMode) {
+        return;
+    }
     
     if (currentScreen == SCREEN_HA && HAWidget::editModeActive) {
         return; 
     }
     
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
-    if (quickOverlay != nullptr && dir == LV_DIR_TOP) { toggleQuickOverlay(); return; }
+    
+    if (quickOverlay != nullptr && dir == LV_DIR_TOP) { 
+        toggleQuickOverlay(); 
+        return; 
+    }
+    
     if (quickOverlay == nullptr) {
         if (currentScreen == SCREEN_DASHBOARD) {
-            if (dir == LV_DIR_LEFT)   switchScreen(SCREEN_CATMAT, LV_SCR_LOAD_ANIM_NONE);
-            if (dir == LV_DIR_RIGHT)  switchScreen(SCREEN_BABY, LV_SCR_LOAD_ANIM_NONE);
-            if (dir == LV_DIR_TOP)    switchScreen(SCREEN_SETTINGS, LV_SCR_LOAD_ANIM_NONE);
-            if (dir == LV_DIR_BOTTOM) toggleQuickOverlay();
+            if (dir == LV_DIR_LEFT) {
+                switchScreen(SCREEN_CATMAT, LV_SCR_LOAD_ANIM_NONE);
+            }
+            if (dir == LV_DIR_RIGHT) {
+                switchScreen(SCREEN_BABY, LV_SCR_LOAD_ANIM_NONE);
+            }
+            if (dir == LV_DIR_TOP) {
+                switchScreen(SCREEN_SETTINGS, LV_SCR_LOAD_ANIM_NONE);
+            }
+            if (dir == LV_DIR_BOTTOM) {
+                toggleQuickOverlay();
+            }
         } 
-        else if (currentScreen == SCREEN_CATMAT) { if (dir == LV_DIR_RIGHT)  switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); if (dir == LV_DIR_BOTTOM) toggleQuickOverlay(); }
-        else if (currentScreen == SCREEN_BABY) { if (dir == LV_DIR_LEFT)   switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); if (dir == LV_DIR_BOTTOM) toggleQuickOverlay(); }
-        else if (currentScreen == SCREEN_SETTINGS) { if (dir == LV_DIR_RIGHT || dir == LV_DIR_LEFT) switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); }
-        else if (currentScreen == SCREEN_HA) { if (dir == LV_DIR_RIGHT || dir == LV_DIR_LEFT) switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); if (dir == LV_DIR_BOTTOM) toggleQuickOverlay(); }
+        else if (currentScreen == SCREEN_CATMAT) { 
+            if (dir == LV_DIR_RIGHT) {
+                switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); 
+            }
+            if (dir == LV_DIR_BOTTOM) {
+                toggleQuickOverlay(); 
+            }
+        }
+        else if (currentScreen == SCREEN_BABY) { 
+            if (dir == LV_DIR_LEFT) {
+                switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); 
+            }
+            if (dir == LV_DIR_BOTTOM) {
+                toggleQuickOverlay(); 
+            }
+        }
+        else if (currentScreen == SCREEN_SETTINGS) { 
+            if (dir == LV_DIR_RIGHT || dir == LV_DIR_LEFT) {
+                switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); 
+            }
+        }
+        else if (currentScreen == SCREEN_HA) { 
+            if (dir == LV_DIR_RIGHT || dir == LV_DIR_LEFT) {
+                switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); 
+            }
+            if (dir == LV_DIR_BOTTOM) {
+                toggleQuickOverlay(); 
+            }
+        }
     }
 }

@@ -62,14 +62,6 @@ void ViewHomeAssistant::btn_back_event_cb(lv_event_t * e) {
         HAWidget::editModeActive = false;
         pendingHaReload = true; 
     } else {
-        // --- DER ANTI-ABSTURZ-FIX ---
-        // 1. Alle C++ Widgets und deren Timer im Hintergrund loeschen!
-        clearWidgets();
-        
-        // 2. Die WebSocket Verbindung kappen und Cache leeren, um RAM/WLAN zu sparen!
-        HaWebsocketLogic_Stop();
-        
-        // 3. Erst jetzt wechseln wir den Screen
         gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
     }
 }
