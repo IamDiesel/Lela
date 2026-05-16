@@ -3,6 +3,8 @@
 #include "HaConfigLogic.h"
 
 volatile bool HaEntityCache::triggerRestStateFetch = false;
+volatile uint32_t HaEntityCache::cacheVersion = 0; // NEU: Initialisierung
+
 SemaphoreHandle_t HaEntityCache::mutex = nullptr;
 std::vector<String> HaEntityCache::trackedEntities;
 
@@ -22,12 +24,10 @@ std::map<String, String> HaEntityCache::source;
 std::map<String, int> HaEntityCache::battery;
 std::map<String, String> HaEntityCache::fanSpeed;
 
-// --- HIER WAREN DIE FEHLENDEN DEFINITIONEN ---
 std::map<String, bool> HaEntityCache::supportsBrightness;
 std::map<String, bool> HaEntityCache::supportsColor;
 std::map<String, bool> HaEntityCache::supportsTemp;
 std::map<String, int> HaEntityCache::colorTemp;
-// ---------------------------------------------
 
 void HaEntityCache::Init() {
     mutex = xSemaphoreCreateMutex();
@@ -155,9 +155,15 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     }
                 }
             }
+            // NEU: Signalisiere der GUI, dass frische Daten da sind!
+            cacheVersion++;
         }
         xSemaphoreGive(mutex);
     }
+}
+
+uint32_t HaEntityCache::GetCacheVersion() {
+    return cacheVersion;
 }
 
 String HaEntityCache::GetState(String entity_id) {
