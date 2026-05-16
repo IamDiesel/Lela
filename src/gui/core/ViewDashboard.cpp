@@ -25,35 +25,80 @@ static void set_scr_opaque_black(lv_obj_t * scr) {
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 }
 
-static void btn_baby_event_cb(lv_event_t * e) {
+// FIX: "ViewDashboard::" hinzugefuegt, damit der Linker die Funktion findet!
+void ViewDashboard::btn_baby_event_cb(lv_event_t * e) {
     lv_indev_t * indev = lv_indev_get_act();
-    if (indev && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) return;
+    
+    if (indev && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) {
+        return;
+    }
+    
     playToneI2S(800, 100, true);
-    if (babyAlarmActive && !babyMuted) babyMuted = true;
-    else gui.switchScreen(SCREEN_BABY, LV_SCR_LOAD_ANIM_NONE); 
+    
+    if (babyAlarmActive && !babyMuted) {
+        babyMuted = true;
+    } else {
+        gui.switchScreen(SCREEN_BABY, LV_SCR_LOAD_ANIM_NONE); 
+    }
 }
 
-static void btn_cat_event_cb(lv_event_t * e) {
+// FIX: "ViewDashboard::" hinzugefuegt!
+void ViewDashboard::btn_cat_event_cb(lv_event_t * e) {
     lv_indev_t * indev = lv_indev_get_act();
-    if (indev && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) return;
+    
+    if (indev && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) {
+        return;
+    }
+    
     playToneI2S(800, 100, true);
-    if (alarmActive && !muted) muted = true;
-    else gui.switchScreen(SCREEN_CATMAT, LV_SCR_LOAD_ANIM_NONE); 
+    
+    if (alarmActive && !muted) {
+        muted = true;
+    } else {
+        gui.switchScreen(SCREEN_CATMAT, LV_SCR_LOAD_ANIM_NONE); 
+    }
 }
 
-static void btn_ha_event_cb(lv_event_t * e) {
+// FIX: "ViewDashboard::" hinzugefuegt und Lade-Animation (Spinner) integriert!
+void ViewDashboard::btn_ha_event_cb(lv_event_t * e) {
     lv_indev_t * indev = lv_indev_get_act();
-    if (indev && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) return;
+    
+    if (indev && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) {
+        return;
+    }
+    
     playToneI2S(800, 100, true);
-    gui.switchScreen(SCREEN_HA, LV_SCR_LOAD_ANIM_NONE); 
+    
+    lv_obj_t* btn = lv_event_get_target(e);
+
+    // Ladekreis sofort auf dem Button erzeugen
+    lv_obj_t* spinner = lv_spinner_create(btn, 1000, 60);
+    lv_obj_set_size(spinner, 60, 60);
+    lv_obj_center(spinner);
+
+    // LVGL zwingen, den Ladekreis sofort zu zeichnen
+    lv_timer_handler();
+
+    // 50ms warten, damit die Animation aufpoppt, dann erst das HA System laden
+    lv_timer_t* t = lv_timer_create([](lv_timer_t* timer) {
+        gui.switchScreen(SCREEN_HA, LV_SCR_LOAD_ANIM_FADE_ON);
+        lv_timer_del(timer); 
+    }, 50, NULL);
 }
 
 lv_obj_t* ViewDashboard::build() {
-    s_lastBabyAlarm = false; s_lastBabyMuted = false; s_lastBlinkBaby = false;
-    s_lastCatAlarm = false; s_lastCatMuted = false; s_lastBlinkCat = false;
+    s_lastBabyAlarm = false; 
+    s_lastBabyMuted = false; 
+    s_lastBlinkBaby = false;
+    
+    s_lastCatAlarm = false; 
+    s_lastCatMuted = false; 
+    s_lastBlinkCat = false;
 
     lv_obj_t* scr = lv_obj_create(NULL);
-    if (!scr) return nullptr;
+    if (!scr) {
+        return nullptr;
+    }
 
     set_scr_opaque_black(scr);
     
@@ -90,20 +135,17 @@ lv_obj_t* ViewDashboard::build() {
     lv_obj_set_style_text_font(lblCat, &lv_font_montserrat_36, 0);
     lv_obj_set_style_text_align(lblCat, LV_TEXT_ALIGN_CENTER, 0);
 
-    // --- FIX 1: Transparenz (Glas-Effekt) für den HA Button ---
     btnHA = lv_btn_create(scr);
     lv_obj_set_size(btnHA, 280, 280); 
     lv_obj_align(btnHA, LV_ALIGN_CENTER, 0, 0);
     
-    // Glas-Look (Dunkelgrau mit 160er Transparenz)
     lv_obj_set_style_bg_color(btnHA, lv_color_hex(0x222222), 0); 
     lv_obj_set_style_bg_opa(btnHA, 160, 0); 
     lv_obj_set_style_radius(btnHA, LV_RADIUS_CIRCLE, 0); 
     
-    // Edler Rahmen
     lv_obj_set_style_border_width(btnHA, 4, 0);
     lv_obj_set_style_border_color(btnHA, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_shadow_width(btnHA, 0, 0); // Kein Schatten, da transparent
+    lv_obj_set_style_shadow_width(btnHA, 0, 0); 
     
     lv_obj_add_event_cb(btnHA, btn_ha_event_cb, LV_EVENT_CLICKED, NULL);
 
@@ -136,7 +178,9 @@ lv_obj_t* ViewDashboard::build() {
 }
 
 void ViewDashboard::update() {
-    if (gui.getCurrentScreen() != SCREEN_DASHBOARD) return;
+    if (gui.getCurrentScreen() != SCREEN_DASHBOARD) {
+        return;
+    }
 
     ViewTopbar_Update();
 
@@ -146,13 +190,18 @@ void ViewDashboard::update() {
         if (fastBlink != s_lastBlinkBaby || !s_lastBabyAlarm || s_lastBabyMuted) {
             lv_obj_set_style_bg_color(btnBaby, fastBlink ? lv_color_hex(0xFF0000) : lv_color_hex(0xAA0000), 0);
             lv_label_set_text(lblBaby, LV_SYMBOL_BELL "\nBABY\nALARM!\n(Klick = Mute)");
-            s_lastBabyAlarm = true; s_lastBabyMuted = false; s_lastBlinkBaby = fastBlink;
+            
+            s_lastBabyAlarm = true; 
+            s_lastBabyMuted = false; 
+            s_lastBlinkBaby = fastBlink;
         }
     } else {
         if (s_lastBabyAlarm || s_lastBabyMuted != babyMuted) {
             lv_obj_set_style_bg_color(btnBaby, lv_color_hex(0x4FA5D6), 0);
             lv_label_set_text(lblBaby, "Baby\nMonitor");
-            s_lastBabyAlarm = false; s_lastBabyMuted = babyMuted;
+            
+            s_lastBabyAlarm = false; 
+            s_lastBabyMuted = babyMuted;
         }
     }
 
@@ -160,13 +209,18 @@ void ViewDashboard::update() {
         if (fastBlink != s_lastBlinkCat || !s_lastCatAlarm || s_lastCatMuted) {
             lv_obj_set_style_bg_color(btnCat, fastBlink ? lv_color_hex(0xFF0000) : lv_color_hex(0xAA0000), 0);
             lv_label_set_text(lblCat, LV_SYMBOL_BELL "\nCATMAT\nALARM!\n(Klick = Mute)");
-            s_lastCatAlarm = true; s_lastCatMuted = false; s_lastBlinkCat = fastBlink;
+            
+            s_lastCatAlarm = true; 
+            s_lastCatMuted = false; 
+            s_lastBlinkCat = fastBlink;
         }
     } else {
         if (s_lastCatAlarm || s_lastCatMuted != muted) {
             lv_obj_set_style_bg_color(btnCat, lv_color_hex(0xE67E22), 0);
             lv_label_set_text(lblCat, "CatMat");
-            s_lastCatAlarm = false; s_lastCatMuted = muted;
+            
+            s_lastCatAlarm = false; 
+            s_lastCatMuted = muted;
         }
     }
 }
