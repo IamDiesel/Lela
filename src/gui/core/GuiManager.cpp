@@ -224,7 +224,9 @@ void GuiManager::init() {
     lv_obj_set_style_line_width(cat_walker, 9, 0); 
     lv_obj_set_style_line_color(cat_walker, lv_color_hex(0xFFFFFF), 0); 
     lv_obj_set_style_line_rounded(cat_walker, true, 0); 
-    lv_obj_align(cat_walker, LV_ALIGN_CENTER, -240, -66); 
+    
+    // --- DER FIX: Offset von -66 auf -42 geaendert, damit die Katze perfekt sitzt! ---
+    lv_obj_align(cat_walker, LV_ALIGN_CENTER, -240, -42); 
 
     lv_anim_t a_walk; 
     lv_anim_init(&a_walk); 
@@ -266,12 +268,7 @@ void GuiManager::switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type) 
     if (newScreen == SCREEN_HA) {
         HaWebsocketLogic_Start();
     } else if (currentScreen == SCREEN_HA && newScreen != SCREEN_HA) {
-        // --- DER WICHTIGE FIX FÜR DIE WISCHGESTE ---
-        // Die Widgets MÜSSEN gelöscht werden, bevor der Screen weggeräumt wird,
-        // um den "Geister-Timer"-Absturz zu verhindern.
         ViewHomeAssistant::clearWidgets();
-        
-        // Erst danach den Websocket beenden.
         HaWebsocketLogic_Stop(); 
     }
 
