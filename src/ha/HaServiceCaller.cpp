@@ -276,3 +276,22 @@ void HaServiceCaller::CallClimateSetHvacMode(String entity_id, String hvac_mode)
     String payload; serializeJson(doc, payload);
     HaWebsocketLogic_SendPayload(payload);
 }
+
+// --- NEU: Text senden (fuer input_text und text) ---
+void HaServiceCaller::CallTextSetValue(String entity_id, String value) {
+    if (!HaWebsocketLogic_IsConnected()) return;
+    
+    JsonDocument doc(&callerAlloc);
+    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    doc["type"] = "call_service";
+    
+    // Die Domaene entscheidet sich nach dem Praefix
+    doc["domain"] = entity_id.startsWith("text.") ? "text" : "input_text";
+    doc["service"] = "set_value";
+    doc["target"]["entity_id"] = entity_id;
+    doc["service_data"]["value"] = value;
+    
+    String payload; 
+    serializeJson(doc, payload);
+    HaWebsocketLogic_SendPayload(payload);
+}

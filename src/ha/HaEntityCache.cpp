@@ -31,8 +31,8 @@ std::map<String, int> HaEntityCache::battery;
 std::map<String, String> HaEntityCache::fanSpeed;
 std::map<String, int> HaEntityCache::positionMap;
 
-std::map<String, float> HaEntityCache::currentTemperatureMap; // NEU
-std::map<String, float> HaEntityCache::targetTemperatureMap;  // NEU
+std::map<String, float> HaEntityCache::currentTemperatureMap; 
+std::map<String, float> HaEntityCache::targetTemperatureMap;  
 
 std::map<String, bool> HaEntityCache::supportsBrightness;
 std::map<String, bool> HaEntityCache::supportsColor;
@@ -72,8 +72,8 @@ void HaEntityCache::ClearAll() {
         fanSpeed.clear();
         positionMap.clear();
         
-        currentTemperatureMap.clear(); // NEU
-        targetTemperatureMap.clear();  // NEU
+        currentTemperatureMap.clear(); 
+        targetTemperatureMap.clear();  
         
         supportsBrightness.clear();
         supportsColor.clear();
@@ -113,9 +113,11 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
             f_name = attr["friendly_name"].as<String>();
         }
         
+        // --- NEU: text und input_text zum globalen Adressbuch hinzugefuegt ---
         if (entity_id.startsWith("light.") || entity_id.startsWith("switch.") || 
             entity_id.startsWith("select.") || entity_id.startsWith("input_select.") || 
             entity_id.startsWith("number.") || entity_id.startsWith("input_number.") ||
+            entity_id.startsWith("text.") || entity_id.startsWith("input_text.") || 
             entity_id.startsWith("cover.") || entity_id.startsWith("climate.") || 
             entity_id.startsWith("vacuum.") || entity_id.startsWith("media_player.") ||
             entity_id.startsWith("button.") || entity_id.startsWith("input_button.")) {
@@ -134,12 +136,13 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     }
                 }
             }
-            else if (entity_id.startsWith("number.") || entity_id.startsWith("input_number.")) {
+            // Wir koennen GetMax() nutzen, um die maximal erlaubte Textlaenge auszulesen!
+            else if (entity_id.startsWith("number.") || entity_id.startsWith("input_number.") || 
+                     entity_id.startsWith("text.") || entity_id.startsWith("input_text.")) {
                 if (!attr["min"].isNull()) globalMinMap[entity_id] = attr["min"].as<float>();
                 if (!attr["max"].isNull()) globalMaxMap[entity_id] = attr["max"].as<float>();
                 if (!attr["step"].isNull()) globalStepMap[entity_id] = attr["step"].as<float>();
             }
-            // --- NEU: Globale Metadaten fuer Klima ---
             else if (entity_id.startsWith("climate.")) {
                 if (attr["hvac_modes"].is<JsonArray>()) {
                     globalOptionsMap[entity_id].clear();
@@ -215,7 +218,6 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     if (!attr["current_position"].isNull()) positionMap[entity_id] = attr["current_position"].as<int>();
                     else positionMap[entity_id] = -1;
                 }
-                // --- NEU: Live-Metadaten fuer Klima speichern ---
                 else if (entity_id.startsWith("climate.")) {
                     if (!attr["current_temperature"].isNull()) currentTemperatureMap[entity_id] = attr["current_temperature"].as<float>();
                     else currentTemperatureMap[entity_id] = -99.0f; 
@@ -284,27 +286,8 @@ std::vector<String> HaEntityCache::GetOptions(String entity_id) { if (mutex && x
 float HaEntityCache::GetMin(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 0.0f; if (minMap.count(entity_id)) res = minMap[entity_id]; xSemaphoreGive(mutex); return res; } return 0.0f; }
 float HaEntityCache::GetMax(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 100.0f; if (maxMap.count(entity_id)) res = maxMap[entity_id]; xSemaphoreGive(mutex); return res; } return 100.0f; }
 float HaEntityCache::GetStep(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 1.0f; if (stepMap.count(entity_id)) res = stepMap[entity_id]; xSemaphoreGive(mutex); return res; } return 1.0f; }
-
-// --- NEU: Getter fuer das Klima-Widget ---
-float HaEntityCache::GetCurrentTemperature(String entity_id) {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        float res = -99.0f;
-        if (currentTemperatureMap.count(entity_id)) res = currentTemperatureMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -99.0f;
-}
-
-float HaEntityCache::GetTargetTemperature(String entity_id) {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        float res = -99.0f;
-        if (targetTemperatureMap.count(entity_id)) res = targetTemperatureMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -99.0f;
-}
+float HaEntityCache::GetCurrentTemperature(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = -99.0f; if (currentTemperatureMap.count(entity_id)) res = currentTemperatureMap[entity_id]; xSemaphoreGive(mutex); return res; } return -99.0f; }
+float HaEntityCache::GetTargetTemperature(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = -99.0f; if (targetTemperatureMap.count(entity_id)) res = targetTemperatureMap[entity_id]; xSemaphoreGive(mutex); return res; } return -99.0f; }
 
 std::vector<String> HaEntityCache::GetGlobalOptions(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { std::vector<String> res = globalOptionsMap[entity_id]; xSemaphoreGive(mutex); return res; } return std::vector<String>(); }
 float HaEntityCache::GetGlobalMin(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 0.0f; if (globalMinMap.count(entity_id)) res = globalMinMap[entity_id]; xSemaphoreGive(mutex); return res; } return 0.0f; }

@@ -74,7 +74,8 @@ inline float HaWebsocketLogic_GetCurrentTemperature(String id) { return HaEntity
 inline float HaWebsocketLogic_GetTargetTemperature(String id) { return HaEntityCache::GetTargetTemperature(id); }
 inline void HaWebsocketLogic_CallClimateSetTemperature(String id, float t) { HaServiceCaller::CallClimateSetTemperature(id, t); }
 inline void HaWebsocketLogic_CallClimateSetHvacMode(String id, String m) { HaServiceCaller::CallClimateSetHvacMode(id, m); }
-
+// --- NEU: Inline Umleitung fuer Text-Widgets ---
+inline void HaWebsocketLogic_CallTextSetValue(String id, String val) { HaServiceCaller::CallTextSetValue(id, val); }
 inline void HaWebsocketLogic_CallServiceWithData(String d, String s, String id, String j) { HaServiceCaller::CallServiceWithData(d, s, id, j); }
 inline void HaWebsocketLogic_CallVacuumService(String id, String s) { HaServiceCaller::CallVacuumService(id, s); }
 inline void HaWebsocketLogic_CallVacuumSetFanSpeed(String id, String s) { HaServiceCaller::CallVacuumSetFanSpeed(id, s); }

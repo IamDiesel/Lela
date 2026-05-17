@@ -126,6 +126,12 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
             currentCardW = (cardW * 2) + margin; // Doppelte Breite
             itemsToAdvance = 2; 
         }
+        // --- NEU: Text-Eingaben erfassen ---
+        else if (entity.startsWith("text.") || entity.startsWith("input_text.")) {
+            widgetType = "text";
+            currentCardW = (cardW * 2) + margin; // Doppelte Breite fuer gute Lesbarkeit!
+            itemsToAdvance = 2; 
+        }
         else if (entity.startsWith("vacuum.")) {
             widgetType = "vacuum";
             currentCardW = (cardW * 2) + margin;
@@ -157,7 +163,7 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
             wDef.select_options = opt_str;
         } 
         
-        if (widgetType == "number" || widgetType == "climate") {
+        if (widgetType == "number" || widgetType == "climate" || widgetType == "text") {
             wDef.slider_min = HaWebsocketLogic_GetGlobalMin(entity);
             wDef.slider_max = HaWebsocketLogic_GetGlobalMax(entity);
             wDef.slider_step = HaWebsocketLogic_GetGlobalStep(entity);

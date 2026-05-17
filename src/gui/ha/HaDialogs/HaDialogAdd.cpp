@@ -81,7 +81,8 @@ void HaDialogAdd::showAddWidgetDialog() {
         "media_player\nvacuum\n"
         "select\ninput_select\n"
         "number\ninput_number\n"
-        "cover\nfan\n"
+        "text\ninput_text\n"
+        "cover\nclimate\nfan\n"
         "input_button\nbutton\nscene\nscript\nautomation\n"
         "sensor\nbinary_sensor\nweather\nperson\ndevice_tracker"
     );
@@ -108,7 +109,6 @@ void HaDialogAdd::showAddWidgetDialog() {
     lv_roller_set_visible_row_count(roller_search, 3);
     lv_obj_add_flag(roller_search, LV_OBJ_FLAG_HIDDEN); 
     
-    // --- FIX: Der unsinnige sizeof(buf) Fehler ist behoben ---
     lv_obj_add_event_cb(roller_search, [](lv_event_t* e) {
         char buf[128];
         lv_roller_get_selected_str(roller_search, buf, sizeof(buf));
@@ -119,7 +119,6 @@ void HaDialogAdd::showAddWidgetDialog() {
         lv_obj_add_flag(roller_search, LV_OBJ_FLAG_HIDDEN); 
         updateAddWidgetPreview();
     }, LV_EVENT_VALUE_CHANGED, NULL);
-    // ---------------------------------------------------------
 
     lv_obj_add_event_cb(dd_widget_type, [](lv_event_t* e){ updateAddWidgetPreview(); }, LV_EVENT_VALUE_CHANGED, NULL);
 
@@ -192,10 +191,10 @@ void HaDialogAdd::showAddWidgetDialog() {
             else if (e_type == "media_player") w_type = "media_player";
             else if (e_type == "vacuum") w_type = "vacuum";
             else if (e_type == "cover") w_type = "cover";
-            // --- NEU: Climate aufnehmen ---
             else if (e_type == "climate") w_type = "climate";
             else if (e_type == "select" || e_type == "input_select") w_type = "select";
             else if (e_type == "number" || e_type == "input_number") w_type = "number";
+            else if (e_type == "text" || e_type == "input_text") w_type = "text";
             
             if (input_txt.length() > 0) {
                 uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
@@ -211,9 +210,7 @@ void HaDialogAdd::showAddWidgetDialog() {
                 def.color_on = "";
                 def.color_off = "";
 
-                // --- NEU: Breite fuer Cover beim manuellen Hinzufuegen anpassen ---
-                // --- NEU: Breite beim manuellen Hinzufuegen ---
-                if (w_type == "cover" || w_type == "vacuum" || w_type == "climate") {
+                if (w_type == "cover" || w_type == "vacuum" || w_type == "climate" || w_type == "text") {
                     def.w = 340; 
                 }
                 
@@ -224,8 +221,8 @@ void HaDialogAdd::showAddWidgetDialog() {
                     def.chart_x_ofs = 10;   
                     def.chart_y_ofs = 10;   
                 }
-                
 
+                // --- HIER IST DER FIX: Zwei absolut unabhängige IF-Blöcke! ---
                 if (w_type == "select" || w_type == "climate") {
                     std::vector<String> opts = HaEntityCache::GetGlobalOptions(e_id);
                     String opt_str = "";
@@ -235,11 +232,13 @@ void HaDialogAdd::showAddWidgetDialog() {
                     }
                     def.select_options = opt_str;
                 } 
-                else if (w_type == "number") {
+                
+                if (w_type == "number" || w_type == "climate" || w_type == "text") {
                     def.slider_min = HaEntityCache::GetGlobalMin(e_id);
                     def.slider_max = HaEntityCache::GetGlobalMax(e_id);
                     def.slider_step = HaEntityCache::GetGlobalStep(e_id);
                 }
+                // -------------------------------------------------------------
                 
                 HaConfigLogic::dashboards[act_tab].widgets.push_back(def);
                 HaConfigLogic::Save();
