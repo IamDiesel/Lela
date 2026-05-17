@@ -1,0 +1,39 @@
+alias: Dobby Segment Reinigung Starten
+sequence:
+  - variables:
+      segments: >-
+        {% set room_map = {
+          'input_boolean.dobby_seg_kinderzimmer': '1',
+          'input_boolean.dobby_seg_wohnzimmer': '2',
+          'input_boolean.dobby_seg_schlafzimmer': '3',
+          'input_boolean.dobby_seg_kueche': '5',
+          'input_boolean.dobby_seg_flur': '9'
+        } %} {% set ns = namespace(ids=[]) %} {% for entity, segment_id in
+        room_map.items() %}
+          {% if is_state(entity, 'on') %}
+            {% set ns.ids = ns.ids + [segment_id] %}
+          {% endif %}
+        {% endfor %} {{ ns.ids }}
+  - condition: template
+    value_template: "{{ segments | length > 0 }}"
+  - data:
+      topic: valetudo/AcclaimedFancyViper/MapSegmentationCapability/clean/set
+      payload: |-
+        {
+          "action": "start_segment_action",
+          "segment_ids": {{ segments | tojson }},
+          "iterations": 1,
+          "customOrder": true
+        }
+    action: mqtt.publish
+  - target:
+      entity_id:
+        - input_boolean.dobby_seg_kinderzimmer
+        - input_boolean.dobby_seg_wohnzimmer
+        - input_boolean.dobby_seg_schlafzimmer
+        - input_boolean.dobby_seg_kueche
+        - input_boolean.dobby_seg_flur
+    action: input_boolean.turn_off
+mode: single
+icon: mdi:robot-vacuum
+description: ""
