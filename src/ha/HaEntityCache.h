@@ -33,6 +33,9 @@ public:
     static int GetBattery(String entity_id);
     static String GetFanSpeed(String entity_id);
 
+    // --- NEU: Getter fuer Rollladen-Position (Cover) ---
+    static int GetPosition(String entity_id);
+
     static bool SupportsBrightness(String entity_id);
     static bool SupportsColor(String entity_id);
     static bool SupportsColorTemp(String entity_id);
@@ -46,7 +49,6 @@ public:
     static uint32_t GetCacheVersion(); 
     static std::vector<String> SearchEntities(String query, size_t max_results = 5);
 
-    // --- NEU: Globale Getter für den Moment des Widget-Hinzufügens ---
     static std::vector<String> GetGlobalOptions(String entity_id);
     static float GetGlobalMin(String entity_id);
     static float GetGlobalMax(String entity_id);
@@ -57,7 +59,6 @@ private:
     static std::vector<String> trackedEntities;
     static std::map<String, String> globalEntityMap;
 
-    // --- NEU: Globale Maps für ungefilterte Metadaten im PSRAM ---
     static std::map<String, std::vector<String>> globalOptionsMap;
     static std::map<String, float> globalMinMap;
     static std::map<String, float> globalMaxMap;
@@ -78,6 +79,9 @@ private:
     static std::map<String, String> source;
     static std::map<String, int> battery;
     static std::map<String, String> fanSpeed;
+    
+    // --- NEU: Speicher fuer die Rollladen-Position ---
+    static std::map<String, int> positionMap;
 
     static std::map<String, bool> supportsBrightness;
     static std::map<String, bool> supportsColor;

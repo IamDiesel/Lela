@@ -191,6 +191,7 @@ void HaDialogAdd::showAddWidgetDialog() {
             else if (e_type == "button" || e_type == "input_button" || e_type == "script" || e_type == "scene" || e_type == "automation") w_type = "action";
             else if (e_type == "media_player") w_type = "media_player";
             else if (e_type == "vacuum") w_type = "vacuum";
+            else if (e_type == "cover") w_type = "cover";
             else if (e_type == "select" || e_type == "input_select") w_type = "select";
             else if (e_type == "number" || e_type == "input_number") w_type = "number";
             
@@ -207,6 +208,11 @@ void HaDialogAdd::showAddWidgetDialog() {
                 def.mdi_icon = cached_icon; 
                 def.color_on = "";
                 def.color_off = "";
+
+                // --- NEU: Breite fuer Cover beim manuellen Hinzufuegen anpassen ---
+                if (w_type == "cover" || w_type == "vacuum") {
+                    def.w = 340; // Doppelte Breite (160 * 2 + 20 Margin)
+                }
                 
                 if (w_type == "vacuum") {
                     def.show_chart = false;

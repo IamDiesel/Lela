@@ -57,20 +57,22 @@ inline String HaWebsocketLogic_GetEntityName(String id) { return HaEntityCache::
 inline void HaWebsocketLogic_UpdateTrackedEntities() { HaEntityCache::UpdateTrackedEntities(); }
 inline int HaWebsocketLogic_GetBattery(String id) { return HaEntityCache::GetBattery(id); }
 
-// --- NEU: Getter für Options/Limits durchleiten ---
 inline std::vector<String> HaWebsocketLogic_GetOptions(String id) { return HaEntityCache::GetOptions(id); }
 inline float HaWebsocketLogic_GetMin(String id) { return HaEntityCache::GetMin(id); }
 inline float HaWebsocketLogic_GetMax(String id) { return HaEntityCache::GetMax(id); }
 inline float HaWebsocketLogic_GetStep(String id) { return HaEntityCache::GetStep(id); }
-
 inline std::vector<String> HaWebsocketLogic_GetGlobalOptions(String id) { return HaEntityCache::GetGlobalOptions(id); }
 inline float HaWebsocketLogic_GetGlobalMin(String id) { return HaEntityCache::GetGlobalMin(id); }
 inline float HaWebsocketLogic_GetGlobalMax(String id) { return HaEntityCache::GetGlobalMax(id); }
 inline float HaWebsocketLogic_GetGlobalStep(String id) { return HaEntityCache::GetGlobalStep(id); }
 
-// --- NEU: Die Funktion für komplexe Payloads durchleiten ---
-inline void HaWebsocketLogic_CallServiceWithData(String d, String s, String id, String j) { HaServiceCaller::CallServiceWithData(d, s, id, j); }
+// --- NEU: Getter und Caller fuer Rolllaeden (Cover) ---
+inline int HaWebsocketLogic_GetPosition(String id) { return HaEntityCache::GetPosition(id); }
+inline void HaWebsocketLogic_CallCoverService(String id, String s) { HaServiceCaller::CallCoverService(id, s); }
+inline void HaWebsocketLogic_CallCoverPosition(String id, int pos) { HaServiceCaller::CallCoverPosition(id, pos); }
+// ------------------------------------------------------
 
+inline void HaWebsocketLogic_CallServiceWithData(String d, String s, String id, String j) { HaServiceCaller::CallServiceWithData(d, s, id, j); }
 inline void HaWebsocketLogic_CallVacuumService(String id, String s) { HaServiceCaller::CallVacuumService(id, s); }
 inline void HaWebsocketLogic_CallVacuumSetFanSpeed(String id, String s) { HaServiceCaller::CallVacuumSetFanSpeed(id, s); }
 inline void HaWebsocketLogic_CallService(String d, String s, String id) { HaServiceCaller::CallService(d, s, id); }

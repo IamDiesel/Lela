@@ -114,6 +114,12 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         else if (entity.startsWith("input_number.") || entity.startsWith("number.")) {
             widgetType = "number";
         }
+        // --- NEU: Zuweisung fuer Rolllaeden ---
+        else if (entity.startsWith("cover.")) {
+            widgetType = "cover";
+            currentCardW = (cardW * 2) + margin; // Doppelte Breite!
+            itemsToAdvance = 2; // Nimmt 2 Spalten auf dem Dashboard ein
+        }
         else if (entity.startsWith("vacuum.")) {
             widgetType = "vacuum";
             currentCardW = (cardW * 2) + margin;

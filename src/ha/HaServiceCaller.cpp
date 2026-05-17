@@ -15,7 +15,6 @@ void HaServiceCaller::CallService(String domain, String service, String entity_i
     CallServiceWithData(domain, service, entity_id, "");
 }
 
-// --- NEU: Die Funktion verpackt den Payload (json_data) sicher fuer HA ---
 void HaServiceCaller::CallServiceWithData(String domain, String service, String entity_id, String json_data) {
     if (!HaWebsocketLogic_IsConnected()) return;
     
@@ -39,6 +38,33 @@ void HaServiceCaller::CallServiceWithData(String domain, String service, String 
 
     String payload; 
     serializeJson(doc, payload);
+    HaWebsocketLogic_SendPayload(payload);
+}
+
+// --- NEU: Senden von einfachen Cover-Befehlen (open, close, stop) ---
+void HaServiceCaller::CallCoverService(String entity_id, String service) {
+    if (!HaWebsocketLogic_IsConnected()) return;
+    JsonDocument doc(&callerAlloc);
+    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    doc["type"] = "call_service";
+    doc["domain"] = "cover";
+    doc["service"] = service; // "open_cover", "close_cover" oder "stop_cover"
+    doc["target"]["entity_id"] = entity_id;
+    String payload; serializeJson(doc, payload);
+    HaWebsocketLogic_SendPayload(payload);
+}
+
+// --- NEU: Senden der exakten Rollladen-Position in % ---
+void HaServiceCaller::CallCoverPosition(String entity_id, int position) {
+    if (!HaWebsocketLogic_IsConnected()) return;
+    JsonDocument doc(&callerAlloc);
+    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    doc["type"] = "call_service";
+    doc["domain"] = "cover";
+    doc["service"] = "set_cover_position";
+    doc["target"]["entity_id"] = entity_id;
+    doc["service_data"]["position"] = position;
+    String payload; serializeJson(doc, payload);
     HaWebsocketLogic_SendPayload(payload);
 }
 

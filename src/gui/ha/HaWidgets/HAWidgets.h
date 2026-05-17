@@ -6,5 +6,6 @@
 #include "HAVacuumWidget.h"
 #include "HASensorWidget.h"
 #include "HAMediaWidget.h"
-#include "HASelectWidget.h" // NEU
-#include "HANumberWidget.h" // NEU
+#include "HASelectWidget.h"
+#include "HANumberWidget.h"
+#include "HACoverWidget.h" // NEU

@@ -4,8 +4,6 @@
 class HaServiceCaller {
 public:
     static void CallService(String domain, String service, String entity_id);
-    
-    // --- NEU: Befehl senden inkl. dynamischem Payload ---
     static void CallServiceWithData(String domain, String service, String entity_id, String json_data);
     
     static void CallLightService(String entity_id, int brightness, int r, int g, int b, int w);
@@ -24,4 +22,8 @@ public:
 
     static void CallVacuumService(String entity_id, String service);
     static void CallVacuumSetFanSpeed(String entity_id, String speed);
+    
+    // --- NEU: Service-Methoden fuer Cover ---
+    static void CallCoverService(String entity_id, String service);
+    static void CallCoverPosition(String entity_id, int position);
 };

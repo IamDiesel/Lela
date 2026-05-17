@@ -42,6 +42,13 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         ); 
     }
+    else if (wDef.type == "cover") {
+        new_widget = new HACoverWidget(
+            parent, tab_idx, wDef.type, wDef.entity_id, 
+            wDef.x, wDef.y, wDef.w, wDef.h, 
+            wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
+        );
+    }
     else if (wDef.type == "select") {
         new_widget = new HASelectWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 

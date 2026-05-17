@@ -9,7 +9,6 @@ SemaphoreHandle_t HaEntityCache::mutex = nullptr;
 std::vector<String> HaEntityCache::trackedEntities;
 std::map<String, String> HaEntityCache::globalEntityMap;
 
-// --- NEU: Instanziierung der globalen Speicherplätze ---
 std::map<String, std::vector<String>> HaEntityCache::globalOptionsMap;
 std::map<String, float> HaEntityCache::globalMinMap;
 std::map<String, float> HaEntityCache::globalMaxMap;
@@ -30,6 +29,7 @@ std::map<String, std::vector<String>> HaEntityCache::sourceList;
 std::map<String, String> HaEntityCache::source;
 std::map<String, int> HaEntityCache::battery;
 std::map<String, String> HaEntityCache::fanSpeed;
+std::map<String, int> HaEntityCache::positionMap; // NEU
 
 std::map<String, bool> HaEntityCache::supportsBrightness;
 std::map<String, bool> HaEntityCache::supportsColor;
@@ -67,6 +67,8 @@ void HaEntityCache::ClearAll() {
         source.clear();
         battery.clear();
         fanSpeed.clear();
+        positionMap.clear(); // NEU
+        
         supportsBrightness.clear();
         supportsColor.clear();
         supportsTemp.clear();
@@ -104,22 +106,35 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
         if (!attr.isNull() && !attr["friendly_name"].isNull()) {
             f_name = attr["friendly_name"].as<String>();
         }
-        globalEntityMap[entity_id] = f_name;
-
-        // --- NEU: Metadaten bedingungslos für JEDE Entität global sichern ---
-        if (!attr.isNull()) {
-            if (attr["options"].is<JsonArray>()) {
-                globalOptionsMap[entity_id].clear();
-                for (JsonVariant v : attr["options"].as<JsonArray>()) {
-                    globalOptionsMap[entity_id].push_back(v.as<String>());
-                }
+        
+        if (entity_id.startsWith("light.") || entity_id.startsWith("switch.") || 
+            entity_id.startsWith("select.") || entity_id.startsWith("input_select.") || 
+            entity_id.startsWith("number.") || entity_id.startsWith("input_number.") ||
+            entity_id.startsWith("cover.") || entity_id.startsWith("climate.") || // NEU: cover & climate ins Adressbuch
+            entity_id.startsWith("vacuum.") || entity_id.startsWith("media_player.") ||
+            entity_id.startsWith("button.") || entity_id.startsWith("input_button.")) {
+            
+            if (globalEntityMap.size() < 300) {
+                globalEntityMap[entity_id] = f_name;
             }
-            if (!attr["min"].isNull()) globalMinMap[entity_id] = attr["min"].as<float>();
-            if (!attr["max"].isNull()) globalMaxMap[entity_id] = attr["max"].as<float>();
-            if (!attr["step"].isNull()) globalStepMap[entity_id] = attr["step"].as<float>();
         }
 
-        // Ab hier greift der Filter für Live-Updates auf dem Dashboard
+        if (!attr.isNull()) {
+            if (entity_id.startsWith("select.") || entity_id.startsWith("input_select.")) {
+                if (attr["options"].is<JsonArray>()) {
+                    globalOptionsMap[entity_id].clear();
+                    for (JsonVariant v : attr["options"].as<JsonArray>()) {
+                        globalOptionsMap[entity_id].push_back(v.as<String>());
+                    }
+                }
+            }
+            else if (entity_id.startsWith("number.") || entity_id.startsWith("input_number.")) {
+                if (!attr["min"].isNull()) globalMinMap[entity_id] = attr["min"].as<float>();
+                if (!attr["max"].isNull()) globalMaxMap[entity_id] = attr["max"].as<float>();
+                if (!attr["step"].isNull()) globalStepMap[entity_id] = attr["step"].as<float>();
+            }
+        }
+
         if (std::find(trackedEntities.begin(), trackedEntities.end(), entity_id) != trackedEntities.end()) {
             states[entity_id] = doc["state"].as<String>();
             
@@ -167,7 +182,8 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     JsonArray rgbw_color = attr["rgbw_color"];
                     if (!rgbw_color.isNull() && rgbw_color.size() >= 4) white[entity_id] = rgbw_color[3];
                     else white[entity_id] = -1;
-                } else if (entity_id.startsWith("media_player.")) {
+                } 
+                else if (entity_id.startsWith("media_player.")) {
                     mediaTitle[entity_id] = attr["media_title"] | "";
                     mediaArtist[entity_id] = attr["media_artist"] | "";
                     mediaVolume[entity_id] = attr["volume_level"] | -1.0f;
@@ -175,6 +191,14 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     JsonArray s_list = attr["source_list"]; sourceList[entity_id].clear();
                     if (!s_list.isNull()) {
                         for (JsonVariant v : s_list) sourceList[entity_id].push_back(v.as<String>());
+                    }
+                }
+                // --- NEU: Position fuer Rolllaeden (Cover) auslesen ---
+                else if (entity_id.startsWith("cover.")) {
+                    if (!attr["current_position"].isNull()) {
+                        positionMap[entity_id] = attr["current_position"].as<int>();
+                    } else {
+                        positionMap[entity_id] = -1;
                     }
                 }
             }
@@ -228,42 +252,42 @@ float HaEntityCache::GetMin(String entity_id) { if (mutex && xSemaphoreTake(mute
 float HaEntityCache::GetMax(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 100.0f; if (maxMap.count(entity_id)) res = maxMap[entity_id]; xSemaphoreGive(mutex); return res; } return 100.0f; }
 float HaEntityCache::GetStep(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 1.0f; if (stepMap.count(entity_id)) res = stepMap[entity_id]; xSemaphoreGive(mutex); return res; } return 1.0f; }
 
-// --- NEU: Implementation der globalen Getter ---
+// --- NEU: Getter fuer Rollladen-Position ---
+int HaEntityCache::GetPosition(String entity_id) {
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        int res = -1;
+        if (positionMap.count(entity_id)) res = positionMap[entity_id];
+        xSemaphoreGive(mutex);
+        return res;
+    }
+    return -1;
+}
+
 std::vector<String> HaEntityCache::GetGlobalOptions(String entity_id) {
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
         std::vector<String> res = globalOptionsMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
+        xSemaphoreGive(mutex); return res;
     }
     return std::vector<String>();
 }
-
 float HaEntityCache::GetGlobalMin(String entity_id) {
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        float res = 0.0f;
-        if (globalMinMap.count(entity_id)) res = globalMinMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
+        float res = 0.0f; if (globalMinMap.count(entity_id)) res = globalMinMap[entity_id];
+        xSemaphoreGive(mutex); return res;
     }
     return 0.0f;
 }
-
 float HaEntityCache::GetGlobalMax(String entity_id) {
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        float res = 100.0f;
-        if (globalMaxMap.count(entity_id)) res = globalMaxMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
+        float res = 100.0f; if (globalMaxMap.count(entity_id)) res = globalMaxMap[entity_id];
+        xSemaphoreGive(mutex); return res;
     }
     return 100.0f;
 }
-
 float HaEntityCache::GetGlobalStep(String entity_id) {
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        float res = 1.0f;
-        if (globalStepMap.count(entity_id)) res = globalStepMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
+        float res = 1.0f; if (globalStepMap.count(entity_id)) res = globalStepMap[entity_id];
+        xSemaphoreGive(mutex); return res;
     }
     return 1.0f;
 }
