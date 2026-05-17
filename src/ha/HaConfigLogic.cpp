@@ -3,9 +3,8 @@
 #include <ArduinoJson.h>
 #include <algorithm> 
 #include "lvgl.h" 
-#include <esp_heap_caps.h> // NEU: Für den PSRAM Zugriff
+#include <esp_heap_caps.h>
 
-// --- NEU: Wir zwingen ArduinoJson, das 32MB PSRAM zu nutzen! ---
 class ConfigRamAllocator : public ArduinoJson::Allocator {
 public:
     void* allocate(size_t size) override { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
@@ -13,7 +12,6 @@ public:
     void* reallocate(void* pointer, size_t new_size) override { return heap_caps_realloc(pointer, new_size, MALLOC_CAP_SPIRAM); }
 };
 static ConfigRamAllocator configAlloc;
-// ---------------------------------------------------------------
 
 std::vector<HADashboardDef> HaConfigLogic::dashboards;
 
@@ -43,7 +41,6 @@ void HaConfigLogic::Load() {
     file.readBytes(buf.get(), size);
     file.close();
 
-    // Nutze den PSRAM Allocator
     JsonDocument doc(&configAlloc);
     DeserializationError error = deserializeJson(doc, buf.get());
     if (error) return;
@@ -70,16 +67,13 @@ void HaConfigLogic::Load() {
             wDef.color_on = wObj["color_on"] | "";
             wDef.color_off = wObj["color_off"] | "";
             
-            int i_align = LV_ALIGN_TOP_MID, t_align = LV_ALIGN_BOTTOM_MID, s_align = LV_ALIGN_CENTER;
-            int i_margin = 5, t_margin = 5, s_margin = 0;
+            wDef.icon_align = wObj["icon_align"] | LV_ALIGN_TOP_MID;
+            wDef.text_align = wObj["text_align"] | LV_ALIGN_BOTTOM_MID;
+            wDef.state_align = wObj["state_align"] | LV_ALIGN_CENTER;
             
-            wDef.icon_align = wObj["icon_align"] | i_align;
-            wDef.text_align = wObj["text_align"] | t_align;
-            wDef.state_align = wObj["state_align"] | s_align;
-            
-            wDef.icon_margin = !wObj["icon_margin"].isNull() ? wObj["icon_margin"].as<int>() : i_margin;
-            wDef.text_margin = !wObj["text_margin"].isNull() ? wObj["text_margin"].as<int>() : t_margin;
-            wDef.state_margin = wObj["state_margin"] | s_margin;
+            wDef.icon_margin = !wObj["icon_margin"].isNull() ? wObj["icon_margin"].as<int>() : 5;
+            wDef.text_margin = !wObj["text_margin"].isNull() ? wObj["text_margin"].as<int>() : 5;
+            wDef.state_margin = wObj["state_margin"] | 0;
             
             wDef.snap_to_grid = !wObj["snap_to_grid"].isNull() ? wObj["snap_to_grid"].as<bool>() : true;
             
@@ -93,6 +87,11 @@ void HaConfigLogic::Load() {
             
             wDef.media_content_type = wObj["media_content_type"] | "";
             wDef.media_content_id = wObj["media_content_id"] | "";
+
+            // --- NEU: Rueckwaertskompatibles Laden ---
+            wDef.tap_action_domain = wObj["ta_dom"] | "";
+            wDef.tap_action_service = wObj["ta_srv"] | "";
+            wDef.tap_action_target = wObj["ta_tgt"] | "";
             
             tDef.widgets.push_back(wDef);
         }
@@ -101,7 +100,6 @@ void HaConfigLogic::Load() {
 }
 
 void HaConfigLogic::Save() {
-    // Nutze den PSRAM Allocator, um OOM Crashes zu verhindern
     JsonDocument doc(&configAlloc);
     JsonArray tabs = doc["tabs"].to<JsonArray>();
     
@@ -125,7 +123,6 @@ void HaConfigLogic::Save() {
             wObj["icon_margin"] = w.icon_margin;
             wObj["text_margin"] = w.text_margin;
             wObj["state_margin"] = w.state_margin;
-            
             wObj["snap_to_grid"] = w.snap_to_grid;
             
             wObj["show_chart"] = w.show_chart;
@@ -143,6 +140,11 @@ void HaConfigLogic::Save() {
             
             if (w.media_content_type.length() > 0) wObj["media_content_type"] = w.media_content_type;
             if (w.media_content_id.length() > 0) wObj["media_content_id"] = w.media_content_id;
+
+            // --- NEU: Speichern der Actions ---
+            if (w.tap_action_domain.length() > 0) wObj["ta_dom"] = w.tap_action_domain;
+            if (w.tap_action_service.length() > 0) wObj["ta_srv"] = w.tap_action_service;
+            if (w.tap_action_target.length() > 0) wObj["ta_tgt"] = w.tap_action_target;
         }
     }
 
@@ -153,25 +155,8 @@ void HaConfigLogic::Save() {
     }
 }
 
-void HaConfigLogic::AddTab(String name) {
-    HADashboardDef d; d.name = name; dashboards.push_back(d);
-}
-
-void HaConfigLogic::DeleteTab(int index) {
-    if (index >= 0 && index < dashboards.size()) {
-        dashboards.erase(dashboards.begin() + index);
-        if (dashboards.size() == 0) AddTab("Wohnen");
-    }
-}
-
-void HaConfigLogic::RenameTab(int index, String newName) {
-    if (index >= 0 && index < dashboards.size()) dashboards[index].name = newName;
-}
-
-void HaConfigLogic::MoveTabLeft(int index) {
-    if (index > 0 && index < dashboards.size()) std::swap(dashboards[index], dashboards[index - 1]);
-}
-
-void HaConfigLogic::MoveTabRight(int index) {
-    if (index >= 0 && index < dashboards.size() - 1) std::swap(dashboards[index], dashboards[index + 1]);
-}
+void HaConfigLogic::AddTab(String name) { HADashboardDef d; d.name = name; dashboards.push_back(d); }
+void HaConfigLogic::DeleteTab(int index) { if (index >= 0 && index < dashboards.size()) { dashboards.erase(dashboards.begin() + index); if (dashboards.size() == 0) AddTab("Wohnen"); } }
+void HaConfigLogic::RenameTab(int index, String newName) { if (index >= 0 && index < dashboards.size()) dashboards[index].name = newName; }
+void HaConfigLogic::MoveTabLeft(int index) { if (index > 0 && index < dashboards.size()) std::swap(dashboards[index], dashboards[index - 1]); }
+void HaConfigLogic::MoveTabRight(int index) { if (index >= 0 && index < dashboards.size() - 1) std::swap(dashboards[index], dashboards[index + 1]); }

@@ -90,7 +90,8 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         pendingImportError = true; isImporting = false; return;
     }
 
-    auto addWidget = [&](String entity, String customName, String customIcon) {
+    // --- NEU: Lambda Funktion erwartet jetzt auch Tap-Action Daten ---
+    auto addWidget = [&](String entity, String customName, String customIcon, String ta_dom, String ta_srv, String ta_tgt) {
         if (entity.length() == 0 || entity.indexOf('.') == -1) return;
         if (std::find(foundEntities.begin(), foundEntities.end(), entity) != foundEntities.end()) return;
         foundEntities.push_back(entity);
@@ -104,8 +105,8 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         else if (entity.startsWith("media_player.")) widgetType = "media_player";
         else if (entity.startsWith("vacuum.")) {
             widgetType = "vacuum";
-            currentCardW = (cardW * 2) + margin; // Doppelte Breite
-            itemsToAdvance = 2; // Belegt 2 Slots im Raster
+            currentCardW = (cardW * 2) + margin;
+            itemsToAdvance = 2; 
         }
 
         if (customIcon.length() == 0) customIcon = HaWebsocketLogic_GetCachedIcon(entity);
@@ -117,6 +118,11 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         wDef.name = customName; wDef.mdi_icon = customIcon; wDef.w = currentCardW; wDef.h = cardH;
         wDef.icon_align = LV_ALIGN_TOP_MID; wDef.text_align = LV_ALIGN_BOTTOM_MID;
         
+        // --- NEU: Zuweisung ins Modell ---
+        wDef.tap_action_domain = ta_dom;
+        wDef.tap_action_service = ta_srv;
+        wDef.tap_action_target = ta_tgt;
+        
         HaConfigLogic::dashboards[currentImportTab].widgets.push_back(wDef); 
         i += itemsToAdvance;
     };
@@ -125,37 +131,49 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         if (node.is<JsonObject>()) {
             JsonObject obj = node.as<JsonObject>();
 
-            // Fall A: Entities-Liste
             if (obj["entities"].is<JsonArray>()) {
                 for (JsonVariant item : obj["entities"].as<JsonArray>()) {
                     if (item.is<JsonObject>()) {
                         JsonObject itemObj = item.as<JsonObject>();
-                        addWidget(itemObj["entity"] | "", itemObj["name"] | "", itemObj["icon"] | "");
+                        addWidget(itemObj["entity"] | "", itemObj["name"] | "", itemObj["icon"] | "", "", "", "");
                     } else { 
-                        addWidget(item.as<String>(), "", ""); 
+                        addWidget(item.as<String>(), "", "", "", "", ""); 
                     }
                 }
             }
 
-            // Fall B: Einzelne Karte
             String entityId = obj["entity"] | "";
             if (entityId.length() == 0) entityId = obj["vacuum"] | "";
             if (entityId.length() == 0) entityId = obj["camera_image"] | "";
             
             if (entityId.length() > 0) {
                 String cName = obj["name"] | ""; String cIcon = obj["icon"] | "";
+                String ta_dom = ""; String ta_srv = ""; String ta_tgt = "";
                 
-                // Tap-Action Check fuer Skripte
+                // --- NEU: Parse Action, trenne Domäne & Target (z.B. automation.trigger) ---
                 if (obj["tap_action"].is<JsonObject>()) {
                     JsonObject tap = obj["tap_action"].as<JsonObject>();
                     String action = tap["action"] | "";
                     if (action == "call-service" || action == "perform-action") {
-                        String service = tap["service"] | "";
-                        if (service.length() == 0) service = tap["perform_action"] | "";
-                        if (service.length() > 0) entityId = service; 
+                        String serviceFull = tap["service"] | "";
+                        if (serviceFull.length() == 0) serviceFull = tap["perform_action"] | "";
+                        
+                        if (serviceFull.length() > 0) {
+                            int dot = serviceFull.indexOf('.');
+                            if (dot != -1) {
+                                ta_dom = serviceFull.substring(0, dot);
+                                ta_srv = serviceFull.substring(dot + 1);
+                            }
+                        }
+                        
+                        if (tap["target"]["entity_id"].is<String>()) ta_tgt = tap["target"]["entity_id"].as<String>();
+                        else if (tap["data"]["entity_id"].is<String>()) ta_tgt = tap["data"]["entity_id"].as<String>();
+                        else if (tap["service_data"]["entity_id"].is<String>()) ta_tgt = tap["service_data"]["entity_id"].as<String>();
                     }
                 }
-                addWidget(entityId, cName, cIcon);
+                
+                // Wir ueberschreiben entityId NICHT mehr, sondern reichen die sauberen Tap-Werte durch
+                addWidget(entityId, cName, cIcon, ta_dom, ta_srv, ta_tgt);
             }
 
             if (obj["cards"].is<JsonArray>()) {

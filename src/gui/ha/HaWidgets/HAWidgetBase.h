@@ -27,7 +27,7 @@ protected:
     
     bool snap_to_grid; 
 
-    // Konfigurations-Variablen (Diagramme & Vacuum Buttons)
+    // Konfigurations-Variablen (Diagramme)
     bool show_chart = false;
     int chart_w_pct = 60;
     int chart_h_pct = 40;
@@ -35,6 +35,11 @@ protected:
     int chart_y_ofs = 10;
     String chart_min = "";
     String chart_max = "";
+
+    // --- NEU: Aktions-Variablen ---
+    String tap_domain = "";
+    String tap_service = "";
+    String tap_target = "";
 
     lv_obj_t* icon_label;
     lv_obj_t* name_label;
@@ -62,6 +67,12 @@ public:
     void setSize(int w, int h);
     void setPosition(int x, int y, bool snap);
     void setSnapToGrid(bool snap);
+    
+    // --- NEU: Setter/Getter für Aktionen ---
+    void setTapAction(String domain, String service, String target);
+    String getTapDomain();
+    String getTapService();
+    String getTapTarget();
     
     virtual void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max);
 
