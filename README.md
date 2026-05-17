@@ -39,14 +39,14 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * **Dienst-Steuerung:** Steuerung von Schaltern, Tasten, Lichtern (inkl. RGB/W-Farbwahl und Helligkeit), Mediaplayern sowie **Saugrobotern** (inkl. Saugstufen-Auswahl und Lokalisierung).
 * **Lovelace-Parser:** Import bestehender Home Assistant Dashboards (Lovelace JSON) in native C++ LVGL-Widgets.
 
-| HA Entitäts-Typ (Domain) | Status in unserer SW | Verwendete C++ Klasse | Kurze Beschreibung & UI-Verhalten |
+| HA Entitäts-Typ (Domain) | Status | Verwendete C++ Klasse | Kurze Beschreibung & UI-Verhalten |
 | --- | --- | --- | --- |
-| `light`, `switch`, `input_boolean` | ✅ **Fertig** | `HALightWidget` | **Der Standard-Schalter.** Ein einfaches 1x1 Widget. Klick schaltet den Zustand um (Toggle). Zeigt an, ob das Gerät ein- oder ausgeschaltet ist. |
+| `light`, `switch`, **`input_boolean`** | ✅ **Fertig** | `HALightWidget` | **Der Standard-Schalter (Stateful).** Ein einfaches 1x1 Widget. Zeigt einen dauerhaften Status an. **Besonders `input_boolean` dient oft als virtueller Schalter, dessen Statuswechsel im Hintergrund komplexe HA-Automationen auslöst.** Kann zudem via `tap_action` überschrieben werden. |
+| `button`, `input_button`, `script`, `scene`, `automation` | ✅ **Fertig** | `HAActionWidget` | **Die Aktionstaste (Stateless).** 1x1 Widget. Hat keinen dauerhaften On/Off-Status. Feuert bei Klick sofort einen Service-Call ab, **um Skripte, Szenen oder Automationen direkt einmalig zu triggern.** |
 | `sensor`, `binary_sensor`, `weather`, `person`, `device_tracker` | ✅ **Fertig** | `HASensorWidget` | **Die Informationsanzeige.** 1x1 Widget. Rein informativ (read-only). Kann bei numerischen Werten zusätzlich ein historisches Verlaufsdiagramm (`show_chart`) einblenden. |
-| `button`, `input_button`, `script`, `scene`, `automation` | ✅ **Fertig** | `HAActionWidget` | **Die Aktionstaste.** 1x1 Widget. Hat keinen dauerhaften On/Off-Status, sondern feuert bei Klick sofort einen Befehl ab (z.B. Szene aktivieren). |
-| `select`, `input_select` | ✅ **Fertig** | `HASelectWidget` | **Das Dropdown-Menü.** 1x1 Widget. Zeigt den aktuellen Text an. Bei Klick klappt ein LVGL-Menü mit den verfügbaren, eingebackenen Optionen auf. |
+| `select`, `input_select` | ✅ **Fertig** | `HASelectWidget` | **Das Dropdown-Menü.** 1x1 Widget. Zeigt den aktuellen Text an. Bei Klick klappt ein LVGL-Menü mit den verfügbaren Optionen auf. |
 | `number`, `input_number` | ✅ **Fertig** | `HANumberWidget` | **Der Schieberegler.** 1x1 Widget. Beinhaltet einen Slider, um numerische Werte (z.B. 0-100%) inklusive Kommastellen sanft und stufenlos einzustellen. |
-| `text`, `input_text` | ✅ **Fertig** | `HATextWidget` | **Die Texteingabe.** 2x1 Widget (doppelte Breite). Zeigt den Text an. Bei Klick öffnet sich ein Fullscreen-Overlay mit virtueller Bildschirmtastatur zur Bearbeitung. |
+| `text`, `input_text` | ✅ **Fertig** | `HATextWidget` | **Die Texteingabe.** 2x1 Widget (doppelte Breite). Bei Klick öffnet sich ein Fullscreen-Overlay mit virtueller Bildschirmtastatur zur Eingabe von Zeichenketten. |
 | `cover` | ✅ **Fertig** | `HACoverWidget` | **Die Rollladensteuerung.** 2x1 Widget. Bietet drei Schnell-Tasten (Auf, Stop, Ab) sowie einen Slider für die exakte Positionierung in Prozent. |
 | `climate` | ✅ **Fertig** | `HAClimateWidget` | **Das Thermostat.** 2x1 Widget. Zeigt Ist- und Soll-Temperatur groß an. Bietet Plus/Minus-Tasten zur Einstellung und einen Button zum Durchschalten des Modus (Heizen, Kühlen, Auto). |
 | `vacuum` | ✅ **Fertig** | `HAVacuumWidget` | **Die Staubsaugersteuerung.** 2x1 Widget. Extra Tasten für Start, Stop, Pause und Rückkehr zur Ladestation (Dock). |
@@ -54,9 +54,12 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 | `fan` | ❌ *Offen* | *Fehlt noch* | **Ventilatoren.** Müsste idealerweise als 2x1 Widget gebaut werden (Kombination aus On/Off, Geschwindigkeits-Slider und Schwenk-Button). |
 | `lock` | ❌ *Offen* | *Fehlt noch* | **Smarte Türschlösser.** Fällt aktuell in den Standard-Topf. Bräuchte ein eigenes Widget mit einer Sicherheitsabfrage ("Wirklich öffnen?"), um versehentliche Klicks zu vermeiden. |
 | `alarm_control_panel` | ❌ *Offen* | *Fehlt noch* | **Alarmanlagen.** Würde ein Fullscreen-Overlay mit einem Ziffernblock (PIN-Pad) erfordern, um die Anlage (un)scharf zu schalten. |
-| `input_datetime`, `time`, `date` | ❌ *Offen* | *Fehlt noch* | **Zeit & Datum.** Fällt aktuell durchs Raster. Erfordert ein Overlay mit LVGL-Rollern (wie bei einem Zahlenschloss), um Uhrzeiten einzustellen. |
-| `camera`, `image` | ❌ *Offen* | *Zu hoher RAM-Bedarf* | **Kamera-Feeds.** Für einen ESP32 extrem schwer umzusetzen, da Live-JPEG-Dekodierung den Arbeitsspeicher massiv belastet. MJPEG Stream kann per Babycam eingebunden werden. |
+| `input_datetime`, `time`, `date` | ❌ *Offen* | *Fehlt noch* | **Zeit & Datum.** Erfordert ein Overlay mit LVGL-Rollern (wie bei einem Zahlenschloss), um Uhrzeiten oder Daten exakt einzustellen. |
+| `camera`, `image` | ❌ *Offen* | *Zu hoher RAM-Bedarf* | **Kamera-Feeds.** Für einen ESP32 extrem schwer umzusetzen, da Live-JPEG-Dekodierung den Arbeitsspeicher massiv belastet. MJPEG Stream inkl. Audio kann über Babymonitor App eingebunden werden |
 | `update`, `water_heater`, `siren`, `valve`, `remote` | ❌ *Offen* | *Spezialfälle* | **Nischen-Entitäten.** Werden aktuell meist vom Fallback (`HALightWidget`) aufgefangen oder ignoriert, wenn keine `tap_action` definiert ist. |
+
+---
+
 
 
 ### 1.3 On-Device Dashboard-Editor
