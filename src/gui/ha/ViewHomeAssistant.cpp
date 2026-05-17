@@ -4,6 +4,7 @@
 #include "ViewTopbar.h"
 #include "HaWebsocketLogic.h"
 #include "HaConfigLogic.h"
+#include "HaWidgetFactory.h" 
 
 #include "HaDialogEdit.h"
 #include "HaDialogAdd.h"
@@ -12,6 +13,9 @@
 #include "HaDialogVacuum.h" 
 #include "HaDialogLight.h" 
 #include "HaColorPicker.h" 
+#include "HaDialogTab.h"
+#include "HaEditToolbar.h"
+
 #include <algorithm> 
 
 lv_obj_t* ViewHomeAssistant::screen = nullptr;
@@ -24,21 +28,12 @@ std::vector<HAWidget*> ViewHomeAssistant::widgets;
 std::vector<lv_obj_t*> ViewHomeAssistant::tab_pages; 
 
 volatile bool ViewHomeAssistant::pendingHaReload = false;
-int ViewHomeAssistant::editingTabIndex = -1;
 uint16_t ViewHomeAssistant::currentActiveTab = 0;
 
 static lv_obj_t* btn_back = nullptr;
-static lv_obj_t* btn_import = nullptr;
-static lv_obj_t* btn_delete_tab = nullptr; 
-static lv_obj_t* btn_rename_tab = nullptr; 
-static lv_obj_t* btn_add_widget = nullptr; 
-static lv_obj_t* btn_tab_left = nullptr;
-static lv_obj_t* btn_tab_right = nullptr;
-static lv_obj_t* kb_overlay = nullptr;
-static lv_obj_t* ta_new_tab = nullptr;
 
 // =========================================================
-// 1. SAUBERE HELPER-FUNKTIONEN (ALS KLASSEN-MITGLIEDER)
+// 1. HELPER-FUNKTIONEN ZUM LADEN & SPEICHERN
 // =========================================================
 
 void ViewHomeAssistant::helper_loadWidgets() {
@@ -54,143 +49,10 @@ void ViewHomeAssistant::helper_loadWidgets() {
         tab_pages.push_back(tab); 
         
         for (const auto& wDef : HaConfigLogic::dashboards[i].widgets) {
-            HAWidget* new_widget = nullptr;
-            
-            if (wDef.type == "sensor") {
-                new_widget = new HASensorWidget(
-                    tab, 
-                    i, 
-                    wDef.type, 
-                    wDef.entity_id, 
-                    wDef.x, 
-                    wDef.y, 
-                    wDef.w, 
-                    wDef.h, 
-                    wDef.name.c_str(), 
-                    wDef.mdi_icon.c_str(), 
-                    wDef.color_on.c_str(), 
-                    wDef.color_off.c_str(), 
-                    wDef.show_chart, 
-                    wDef.chart_w_pct, 
-                    wDef.chart_h_pct, 
-                    wDef.chart_x_ofs, 
-                    wDef.chart_y_ofs, 
-                    wDef.chart_min, 
-                    wDef.chart_max
-                );
-            } 
-            else if (wDef.type == "action") {
-                new_widget = new HAActionWidget(
-                    tab, 
-                    i, 
-                    wDef.type, 
-                    wDef.entity_id, 
-                    wDef.x, 
-                    wDef.y, 
-                    wDef.w, 
-                    wDef.h, 
-                    wDef.name.c_str(), 
-                    wDef.mdi_icon.c_str(), 
-                    wDef.color_on.c_str(), 
-                    wDef.color_off.c_str()
-                );
-            } 
-            else if (wDef.type == "media_player") {
-                new_widget = new HAMediaWidget(
-                    tab, 
-                    i, 
-                    wDef.type, 
-                    wDef.entity_id, 
-                    wDef.x, 
-                    wDef.y, 
-                    wDef.w, 
-                    wDef.h, 
-                    wDef.name.c_str(), 
-                    wDef.mdi_icon.c_str(), 
-                    wDef.color_on.c_str(), 
-                    wDef.color_off.c_str()
-                );
-            } 
-            else if (wDef.type == "media_item") {
-                new_widget = new HAMediaItemWidget(
-                    tab, 
-                    i, 
-                    wDef.type, 
-                    wDef.entity_id, 
-                    wDef.x, 
-                    wDef.y, 
-                    wDef.w, 
-                    wDef.h, 
-                    wDef.name.c_str(), 
-                    wDef.mdi_icon.c_str(), 
-                    wDef.color_on.c_str(), 
-                    wDef.color_off.c_str(), 
-                    wDef.media_content_type, 
-                    wDef.media_content_id
-                );
-            } 
-            else if (wDef.type == "vacuum") {
-                new_widget = new HAVacuumWidget(
-                    tab, 
-                    i, 
-                    wDef.type, 
-                    wDef.entity_id, 
-                    wDef.x, 
-                    wDef.y, 
-                    wDef.w, 
-                    wDef.h, 
-                    wDef.name.c_str(), 
-                    wDef.mdi_icon.c_str(), 
-                    wDef.color_on.c_str(), 
-                    wDef.color_off.c_str()
-                ); 
-            } 
-            else {
-                new_widget = new HALightWidget(
-                    tab, 
-                    i, 
-                    wDef.type, 
-                    wDef.entity_id, 
-                    wDef.x, 
-                    wDef.y, 
-                    wDef.w, 
-                    wDef.h, 
-                    wDef.name.c_str(), 
-                    wDef.mdi_icon.c_str(), 
-                    wDef.color_on.c_str(), 
-                    wDef.color_off.c_str()
-                );
+            HAWidget* new_widget = HaWidgetFactory::createWidget(tab, i, wDef);
+            if (new_widget) {
+                widgets.push_back(new_widget);
             }
-            
-            new_widget->setAlignments(
-                wDef.icon_align, 
-                wDef.text_align, 
-                wDef.state_align, 
-                wDef.icon_margin, 
-                wDef.text_margin, 
-                wDef.state_margin
-            );
-            
-            new_widget->setSnapToGrid(wDef.snap_to_grid); 
-            
-            new_widget->setChartConfig(
-                wDef.show_chart, 
-                wDef.chart_w_pct, 
-                wDef.chart_h_pct, 
-                wDef.chart_x_ofs, 
-                wDef.chart_y_ofs, 
-                wDef.chart_min, 
-                wDef.chart_max
-            );
-            
-            // --- NEU: Aktion an das Widget uebergeben ---
-            new_widget->setTapAction(
-                wDef.tap_action_domain, 
-                wDef.tap_action_service, 
-                wDef.tap_action_target
-            );
-            
-            widgets.push_back(new_widget);
         }
     }
     
@@ -216,55 +78,12 @@ void ViewHomeAssistant::helper_saveWidgets() {
     HaConfigLogic::dashboards[act_tab].widgets.reserve(widgets.size());
 
     for (HAWidget* w : widgets) {
-        if (!w || !w->container || !lv_obj_is_valid(w->container)) {
+        if (!w || !w->container || !lv_obj_is_valid(w->container) || lv_obj_has_flag(w->container, LV_OBJ_FLAG_HIDDEN)) {
             continue; 
         }
         
-        if (lv_obj_has_flag(w->container, LV_OBJ_FLAG_HIDDEN)) {
-            continue;
-        }
-        
         if (w->getTabIndex() == act_tab) {
-            HAWidgetDef def;
-            
-            def.entity_id = w->getEntityId();
-            def.type = w->getType();
-            def.name = w->getName(); 
-            def.mdi_icon = w->getMdiIcon(); 
-            def.color_on = w->getColorOn(); 
-            def.color_off = w->getColorOff(); 
-            
-            def.x = w->getX(); 
-            def.y = w->getY(); 
-            def.w = w->getW(); 
-            def.h = w->getH();
-            
-            def.icon_align = w->getIconAlign();
-            def.text_align = w->getTextAlign();
-            def.state_align = w->getStateAlign();
-            
-            def.icon_margin = w->getIconMargin(); 
-            def.text_margin = w->getTextMargin(); 
-            def.state_margin = w->getStateMargin(); 
-            
-            def.snap_to_grid = w->getSnapToGrid(); 
-            
-            def.show_chart = w->getShowChart();
-            def.chart_w_pct = w->getChartWPct();
-            def.chart_h_pct = w->getChartHPct();
-            def.chart_x_ofs = w->getChartXOfs();
-            def.chart_y_ofs = w->getChartYOfs();
-            def.chart_min = w->getChartMin();
-            def.chart_max = w->getChartMax();
-            
-            def.media_content_type = w->getMediaContentType();
-            def.media_content_id = w->getMediaContentId();
-            
-            // --- NEU: Aktion auslesen zum Speichern ---
-            def.tap_action_domain = w->getTapDomain();
-            def.tap_action_service = w->getTapService();
-            def.tap_action_target = w->getTapTarget();
-            
+            HAWidgetDef def = HaWidgetFactory::createDefFromWidget(w);
             HaConfigLogic::dashboards[act_tab].widgets.push_back(def);
         }
     }
@@ -274,160 +93,11 @@ void ViewHomeAssistant::helper_saveWidgets() {
     pendingHaReload = true;
 }
 
-void ViewHomeAssistant::helper_buildEditUI() {
-    lv_obj_clear_flag(lv_tabview_get_tab_btns(tabview), LV_OBJ_FLAG_CLICKABLE); 
-    
-    lv_obj_set_style_bg_color(btn_edit, lv_color_hex(0x27AE60), 0); 
-    lv_label_set_text(label_edit, LV_SYMBOL_SAVE " SPEICHERN");
-
-    if (btn_back) {
-        lv_obj_set_style_bg_color(btn_back, lv_color_hex(0xAA0000), 0);
-        lv_label_set_text(lv_obj_get_child(btn_back, 0), LV_SYMBOL_CLOSE " VERWERFEN");
-    }
-
-    btn_tab_left = lv_btn_create(screen);
-    lv_obj_set_size(btn_tab_left, 80, 50);
-    lv_obj_align(btn_tab_left, LV_ALIGN_TOP_LEFT, 200, 15);
-    lv_obj_set_style_bg_color(btn_tab_left, lv_color_hex(0x2980B9), 0);
-    
-    lv_obj_add_event_cb(btn_tab_left, [](lv_event_t* e) {
-        playToneI2S(800, 100, true);
-        uint16_t act_tab = lv_tabview_get_tab_act(tabview);
-        if (act_tab > 0 && act_tab < HaConfigLogic::dashboards.size()) {
-            HaConfigLogic::MoveTabLeft(act_tab); 
-            HaConfigLogic::Save();
-            currentActiveTab = act_tab - 1; 
-            pendingHaReload = true;
-        }
-    }, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* lbl_tl = lv_label_create(btn_tab_left); 
-    lv_label_set_text(lbl_tl, LV_SYMBOL_LEFT); 
-    lv_obj_center(lbl_tl);
-
-    btn_tab_right = lv_btn_create(screen);
-    lv_obj_set_size(btn_tab_right, 80, 50);
-    lv_obj_align(btn_tab_right, LV_ALIGN_TOP_LEFT, 290, 15);
-    lv_obj_set_style_bg_color(btn_tab_right, lv_color_hex(0x2980B9), 0);
-    
-    lv_obj_add_event_cb(btn_tab_right, [](lv_event_t* e) {
-        playToneI2S(800, 100, true);
-        uint16_t act_tab = lv_tabview_get_tab_act(tabview);
-        if (act_tab >= 0 && act_tab < HaConfigLogic::dashboards.size() - 1) {
-            HaConfigLogic::MoveTabRight(act_tab); 
-            HaConfigLogic::Save();
-            currentActiveTab = act_tab + 1; 
-            pendingHaReload = true;
-        }
-    }, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* lbl_tr = lv_label_create(btn_tab_right); 
-    lv_label_set_text(lbl_tr, LV_SYMBOL_RIGHT); 
-    lv_obj_center(lbl_tr);
-
-    trash_btn = lv_btn_create(screen);
-    lv_obj_set_size(trash_btn, 100, 100);
-    lv_obj_align(trash_btn, LV_ALIGN_BOTTOM_RIGHT, -30, -30);
-    lv_obj_set_style_bg_color(trash_btn, lv_color_hex(0xAA0000), 0); 
-    lv_obj_set_style_radius(trash_btn, LV_RADIUS_CIRCLE, 0);
-    
-    lv_obj_t* trash_lbl = lv_label_create(trash_btn);
-    lv_label_set_text(trash_lbl, LV_SYMBOL_TRASH);
-    lv_obj_set_style_text_font(trash_lbl, &lv_font_montserrat_36, 0);
-    lv_obj_center(trash_lbl);
-
-    btn_import = lv_btn_create(screen);
-    lv_obj_set_size(btn_import, 200, 50);
-    lv_obj_align(btn_import, LV_ALIGN_TOP_RIGHT, -240, 15);
-    lv_obj_set_style_bg_color(btn_import, lv_color_hex(0x8E44AD), 0);
-    lv_obj_add_event_cb(btn_import, btn_import_event_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* lbl_imp = lv_label_create(btn_import); 
-    lv_label_set_text(lbl_imp, LV_SYMBOL_DOWNLOAD " HA IMPORT"); 
-    lv_obj_center(lbl_imp);
-
-    btn_delete_tab = lv_btn_create(screen);
-    lv_obj_set_size(btn_delete_tab, 220, 50);
-    lv_obj_align(btn_delete_tab, LV_ALIGN_TOP_RIGHT, -460, 15); 
-    lv_obj_set_style_bg_color(btn_delete_tab, lv_color_hex(0xAA0000), 0); 
-    lv_obj_add_event_cb(btn_delete_tab, btn_delete_tab_event_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* lbl_del = lv_label_create(btn_delete_tab); 
-    lv_label_set_text(lbl_del, LV_SYMBOL_TRASH " TAB LOESCHEN"); 
-    lv_obj_center(lbl_del);
-
-    btn_rename_tab = lv_btn_create(screen);
-    lv_obj_set_size(btn_rename_tab, 220, 50);
-    lv_obj_align(btn_rename_tab, LV_ALIGN_TOP_RIGHT, -700, 15);
-    lv_obj_set_style_bg_color(btn_rename_tab, lv_color_hex(0x2980B9), 0);
-    lv_obj_add_event_cb(btn_rename_tab, btn_rename_tab_event_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* lbl_ren = lv_label_create(btn_rename_tab); 
-    lv_label_set_text(lbl_ren, LV_SYMBOL_EDIT " UMBENENNEN"); 
-    lv_obj_center(lbl_ren);
-
-    btn_add_widget = lv_btn_create(screen);
-    lv_obj_set_size(btn_add_widget, 250, 50);
-    lv_obj_align(btn_add_widget, LV_ALIGN_BOTTOM_LEFT, 20, -30);
-    lv_obj_set_style_bg_color(btn_add_widget, lv_color_hex(0x8E44AD), 0);
-    lv_obj_add_event_cb(btn_add_widget, btn_add_widget_event_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* lbl_addw = lv_label_create(btn_add_widget); 
-    lv_label_set_text(lbl_addw, LV_SYMBOL_PLUS " WIDGET ADD"); 
-    lv_obj_center(lbl_addw);
-}
-
-void ViewHomeAssistant::helper_destroyEditUI() {
-    lv_obj_add_flag(lv_tabview_get_tab_btns(tabview), LV_OBJ_FLAG_CLICKABLE); 
-    
-    lv_obj_set_style_bg_color(btn_edit, lv_color_hex(0x333333), 0);
-    lv_label_set_text(label_edit, LV_SYMBOL_EDIT " BEARBEITEN");
-
-    if (btn_back) {
-        lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x333333), 0);
-        lv_label_set_text(lv_obj_get_child(btn_back, 0), LV_SYMBOL_LEFT " ZURUECK");
-    }
-
-    if (btn_tab_left) { 
-        lv_obj_del_async(btn_tab_left); 
-        btn_tab_left = nullptr; 
-    }
-    
-    if (btn_tab_right) { 
-        lv_obj_del_async(btn_tab_right); 
-        btn_tab_right = nullptr; 
-    }
-    
-    if (btn_import) { 
-        lv_obj_del_async(btn_import); 
-        btn_import = nullptr; 
-    }
-    
-    if (btn_delete_tab) { 
-        lv_obj_del_async(btn_delete_tab); 
-        btn_delete_tab = nullptr; 
-    }
-    
-    if (btn_rename_tab) { 
-        lv_obj_del_async(btn_rename_tab); 
-        btn_rename_tab = nullptr; 
-    }
-    
-    if (btn_add_widget) { 
-        lv_obj_del_async(btn_add_widget); 
-        btn_add_widget = nullptr; 
-    }
-    
-    if (trash_btn) { 
-        lv_obj_del_async(trash_btn); 
-        trash_btn = nullptr; 
-    }
-}
-
 // =========================================================
-// 2. HAUPT-KLASSEN FUNKTIONEN
+// 2. EVENTS UND HAUPT-LOGIK
 // =========================================================
 
+// FIX: Die vermisste Funktion ist wieder da!
 String ViewHomeAssistant::generateEntityId(String type, String input) {
     input.trim();
     if (input.indexOf('.') != -1) {
@@ -458,133 +128,6 @@ void ViewHomeAssistant::btn_back_event_cb(lv_event_t * e) {
     }
 }
 
-void ViewHomeAssistant::btn_import_event_cb(lv_event_t * e) {
-    if (HaDialogImport::isAnyOverlayActive()) {
-        return; 
-    }
-    
-    playToneI2S(800, 100, true);
-    
-    uint16_t act_tab = lv_tabview_get_tab_act(tabview);
-    if (act_tab >= HaConfigLogic::dashboards.size()) {
-        act_tab = 0;
-    }
-    
-    HaDialogImport::showLoadingPopup("Lade Dashboards..."); 
-    HaWebsocketLogic_RequestDashboardList(act_tab);
-}
-
-void ViewHomeAssistant::btn_delete_tab_event_cb(lv_event_t * e) {
-    playToneI2S(600, 100, true); 
-    
-    uint16_t act_tab = lv_tabview_get_tab_act(tabview);
-    
-    if (act_tab < HaConfigLogic::dashboards.size()) {
-        HaConfigLogic::DeleteTab(act_tab); 
-        HaConfigLogic::Save();
-        HaWebsocketLogic_UpdateTrackedEntities();
-        
-        currentActiveTab = 0; 
-        pendingHaReload = true; 
-    }
-}
-
-void ViewHomeAssistant::btn_rename_tab_event_cb(lv_event_t * e) {
-    if (kb_overlay != nullptr) {
-        return; 
-    }
-    
-    playToneI2S(800, 100, true); 
-    
-    editingTabIndex = lv_tabview_get_tab_act(tabview);
-    if (editingTabIndex >= (int)HaConfigLogic::dashboards.size()) {
-        editingTabIndex = 0; 
-    }
-    
-    kb_overlay = lv_obj_create(screen);
-    lv_obj_set_size(kb_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(kb_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(kb_overlay, 200, 0);
-    lv_obj_add_flag(kb_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(kb_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
-    
-    ta_new_tab = lv_textarea_create(kb_overlay);
-    lv_obj_set_size(ta_new_tab, 600, 80);
-    lv_obj_align(ta_new_tab, LV_ALIGN_TOP_MID, 0, 100);
-    lv_obj_set_style_text_font(ta_new_tab, &lv_font_montserrat_36, 0);
-    lv_textarea_set_text(ta_new_tab, HaConfigLogic::dashboards[editingTabIndex].name.c_str());
-    
-    lv_obj_t* kb = lv_keyboard_create(kb_overlay);
-    lv_obj_set_size(kb, 1280, 400);
-    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_keyboard_set_textarea(kb, ta_new_tab);
-    lv_obj_add_state(ta_new_tab, LV_STATE_FOCUSED);
-
-    lv_obj_add_event_cb(kb, [](lv_event_t* e){
-        lv_event_code_t code = lv_event_get_code(e);
-        lv_obj_t* keyboard = lv_event_get_target(e);
-        if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
-            lv_obj_clear_state(lv_keyboard_get_textarea(keyboard), LV_STATE_FOCUSED);
-        }
-    }, LV_EVENT_ALL, NULL);
-
-    lv_obj_t * btn_kb_cancel = lv_btn_create(kb_overlay);
-    lv_obj_set_size(btn_kb_cancel, 80, 80);
-    lv_obj_align_to(btn_kb_cancel, ta_new_tab, LV_ALIGN_OUT_RIGHT_MID, 20, 0);
-    lv_obj_set_style_bg_color(btn_kb_cancel, lv_color_hex(0xAA0000), 0);
-    
-    lv_obj_add_event_cb(btn_kb_cancel, [](lv_event_t* e) { 
-        lv_obj_del_async(kb_overlay); 
-        kb_overlay = nullptr; 
-    }, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t * lbl_kb_cancel = lv_label_create(btn_kb_cancel); 
-    lv_label_set_text(lbl_kb_cancel, LV_SYMBOL_CLOSE); 
-    lv_obj_center(lbl_kb_cancel);
-    
-    lv_obj_add_event_cb(kb, kb_event_cb, LV_EVENT_ALL, NULL);
-}
-
-void ViewHomeAssistant::btn_add_widget_event_cb(lv_event_t * e) {
-    playToneI2S(800, 100, true);
-    HaDialogAdd::showAddWidgetDialog();
-}
-
-void ViewHomeAssistant::kb_event_cb(lv_event_t * e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    
-    if (code == LV_EVENT_READY) {
-        playToneI2S(800, 100, true);
-        const char * txt = lv_textarea_get_text(ta_new_tab);
-        
-        if (strlen(txt) > 0) {
-            if (editingTabIndex == -1) {
-                HaConfigLogic::AddTab(String(txt)); 
-                currentActiveTab = HaConfigLogic::dashboards.size() - 1; 
-            } else {
-                HaConfigLogic::RenameTab(editingTabIndex, String(txt)); 
-                currentActiveTab = editingTabIndex; 
-            }
-            
-            HaConfigLogic::Save(); 
-            HaWebsocketLogic_UpdateTrackedEntities(); 
-        }
-        
-        lv_obj_del_async(kb_overlay); 
-        kb_overlay = nullptr; 
-        pendingHaReload = true; 
-        
-    } else if (code == LV_EVENT_CANCEL) {
-        playToneI2S(600, 100, true);
-        lv_obj_del_async(kb_overlay); 
-        kb_overlay = nullptr;
-        
-        if (editingTabIndex == -1) {
-            lv_tabview_set_act(tabview, currentActiveTab, LV_ANIM_OFF);
-        }
-    }
-}
-
 void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
     if (HAWidget::editModeActive) {
         return; 
@@ -594,54 +137,7 @@ void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
     uint16_t tab_id = lv_tabview_get_tab_act(tv);
     
     if (tab_id == HaConfigLogic::dashboards.size()) {
-        playToneI2S(800, 100, true);
-        editingTabIndex = -1; 
-        
-        kb_overlay = lv_obj_create(screen);
-        lv_obj_set_size(kb_overlay, 1280, 720);
-        lv_obj_set_style_bg_color(kb_overlay, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(kb_overlay, 200, 0);
-        lv_obj_add_flag(kb_overlay, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_clear_flag(kb_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
-        
-        ta_new_tab = lv_textarea_create(kb_overlay);
-        lv_obj_set_size(ta_new_tab, 600, 80);
-        lv_obj_align(ta_new_tab, LV_ALIGN_TOP_MID, 0, 100);
-        lv_obj_set_style_text_font(ta_new_tab, &lv_font_montserrat_36, 0);
-        lv_textarea_set_placeholder_text(ta_new_tab, "Name des neuen Raums...");
-        
-        lv_obj_t* kb = lv_keyboard_create(kb_overlay);
-        lv_obj_set_size(kb, 1280, 400);
-        lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-        lv_keyboard_set_textarea(kb, ta_new_tab);
-        lv_obj_add_state(ta_new_tab, LV_STATE_FOCUSED);
-
-        lv_obj_add_event_cb(kb, [](lv_event_t* e){
-            lv_event_code_t code = lv_event_get_code(e);
-            lv_obj_t* keyboard = lv_event_get_target(e);
-            if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
-                lv_obj_clear_state(lv_keyboard_get_textarea(keyboard), LV_STATE_FOCUSED);
-            }
-        }, LV_EVENT_ALL, NULL);
-
-        lv_obj_t * btn_kb_cancel = lv_btn_create(kb_overlay);
-        lv_obj_set_size(btn_kb_cancel, 80, 80);
-        lv_obj_align_to(btn_kb_cancel, ta_new_tab, LV_ALIGN_OUT_RIGHT_MID, 20, 0);
-        lv_obj_set_style_bg_color(btn_kb_cancel, lv_color_hex(0xAA0000), 0);
-        
-        lv_obj_add_event_cb(btn_kb_cancel, [](lv_event_t* e) {
-            lv_obj_del_async(kb_overlay); 
-            kb_overlay = nullptr; 
-            lv_tabview_set_act(tabview, currentActiveTab, LV_ANIM_OFF);
-        }, LV_EVENT_CLICKED, NULL);
-        
-        lv_obj_t * lbl_kb_cancel = lv_label_create(btn_kb_cancel); 
-        lv_label_set_text(lbl_kb_cancel, LV_SYMBOL_CLOSE); 
-        lv_obj_center(lbl_kb_cancel);
-        
-        lv_obj_add_event_cb(kb, kb_event_cb, LV_EVENT_ALL, NULL);
-        lv_tabview_set_act(tv, currentActiveTab, LV_ANIM_OFF); 
-        
+        HaDialogTab::showAddTabDialog();
     } else {
         if (currentActiveTab != tab_id) {
             currentActiveTab = tab_id;
@@ -654,35 +150,25 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
     HAWidget::editModeActive = !HAWidget::editModeActive;
     
     if (HAWidget::editModeActive) {
-        helper_buildEditUI();
+        HaEditToolbar::show();
     } else {
-        helper_destroyEditUI();
+        HaEditToolbar::hide();
         helper_saveWidgets();
     }
 }
 
 lv_obj_t* ViewHomeAssistant::build() {
     trash_btn = nullptr; 
-    btn_import = nullptr; 
-    btn_delete_tab = nullptr;
-    btn_rename_tab = nullptr; 
-    btn_add_widget = nullptr; 
-    btn_tab_left = nullptr;
-    btn_tab_right = nullptr; 
-    kb_overlay = nullptr; 
 
     HaDialogEdit::resetState(); 
     HaDialogAdd::resetState();
     HaDialogImport::resetState(); 
     HaDialogMedia::resetState(); 
+    HaDialogTab::resetState();
+    HaEditToolbar::resetState();
     
-    if (HaColorPicker::isActive()) {
-        HaColorPicker::hide();
-    }
-    
-    if (HaDialogLight::isActive()) {
-        HaDialogLight::hide();
-    }
+    if (HaColorPicker::isActive()) HaColorPicker::hide();
+    if (HaDialogLight::isActive()) HaDialogLight::hide();
 
     pendingHaReload = false; 
     HAWidget::editModeActive = false; 

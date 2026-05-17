@@ -27,7 +27,6 @@ protected:
     
     bool snap_to_grid; 
 
-    // Konfigurations-Variablen (Diagramme)
     bool show_chart = false;
     int chart_w_pct = 60;
     int chart_h_pct = 40;
@@ -36,10 +35,15 @@ protected:
     String chart_min = "";
     String chart_max = "";
 
-    // --- NEU: Aktions-Variablen ---
     String tap_domain = "";
     String tap_service = "";
     String tap_target = "";
+
+    // --- NEU: Speicherplaetze fuer eingebackene Konfigurationen ---
+    String baked_options = "";
+    float baked_min = 0.0f;
+    float baked_max = 100.0f;
+    float baked_step = 1.0f;
 
     lv_obj_t* icon_label;
     lv_obj_t* name_label;
@@ -68,11 +72,18 @@ public:
     void setPosition(int x, int y, bool snap);
     void setSnapToGrid(bool snap);
     
-    // --- NEU: Setter/Getter für Aktionen ---
     void setTapAction(String domain, String service, String target);
     String getTapDomain();
     String getTapService();
     String getTapTarget();
+
+    // --- NEU: Getter/Setter fuer Fabrik & Widgets ---
+    void setBakedOptions(String opts) { baked_options = opts; }
+    String getBakedOptions() { return baked_options; }
+    void setBakedLimits(float mn, float mx, float stp) { baked_min = mn; baked_max = mx; baked_step = stp; }
+    float getBakedMin() { return baked_min; }
+    float getBakedMax() { return baked_max; }
+    float getBakedStep() { return baked_step; }
     
     virtual void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max);
 

@@ -90,7 +90,6 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         pendingImportError = true; isImporting = false; return;
     }
 
-    // --- NEU: Lambda Funktion erwartet jetzt auch Tap-Action Daten ---
     auto addWidget = [&](String entity, String customName, String customIcon, String ta_dom, String ta_srv, String ta_tgt) {
         if (entity.length() == 0 || entity.indexOf('.') == -1) return;
         if (std::find(foundEntities.begin(), foundEntities.end(), entity) != foundEntities.end()) return;
@@ -100,9 +99,21 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         int currentCardW = cardW;
         int itemsToAdvance = 1;
 
-        if (entity.startsWith("sensor.") || entity.startsWith("binary_sensor.") || entity.startsWith("weather.") || entity.startsWith("sun.")) widgetType = "sensor";
-        else if (entity.startsWith("button.") || entity.startsWith("input_button.") || entity.startsWith("script.") || entity.startsWith("automation.") || entity.startsWith("scene.")) widgetType = "action";
-        else if (entity.startsWith("media_player.")) widgetType = "media_player";
+        if (entity.startsWith("sensor.") || entity.startsWith("binary_sensor.") || entity.startsWith("weather.") || entity.startsWith("sun.")) {
+            widgetType = "sensor";
+        }
+        else if (entity.startsWith("button.") || entity.startsWith("input_button.") || entity.startsWith("script.") || entity.startsWith("automation.") || entity.startsWith("scene.")) {
+            widgetType = "action";
+        }
+        else if (entity.startsWith("media_player.")) {
+            widgetType = "media_player";
+        }
+        else if (entity.startsWith("input_select.") || entity.startsWith("select.")) {
+            widgetType = "select";
+        }
+        else if (entity.startsWith("input_number.") || entity.startsWith("number.")) {
+            widgetType = "number";
+        }
         else if (entity.startsWith("vacuum.")) {
             widgetType = "vacuum";
             currentCardW = (cardW * 2) + margin;
@@ -118,10 +129,26 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         wDef.name = customName; wDef.mdi_icon = customIcon; wDef.w = currentCardW; wDef.h = cardH;
         wDef.icon_align = LV_ALIGN_TOP_MID; wDef.text_align = LV_ALIGN_BOTTOM_MID;
         
-        // --- NEU: Zuweisung ins Modell ---
         wDef.tap_action_domain = ta_dom;
         wDef.tap_action_service = ta_srv;
         wDef.tap_action_target = ta_tgt;
+
+        // --- NEU: Backe Metadaten beim Import direkt aus dem globalen Speicher ein ---
+        if (widgetType == "select") {
+            std::vector<String> opts = HaWebsocketLogic_GetGlobalOptions(entity);
+            String opt_str = "";
+            for (size_t k = 0; k < opts.size(); k++) {
+                opt_str += opts[k];
+                if (k < opts.size() - 1) opt_str += ",";
+            }
+            wDef.select_options = opt_str;
+        } 
+        else if (widgetType == "number") {
+            wDef.slider_min = HaWebsocketLogic_GetGlobalMin(entity);
+            wDef.slider_max = HaWebsocketLogic_GetGlobalMax(entity);
+            wDef.slider_step = HaWebsocketLogic_GetGlobalStep(entity);
+        }
+        // -----------------------------------------------------------------------------
         
         HaConfigLogic::dashboards[currentImportTab].widgets.push_back(wDef); 
         i += itemsToAdvance;
@@ -150,7 +177,6 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
                 String cName = obj["name"] | ""; String cIcon = obj["icon"] | "";
                 String ta_dom = ""; String ta_srv = ""; String ta_tgt = "";
                 
-                // --- NEU: Parse Action, trenne Domäne & Target (z.B. automation.trigger) ---
                 if (obj["tap_action"].is<JsonObject>()) {
                     JsonObject tap = obj["tap_action"].as<JsonObject>();
                     String action = tap["action"] | "";
@@ -172,7 +198,6 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
                     }
                 }
                 
-                // Wir ueberschreiben entityId NICHT mehr, sondern reichen die sauberen Tap-Werte durch
                 addWidget(entityId, cName, cIcon, ta_dom, ta_srv, ta_tgt);
             }
 

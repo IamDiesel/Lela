@@ -12,14 +12,33 @@ public:
 static CallerRamAllocator callerAlloc;
 
 void HaServiceCaller::CallService(String domain, String service, String entity_id) {
+    CallServiceWithData(domain, service, entity_id, "");
+}
+
+// --- NEU: Die Funktion verpackt den Payload (json_data) sicher fuer HA ---
+void HaServiceCaller::CallServiceWithData(String domain, String service, String entity_id, String json_data) {
     if (!HaWebsocketLogic_IsConnected()) return;
+    
     JsonDocument doc(&callerAlloc);
     doc["id"] = HaWebsocketLogic_GetNextMessageId();
     doc["type"] = "call_service";
     doc["domain"] = domain;
     doc["service"] = service;
-    doc["target"]["entity_id"] = entity_id;
-    String payload; serializeJson(doc, payload);
+    
+    if (entity_id.length() > 0) {
+        doc["target"]["entity_id"] = entity_id;
+    }
+
+    if (json_data.length() > 0) {
+        JsonDocument dataDoc;
+        DeserializationError err = deserializeJson(dataDoc, json_data);
+        if (!err) {
+            doc["service_data"] = dataDoc.as<JsonObject>();
+        }
+    }
+
+    String payload; 
+    serializeJson(doc, payload);
     HaWebsocketLogic_SendPayload(payload);
 }
 
@@ -178,7 +197,6 @@ void HaServiceCaller::RequestDashboardCards(String url_path, int view_index) {
     HaWebsocketLogic_SendPayload(payload);
 }
 
-// --- NEU: Vacuum Befehle ---
 void HaServiceCaller::CallVacuumService(String entity_id, String service) {
     if (!HaWebsocketLogic_IsConnected()) return;
     JsonDocument doc(&callerAlloc);

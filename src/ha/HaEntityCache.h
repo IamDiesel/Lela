@@ -9,7 +9,7 @@
 class HaEntityCache {
 public:
     static volatile bool triggerRestStateFetch;
-    static volatile uint32_t cacheVersion; // NEU: Flag für die GUI
+    static volatile uint32_t cacheVersion; 
 
     static void Init();
     static void ClearAll();
@@ -38,11 +38,30 @@ public:
     static bool SupportsColorTemp(String entity_id);
     static int GetColorTemp(String entity_id);
     
-    static uint32_t GetCacheVersion(); // NEU: Getter
+    static std::vector<String> GetOptions(String entity_id);
+    static float GetMin(String entity_id);
+    static float GetMax(String entity_id);
+    static float GetStep(String entity_id);
+
+    static uint32_t GetCacheVersion(); 
+    static std::vector<String> SearchEntities(String query, size_t max_results = 5);
+
+    // --- NEU: Globale Getter für den Moment des Widget-Hinzufügens ---
+    static std::vector<String> GetGlobalOptions(String entity_id);
+    static float GetGlobalMin(String entity_id);
+    static float GetGlobalMax(String entity_id);
+    static float GetGlobalStep(String entity_id);
 
 private:
     static SemaphoreHandle_t mutex;
     static std::vector<String> trackedEntities;
+    static std::map<String, String> globalEntityMap;
+
+    // --- NEU: Globale Maps für ungefilterte Metadaten im PSRAM ---
+    static std::map<String, std::vector<String>> globalOptionsMap;
+    static std::map<String, float> globalMinMap;
+    static std::map<String, float> globalMaxMap;
+    static std::map<String, float> globalStepMap;
 
     static std::map<String, String> states;
     static std::map<String, String> icons;
@@ -64,4 +83,9 @@ private:
     static std::map<String, bool> supportsColor;
     static std::map<String, bool> supportsTemp;
     static std::map<String, int> colorTemp;
+    
+    static std::map<String, std::vector<String>> optionsMap;
+    static std::map<String, float> minMap;
+    static std::map<String, float> maxMap;
+    static std::map<String, float> stepMap;
 };
