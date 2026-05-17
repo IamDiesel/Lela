@@ -192,6 +192,8 @@ void HaDialogAdd::showAddWidgetDialog() {
             else if (e_type == "media_player") w_type = "media_player";
             else if (e_type == "vacuum") w_type = "vacuum";
             else if (e_type == "cover") w_type = "cover";
+            // --- NEU: Climate aufnehmen ---
+            else if (e_type == "climate") w_type = "climate";
             else if (e_type == "select" || e_type == "input_select") w_type = "select";
             else if (e_type == "number" || e_type == "input_number") w_type = "number";
             
@@ -210,8 +212,9 @@ void HaDialogAdd::showAddWidgetDialog() {
                 def.color_off = "";
 
                 // --- NEU: Breite fuer Cover beim manuellen Hinzufuegen anpassen ---
-                if (w_type == "cover" || w_type == "vacuum") {
-                    def.w = 340; // Doppelte Breite (160 * 2 + 20 Margin)
+                // --- NEU: Breite beim manuellen Hinzufuegen ---
+                if (w_type == "cover" || w_type == "vacuum" || w_type == "climate") {
+                    def.w = 340; 
                 }
                 
                 if (w_type == "vacuum") {
@@ -221,8 +224,9 @@ void HaDialogAdd::showAddWidgetDialog() {
                     def.chart_x_ofs = 10;   
                     def.chart_y_ofs = 10;   
                 }
+                
 
-                if (w_type == "select") {
+                if (w_type == "select" || w_type == "climate") {
                     std::vector<String> opts = HaEntityCache::GetGlobalOptions(e_id);
                     String opt_str = "";
                     for (size_t k = 0; k < opts.size(); k++) {

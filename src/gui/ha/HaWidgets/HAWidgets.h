@@ -9,3 +9,4 @@
 #include "HASelectWidget.h"
 #include "HANumberWidget.h"
 #include "HACoverWidget.h" // NEU
+#include "HAClimateWidget.h" // NEU

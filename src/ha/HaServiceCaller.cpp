@@ -247,3 +247,32 @@ void HaServiceCaller::CallVacuumSetFanSpeed(String entity_id, String speed) {
     String payload; serializeJson(doc, payload);
     HaWebsocketLogic_SendPayload(payload);
 }
+// [...] (Bestehende Methoden bleiben unveraendert)
+
+// --- NEU: Zieltemperatur setzen ---
+void HaServiceCaller::CallClimateSetTemperature(String entity_id, float temperature) {
+    if (!HaWebsocketLogic_IsConnected()) return;
+    JsonDocument doc(&callerAlloc);
+    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    doc["type"] = "call_service";
+    doc["domain"] = "climate";
+    doc["service"] = "set_temperature";
+    doc["target"]["entity_id"] = entity_id;
+    doc["service_data"]["temperature"] = temperature;
+    String payload; serializeJson(doc, payload);
+    HaWebsocketLogic_SendPayload(payload);
+}
+
+// --- NEU: Modus (Heizen/Kuehlen/Auto/Aus) setzen ---
+void HaServiceCaller::CallClimateSetHvacMode(String entity_id, String hvac_mode) {
+    if (!HaWebsocketLogic_IsConnected()) return;
+    JsonDocument doc(&callerAlloc);
+    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    doc["type"] = "call_service";
+    doc["domain"] = "climate";
+    doc["service"] = "set_hvac_mode";
+    doc["target"]["entity_id"] = entity_id;
+    doc["service_data"]["hvac_mode"] = hvac_mode;
+    String payload; serializeJson(doc, payload);
+    HaWebsocketLogic_SendPayload(payload);
+}

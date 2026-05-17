@@ -120,6 +120,12 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
             currentCardW = (cardW * 2) + margin; // Doppelte Breite!
             itemsToAdvance = 2; // Nimmt 2 Spalten auf dem Dashboard ein
         }
+        // --- NEU: Zuweisung fuer Klima / Thermostate ---
+        else if (entity.startsWith("climate.")) {
+            widgetType = "climate";
+            currentCardW = (cardW * 2) + margin; // Doppelte Breite
+            itemsToAdvance = 2; 
+        }
         else if (entity.startsWith("vacuum.")) {
             widgetType = "vacuum";
             currentCardW = (cardW * 2) + margin;
@@ -140,7 +146,8 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         wDef.tap_action_target = ta_tgt;
 
         // --- NEU: Backe Metadaten beim Import direkt aus dem globalen Speicher ein ---
-        if (widgetType == "select") {
+        // --- ANPASSUNG: Limits und Optionen auch fuer climate einbacken ---
+        if (widgetType == "select" || widgetType == "climate") {
             std::vector<String> opts = HaWebsocketLogic_GetGlobalOptions(entity);
             String opt_str = "";
             for (size_t k = 0; k < opts.size(); k++) {
@@ -149,7 +156,8 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
             }
             wDef.select_options = opt_str;
         } 
-        else if (widgetType == "number") {
+        
+        if (widgetType == "number" || widgetType == "climate") {
             wDef.slider_min = HaWebsocketLogic_GetGlobalMin(entity);
             wDef.slider_max = HaWebsocketLogic_GetGlobalMax(entity);
             wDef.slider_step = HaWebsocketLogic_GetGlobalStep(entity);

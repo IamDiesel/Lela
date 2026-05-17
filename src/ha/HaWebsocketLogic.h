@@ -66,11 +66,14 @@ inline float HaWebsocketLogic_GetGlobalMin(String id) { return HaEntityCache::Ge
 inline float HaWebsocketLogic_GetGlobalMax(String id) { return HaEntityCache::GetGlobalMax(id); }
 inline float HaWebsocketLogic_GetGlobalStep(String id) { return HaEntityCache::GetGlobalStep(id); }
 
-// --- NEU: Getter und Caller fuer Rolllaeden (Cover) ---
 inline int HaWebsocketLogic_GetPosition(String id) { return HaEntityCache::GetPosition(id); }
 inline void HaWebsocketLogic_CallCoverService(String id, String s) { HaServiceCaller::CallCoverService(id, s); }
 inline void HaWebsocketLogic_CallCoverPosition(String id, int pos) { HaServiceCaller::CallCoverPosition(id, pos); }
-// ------------------------------------------------------
+
+inline float HaWebsocketLogic_GetCurrentTemperature(String id) { return HaEntityCache::GetCurrentTemperature(id); }
+inline float HaWebsocketLogic_GetTargetTemperature(String id) { return HaEntityCache::GetTargetTemperature(id); }
+inline void HaWebsocketLogic_CallClimateSetTemperature(String id, float t) { HaServiceCaller::CallClimateSetTemperature(id, t); }
+inline void HaWebsocketLogic_CallClimateSetHvacMode(String id, String m) { HaServiceCaller::CallClimateSetHvacMode(id, m); }
 
 inline void HaWebsocketLogic_CallServiceWithData(String d, String s, String id, String j) { HaServiceCaller::CallServiceWithData(d, s, id, j); }
 inline void HaWebsocketLogic_CallVacuumService(String id, String s) { HaServiceCaller::CallVacuumService(id, s); }

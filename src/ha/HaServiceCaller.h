@@ -23,7 +23,10 @@ public:
     static void CallVacuumService(String entity_id, String service);
     static void CallVacuumSetFanSpeed(String entity_id, String speed);
     
-    // --- NEU: Service-Methoden fuer Cover ---
     static void CallCoverService(String entity_id, String service);
     static void CallCoverPosition(String entity_id, int position);
+    
+    // --- NEU: Service-Methoden fuer Klima/Thermostate ---
+    static void CallClimateSetTemperature(String entity_id, float temperature);
+    static void CallClimateSetHvacMode(String entity_id, String hvac_mode);
 };

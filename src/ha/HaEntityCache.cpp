@@ -29,7 +29,10 @@ std::map<String, std::vector<String>> HaEntityCache::sourceList;
 std::map<String, String> HaEntityCache::source;
 std::map<String, int> HaEntityCache::battery;
 std::map<String, String> HaEntityCache::fanSpeed;
-std::map<String, int> HaEntityCache::positionMap; // NEU
+std::map<String, int> HaEntityCache::positionMap;
+
+std::map<String, float> HaEntityCache::currentTemperatureMap; // NEU
+std::map<String, float> HaEntityCache::targetTemperatureMap;  // NEU
 
 std::map<String, bool> HaEntityCache::supportsBrightness;
 std::map<String, bool> HaEntityCache::supportsColor;
@@ -67,7 +70,10 @@ void HaEntityCache::ClearAll() {
         source.clear();
         battery.clear();
         fanSpeed.clear();
-        positionMap.clear(); // NEU
+        positionMap.clear();
+        
+        currentTemperatureMap.clear(); // NEU
+        targetTemperatureMap.clear();  // NEU
         
         supportsBrightness.clear();
         supportsColor.clear();
@@ -110,7 +116,7 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
         if (entity_id.startsWith("light.") || entity_id.startsWith("switch.") || 
             entity_id.startsWith("select.") || entity_id.startsWith("input_select.") || 
             entity_id.startsWith("number.") || entity_id.startsWith("input_number.") ||
-            entity_id.startsWith("cover.") || entity_id.startsWith("climate.") || // NEU: cover & climate ins Adressbuch
+            entity_id.startsWith("cover.") || entity_id.startsWith("climate.") || 
             entity_id.startsWith("vacuum.") || entity_id.startsWith("media_player.") ||
             entity_id.startsWith("button.") || entity_id.startsWith("input_button.")) {
             
@@ -132,6 +138,18 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                 if (!attr["min"].isNull()) globalMinMap[entity_id] = attr["min"].as<float>();
                 if (!attr["max"].isNull()) globalMaxMap[entity_id] = attr["max"].as<float>();
                 if (!attr["step"].isNull()) globalStepMap[entity_id] = attr["step"].as<float>();
+            }
+            // --- NEU: Globale Metadaten fuer Klima ---
+            else if (entity_id.startsWith("climate.")) {
+                if (attr["hvac_modes"].is<JsonArray>()) {
+                    globalOptionsMap[entity_id].clear();
+                    for (JsonVariant v : attr["hvac_modes"].as<JsonArray>()) {
+                        globalOptionsMap[entity_id].push_back(v.as<String>());
+                    }
+                }
+                if (!attr["min_temp"].isNull()) globalMinMap[entity_id] = attr["min_temp"].as<float>();
+                if (!attr["max_temp"].isNull()) globalMaxMap[entity_id] = attr["max_temp"].as<float>();
+                if (!attr["target_temp_step"].isNull()) globalStepMap[entity_id] = attr["target_temp_step"].as<float>();
             }
         }
 
@@ -193,13 +211,27 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                         for (JsonVariant v : s_list) sourceList[entity_id].push_back(v.as<String>());
                     }
                 }
-                // --- NEU: Position fuer Rolllaeden (Cover) auslesen ---
                 else if (entity_id.startsWith("cover.")) {
-                    if (!attr["current_position"].isNull()) {
-                        positionMap[entity_id] = attr["current_position"].as<int>();
-                    } else {
-                        positionMap[entity_id] = -1;
+                    if (!attr["current_position"].isNull()) positionMap[entity_id] = attr["current_position"].as<int>();
+                    else positionMap[entity_id] = -1;
+                }
+                // --- NEU: Live-Metadaten fuer Klima speichern ---
+                else if (entity_id.startsWith("climate.")) {
+                    if (!attr["current_temperature"].isNull()) currentTemperatureMap[entity_id] = attr["current_temperature"].as<float>();
+                    else currentTemperatureMap[entity_id] = -99.0f; 
+
+                    if (!attr["temperature"].isNull()) targetTemperatureMap[entity_id] = attr["temperature"].as<float>();
+                    else targetTemperatureMap[entity_id] = -99.0f;
+
+                    if (attr["hvac_modes"].is<JsonArray>()) {
+                        optionsMap[entity_id].clear();
+                        for (JsonVariant v : attr["hvac_modes"].as<JsonArray>()) {
+                            optionsMap[entity_id].push_back(v.as<String>());
+                        }
                     }
+                    if (!attr["min_temp"].isNull()) minMap[entity_id] = attr["min_temp"].as<float>();
+                    if (!attr["max_temp"].isNull()) maxMap[entity_id] = attr["max_temp"].as<float>();
+                    if (!attr["target_temp_step"].isNull()) stepMap[entity_id] = attr["target_temp_step"].as<float>();
                 }
             }
             cacheVersion++;
@@ -243,6 +275,7 @@ bool HaEntityCache::EntityExists(String entity_id) { if (mutex && xSemaphoreTake
 String HaEntityCache::GetEntityName(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { String res = names[entity_id]; if (res == "" && globalEntityMap.count(entity_id)) res = globalEntityMap[entity_id]; xSemaphoreGive(mutex); return res; } return ""; }
 int HaEntityCache::GetBattery(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { int res = -1; if (battery.count(entity_id)) res = battery[entity_id]; xSemaphoreGive(mutex); return res; } return -1; }
 String HaEntityCache::GetFanSpeed(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { String res = fanSpeed[entity_id]; xSemaphoreGive(mutex); return res; } return ""; }
+int HaEntityCache::GetPosition(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { int res = -1; if (positionMap.count(entity_id)) res = positionMap[entity_id]; xSemaphoreGive(mutex); return res; } return -1; }
 bool HaEntityCache::SupportsBrightness(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { bool res = false; if (supportsBrightness.count(entity_id)) res = supportsBrightness[entity_id]; xSemaphoreGive(mutex); return res; } return false; }
 bool HaEntityCache::SupportsColor(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { bool res = false; if (supportsColor.count(entity_id)) res = supportsColor[entity_id]; xSemaphoreGive(mutex); return res; } return false; }
 bool HaEntityCache::SupportsColorTemp(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { bool res = false; if (supportsTemp.count(entity_id)) res = supportsTemp[entity_id]; xSemaphoreGive(mutex); return res; } return false; }
@@ -252,42 +285,28 @@ float HaEntityCache::GetMin(String entity_id) { if (mutex && xSemaphoreTake(mute
 float HaEntityCache::GetMax(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 100.0f; if (maxMap.count(entity_id)) res = maxMap[entity_id]; xSemaphoreGive(mutex); return res; } return 100.0f; }
 float HaEntityCache::GetStep(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 1.0f; if (stepMap.count(entity_id)) res = stepMap[entity_id]; xSemaphoreGive(mutex); return res; } return 1.0f; }
 
-// --- NEU: Getter fuer Rollladen-Position ---
-int HaEntityCache::GetPosition(String entity_id) {
+// --- NEU: Getter fuer das Klima-Widget ---
+float HaEntityCache::GetCurrentTemperature(String entity_id) {
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        int res = -1;
-        if (positionMap.count(entity_id)) res = positionMap[entity_id];
+        float res = -99.0f;
+        if (currentTemperatureMap.count(entity_id)) res = currentTemperatureMap[entity_id];
         xSemaphoreGive(mutex);
         return res;
     }
-    return -1;
+    return -99.0f;
 }
 
-std::vector<String> HaEntityCache::GetGlobalOptions(String entity_id) {
+float HaEntityCache::GetTargetTemperature(String entity_id) {
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        std::vector<String> res = globalOptionsMap[entity_id];
-        xSemaphoreGive(mutex); return res;
+        float res = -99.0f;
+        if (targetTemperatureMap.count(entity_id)) res = targetTemperatureMap[entity_id];
+        xSemaphoreGive(mutex);
+        return res;
     }
-    return std::vector<String>();
+    return -99.0f;
 }
-float HaEntityCache::GetGlobalMin(String entity_id) {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        float res = 0.0f; if (globalMinMap.count(entity_id)) res = globalMinMap[entity_id];
-        xSemaphoreGive(mutex); return res;
-    }
-    return 0.0f;
-}
-float HaEntityCache::GetGlobalMax(String entity_id) {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        float res = 100.0f; if (globalMaxMap.count(entity_id)) res = globalMaxMap[entity_id];
-        xSemaphoreGive(mutex); return res;
-    }
-    return 100.0f;
-}
-float HaEntityCache::GetGlobalStep(String entity_id) {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        float res = 1.0f; if (globalStepMap.count(entity_id)) res = globalStepMap[entity_id];
-        xSemaphoreGive(mutex); return res;
-    }
-    return 1.0f;
-}
+
+std::vector<String> HaEntityCache::GetGlobalOptions(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { std::vector<String> res = globalOptionsMap[entity_id]; xSemaphoreGive(mutex); return res; } return std::vector<String>(); }
+float HaEntityCache::GetGlobalMin(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 0.0f; if (globalMinMap.count(entity_id)) res = globalMinMap[entity_id]; xSemaphoreGive(mutex); return res; } return 0.0f; }
+float HaEntityCache::GetGlobalMax(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 100.0f; if (globalMaxMap.count(entity_id)) res = globalMaxMap[entity_id]; xSemaphoreGive(mutex); return res; } return 100.0f; }
+float HaEntityCache::GetGlobalStep(String entity_id) { if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) { float res = 1.0f; if (globalStepMap.count(entity_id)) res = globalStepMap[entity_id]; xSemaphoreGive(mutex); return res; } return 1.0f; }

@@ -32,9 +32,11 @@ public:
     static String GetEntityName(String entity_id);
     static int GetBattery(String entity_id);
     static String GetFanSpeed(String entity_id);
-
-    // --- NEU: Getter fuer Rollladen-Position (Cover) ---
     static int GetPosition(String entity_id);
+
+    // --- NEU: Getter fuer das Klima-Widget ---
+    static float GetCurrentTemperature(String entity_id);
+    static float GetTargetTemperature(String entity_id);
 
     static bool SupportsBrightness(String entity_id);
     static bool SupportsColor(String entity_id);
@@ -79,9 +81,11 @@ private:
     static std::map<String, String> source;
     static std::map<String, int> battery;
     static std::map<String, String> fanSpeed;
-    
-    // --- NEU: Speicher fuer die Rollladen-Position ---
     static std::map<String, int> positionMap;
+    
+    // --- NEU: Speichermaps fuer Temperaturen ---
+    static std::map<String, float> currentTemperatureMap;
+    static std::map<String, float> targetTemperatureMap;
 
     static std::map<String, bool> supportsBrightness;
     static std::map<String, bool> supportsColor;
