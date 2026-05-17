@@ -4,6 +4,7 @@
 #include "SystemLogic.h"
 #include "BleLogic.h"
 #include "LVGL_Driver.h"
+#include "CameraScanner.h" 
 #include <WiFi.h>
 
 #define TEXT_COLOR (isDarkMode ? lv_color_white() : lv_color_black())
@@ -35,6 +36,11 @@ static int selected_scan_index = -1;
 static lv_obj_t * stream_overlay = nullptr, * sw_expert = nullptr;
 static lv_obj_t * ta_ip, * ta_vid, * ta_aud, * lbl_ip, * lbl_vid, * lbl_aud;
 
+// BabyCam Scanner UI Objekte
+static lv_obj_t * btn_scan_cam = nullptr;
+static lv_obj_t * lbl_scan_cam = nullptr;
+static lv_obj_t * dd_cam_results = nullptr;
+
 static const int cam_intervals[] = {10, 20, 30, 50, 75, 100, 200, 300, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000};
 
 // ==============================================================
@@ -61,9 +67,46 @@ static void stream_expert_sw_cb(lv_event_t* e) {
     else { lv_obj_clear_flag(lbl_ip, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(ta_ip, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(lbl_vid, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(ta_vid, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(lbl_aud, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(ta_aud, LV_OBJ_FLAG_HIDDEN); }
 }
 
+static void btn_scan_cam_cb(lv_event_t* e) {
+    if (WiFi.status() != WL_CONNECTED) {
+        playToneI2S(400, 150, true);
+        lv_label_set_text(lbl_scan_cam, "Kein WLAN!");
+        return;
+    }
+    playToneI2S(800, 100, true);
+    lv_label_set_text(lbl_scan_cam, LV_SYMBOL_REFRESH " Scanne...");
+    lv_obj_add_state(btn_scan_cam, LV_STATE_DISABLED);
+    
+    CameraScanner::startScan();
+}
+
+static void dd_cam_results_cb(lv_event_t* e) {
+    playToneI2S(800, 100, true);
+    uint16_t idx = lv_dropdown_get_selected(dd_cam_results);
+    
+    if (idx == 0) { // "Manuelle Eingabe"
+        lv_obj_add_flag(dd_cam_results, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(btn_scan_cam, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    
+    int camIdx = idx - 1;
+    if (camIdx >= 0 && camIdx < CameraScanner::foundCameras.size()) {
+        String ip = CameraScanner::foundCameras[camIdx].ip;
+        lv_textarea_set_text(ta_ip, ip.c_str());
+        lv_textarea_set_text(ta_vid, ("http://" + ip + ":8080/api-stream/v1/video?random=0").c_str());
+        lv_textarea_set_text(ta_aud, ("http://" + ip + ":8080/api-stream/v1/audio").c_str());
+    }
+    
+    lv_obj_add_flag(dd_cam_results, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(btn_scan_cam, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void showStreamSettingsPopup() {
     if (stream_overlay != nullptr) return;
     playToneI2S(800, 100, true);
+    
+    CameraScanner::scanFinishedEvent = false; 
 
     stream_overlay = lv_obj_create(lv_disp_get_layer_sys(NULL));
     lv_obj_set_size(stream_overlay, 1280, 720);
@@ -77,20 +120,24 @@ static void showStreamSettingsPopup() {
     lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
 
     lv_obj_t* title = create_white_label(panel, "Stream Verbindung"); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_t* lbl_exp = create_white_label(panel, "Expertenmodus (Ganze URL bearbeiten)"); lv_obj_align(lbl_exp, LV_ALIGN_TOP_LEFT, 20, 70);
+    
+    lv_obj_t* lbl_exp = create_white_label(panel, "Expertenmodus (Ganze URL bearbeiten)"); 
+    lv_obj_align(lbl_exp, LV_ALIGN_TOP_LEFT, 20, 70);
 
-    sw_expert = lv_switch_create(panel); lv_obj_align(sw_expert, LV_ALIGN_TOP_LEFT, 430, 65);
+    // FIX: Slider fuer den Expertenmodus weiter nach rechts (700px), Text komplett frei!
+    sw_expert = lv_switch_create(panel); 
+    lv_obj_align(sw_expert, LV_ALIGN_TOP_LEFT, 650, 65);
     if (useCustomUrls) lv_obj_add_state(sw_expert, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw_expert, stream_expert_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lbl_ip = create_white_label(panel, "Kamera IP-Adresse (z.B. 192.168.2.86):"); lv_obj_align(lbl_ip, LV_ALIGN_TOP_LEFT, 20, 130);
-    ta_ip = lv_textarea_create(panel); lv_obj_set_size(ta_ip, 700, 50); lv_obj_align(ta_ip, LV_ALIGN_TOP_LEFT, 20, 160); lv_textarea_set_one_line(ta_ip, true); lv_textarea_set_text(ta_ip, streamIp.c_str());
+    ta_ip = lv_textarea_create(panel); lv_obj_set_size(ta_ip, 760, 50); lv_obj_align(ta_ip, LV_ALIGN_TOP_LEFT, 20, 160); lv_textarea_set_one_line(ta_ip, true); lv_textarea_set_text(ta_ip, streamIp.c_str());
 
     lbl_vid = create_white_label(panel, "Video Stream URL:"); lv_obj_align(lbl_vid, LV_ALIGN_TOP_LEFT, 20, 120);
-    ta_vid = lv_textarea_create(panel); lv_obj_set_size(ta_vid, 700, 50); lv_obj_align(ta_vid, LV_ALIGN_TOP_LEFT, 20, 150); lv_textarea_set_one_line(ta_vid, true); lv_textarea_set_text(ta_vid, camEntity.c_str());
+    ta_vid = lv_textarea_create(panel); lv_obj_set_size(ta_vid, 760, 50); lv_obj_align(ta_vid, LV_ALIGN_TOP_LEFT, 20, 150); lv_textarea_set_one_line(ta_vid, true); lv_textarea_set_text(ta_vid, camEntity.c_str());
 
     lbl_aud = create_white_label(panel, "Audio Stream URL:"); lv_obj_align(lbl_aud, LV_ALIGN_TOP_LEFT, 20, 220);
-    ta_aud = lv_textarea_create(panel); lv_obj_set_size(ta_aud, 700, 50); lv_obj_align(ta_aud, LV_ALIGN_TOP_LEFT, 20, 250); lv_textarea_set_one_line(ta_aud, true); lv_textarea_set_text(ta_aud, babyStreamUrl.c_str());
+    ta_aud = lv_textarea_create(panel); lv_obj_set_size(ta_aud, 760, 50); lv_obj_align(ta_aud, LV_ALIGN_TOP_LEFT, 20, 250); lv_textarea_set_one_line(ta_aud, true); lv_textarea_set_text(ta_aud, babyStreamUrl.c_str());
 
     lv_obj_t* kb = lv_keyboard_create(stream_overlay); lv_obj_set_size(kb, 1280, 300); lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0); lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
 
@@ -104,18 +151,43 @@ static void showStreamSettingsPopup() {
 
     lv_obj_t* btn_save = lv_btn_create(panel); lv_obj_set_size(btn_save, 200, 60); lv_obj_align(btn_save, LV_ALIGN_BOTTOM_RIGHT, -20, -20); lv_obj_set_style_bg_color(btn_save, lv_color_hex(0x27AE60), 0);
     lv_obj_t* l_s = create_white_label(btn_save, "Speichern"); lv_obj_center(l_s);
+    
+    lv_obj_t* btn_cancel = lv_btn_create(panel); lv_obj_set_size(btn_cancel, 200, 60); lv_obj_align(btn_cancel, LV_ALIGN_BOTTOM_LEFT, 20, -20); lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0xAA0000), 0);
+    lv_obj_t* l_c = create_white_label(btn_cancel, "Abbrechen"); lv_obj_center(l_c);
+
+    // FIX: BabyCam Finde Button (Breiter auf 300px, mittig unten!)
+    btn_scan_cam = lv_btn_create(panel);
+    lv_obj_set_size(btn_scan_cam, 300, 60);
+    lv_obj_align(btn_scan_cam, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_color(btn_scan_cam, lv_color_hex(0x2980B9), 0);
+    lbl_scan_cam = create_white_label(btn_scan_cam, LV_SYMBOL_WIFI " Finde BabyCam");
+    lv_obj_center(lbl_scan_cam);
+    lv_obj_add_event_cb(btn_scan_cam, btn_scan_cam_cb, LV_EVENT_CLICKED, NULL);
+
+    // FIX: Dropdown exakt an der gleichen Stelle wie der Scan-Button
+    dd_cam_results = lv_dropdown_create(panel);
+    lv_obj_set_size(dd_cam_results, 300, 60); 
+    lv_obj_align(dd_cam_results, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_add_flag(dd_cam_results, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_font(dd_cam_results, &lv_font_montserrat_24, 0);
+    lv_obj_add_event_cb(dd_cam_results, dd_cam_results_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
     lv_obj_add_event_cb(btn_save, [](lv_event_t* e) {
         playToneI2S(800, 100, true);
         useCustomUrls = lv_obj_has_state(sw_expert, LV_STATE_CHECKED);
         if (!useCustomUrls) { streamIp = lv_textarea_get_text(ta_ip); streamIp.trim(); camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?random=0"; babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio"; } 
         else { camEntity = lv_textarea_get_text(ta_vid); camEntity.trim(); babyStreamUrl = lv_textarea_get_text(ta_aud); babyStreamUrl.trim(); }
         preferences.begin("catmat", false); preferences.putBool("useCstUrl", useCustomUrls); preferences.putString("strIp", streamIp); preferences.putString("camEntity", camEntity); preferences.putString("babyUrl", babyStreamUrl); preferences.end();
+        
         lv_obj_del_async(stream_overlay); stream_overlay = nullptr;
+        btn_scan_cam = nullptr; lbl_scan_cam = nullptr; dd_cam_results = nullptr;
     }, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t* btn_cancel = lv_btn_create(panel); lv_obj_set_size(btn_cancel, 200, 60); lv_obj_align(btn_cancel, LV_ALIGN_BOTTOM_LEFT, 20, -20); lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0xAA0000), 0);
-    lv_obj_t* l_c = create_white_label(btn_cancel, "Abbrechen"); lv_obj_center(l_c);
-    lv_obj_add_event_cb(btn_cancel, [](lv_event_t* e) { playToneI2S(600, 100, true); lv_obj_del_async(stream_overlay); stream_overlay = nullptr; }, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_cancel, [](lv_event_t* e) { 
+        playToneI2S(600, 100, true); 
+        lv_obj_del_async(stream_overlay); stream_overlay = nullptr; 
+        btn_scan_cam = nullptr; lbl_scan_cam = nullptr; dd_cam_results = nullptr;
+    }, LV_EVENT_CLICKED, NULL);
 }
 
 // Handler fuer die interaktiven Zeilen in der Bluetooth-Liste
@@ -124,13 +196,9 @@ static void scan_list_btn_cb(lv_event_t * e) {
     lv_obj_t * clicked_btn = (lv_obj_t*)lv_event_get_target(e);
     selected_scan_index = (int)(intptr_t)lv_event_get_user_data(e);
 
-    // Alle Buttons zuruecksetzen
     for(int i = 0; i < MAX_SCAN_DEVICES; i++) {
-        if(scan_list_btns[i]) {
-            lv_obj_set_style_bg_color(scan_list_btns[i], lv_color_hex(0x222222), 0);
-        }
+        if(scan_list_btns[i]) lv_obj_set_style_bg_color(scan_list_btns[i], lv_color_hex(0x222222), 0);
     }
-    // Geklickten Button blau hervorheben
     lv_obj_set_style_bg_color(clicked_btn, lv_color_hex(0x00A0FF), 0);
 }
 
@@ -148,7 +216,7 @@ static void btn_save_mac_cb(lv_event_t * e) {
         lv_label_set_text_fmt(lbl_setup_mat, "Matte:\n%s", savedMatMac.c_str());
         lv_label_set_text_fmt(lbl_setup_kip, "Kippy:\n%s", savedKippyMac.c_str());
     } else {
-        playToneI2S(400, 150, true); // Fehler-Ton, wenn nichts gewaehlt wurde
+        playToneI2S(400, 150, true); 
     }
 }
 
@@ -363,6 +431,29 @@ void ViewSettings::update() {
     }
 
     if (webSetupMode > 0 || pendingWebSetupMode > 0) return;
+
+    if (CameraScanner::scanFinishedEvent) {
+        CameraScanner::scanFinishedEvent = false;
+        
+        if (stream_overlay != nullptr && btn_scan_cam != nullptr && lbl_scan_cam != nullptr) {
+            lv_obj_clear_state(btn_scan_cam, LV_STATE_DISABLED);
+            lv_label_set_text(lbl_scan_cam, LV_SYMBOL_WIFI " Finde BabyCam");
+
+            if (CameraScanner::foundCameras.empty()) {
+                lv_label_set_text(lbl_scan_cam, "Keine gefunden!");
+            } else {
+                String opts = "Manuelle Eingabe\n";
+                for (size_t i = 0; i < CameraScanner::foundCameras.size(); i++) {
+                    opts += CameraScanner::foundCameras[i].name;
+                    if (i < CameraScanner::foundCameras.size() - 1) opts += "\n";
+                }
+                lv_dropdown_set_options(dd_cam_results, opts.c_str());
+                lv_obj_add_flag(btn_scan_cam, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(dd_cam_results, LV_OBJ_FLAG_HIDDEN);
+                lv_dropdown_open(dd_cam_results);
+            }
+        }
+    }
 
     if (!lv_obj_has_flag(scan_overlay, LV_OBJ_FLAG_HIDDEN)) {
         bool isScanning, showSaveBtn;
