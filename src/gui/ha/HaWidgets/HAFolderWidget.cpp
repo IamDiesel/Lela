@@ -19,7 +19,6 @@ HAFolderWidget::HAFolderWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     lv_obj_add_flag(placeholder_lbl, LV_OBJ_FLAG_HIDDEN);
 }
 
-// --- FIX: C++ Objekte loeschen, wenn der Ordner geloescht wird ---
 HAFolderWidget::~HAFolderWidget() {
     for (auto& c : folder_children) {
         delete c.widget;
@@ -33,15 +32,16 @@ void HAFolderWidget::addChild(HAWidget* widget, const HAWidgetDef& def) {
 }
 
 void HAFolderWidget::removeChild(HAWidget* widget) {
-    auto it = std::remove_if(folder_children.begin(), folder_children.end(), [widget](const FolderChildInfo& info) {
+    // FIX: std::find_if verhindert das gefaehrliche Verschieben (move) im Speicher, das zum Crash fuehrte!
+    auto it = std::find_if(folder_children.begin(), folder_children.end(), [widget](const FolderChildInfo& info) {
         return info.widget == widget;
     });
     if (it != folder_children.end()) {
         if (it->widget && it->widget->getContainer()) {
             lv_obj_del_async(it->widget->getContainer());
         }
-        delete it->widget; // C++ Objekt aufraeumen
-        folder_children.erase(it, folder_children.end());
+        delete it->widget; 
+        folder_children.erase(it);
     }
 }
 
@@ -111,7 +111,6 @@ void HAFolderWidget::checkConditions() {
     }
 }
 
-// --- FIX: Die Websocket-Updates muessen in den Ordner weitergereicht werden! ---
 void HAFolderWidget::updateState(String state) { 
     for (auto& c : folder_children) {
         String child_state = HaWebsocketLogic_GetState(c.widget->getEntityId());

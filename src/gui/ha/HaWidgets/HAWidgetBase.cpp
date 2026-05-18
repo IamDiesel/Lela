@@ -126,7 +126,11 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
 
 HAWidget::~HAWidget() { 
     all_active_widgets.erase(std::remove(all_active_widgets.begin(), all_active_widgets.end(), this), all_active_widgets.end());
-    if (container && lv_obj_is_valid(container)) { lv_obj_remove_event_cb(container, widget_event_cb); lv_obj_del_async(container); }
+    if (container && lv_obj_is_valid(container)) { 
+        lv_obj_remove_event_cb(container, widget_event_cb); 
+        // FIX: Hier stand frueher lv_obj_del_async(container). 
+        // Das verursachte einen Load Access Fault beim Reload!
+    }
 }
 
 void HAWidget::setAlignments(int i_align, int t_align, int s_align, int i_margin, int t_margin, int s_margin) {
@@ -198,8 +202,6 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
             }
         } 
         else if (code == LV_EVENT_SHORT_CLICKED) { 
-            // --- DER FIX IST HIER ---
-            // Wenn es ein Ordner ist, leiten wir es an seine eigene Logik um
             if (widget->getType() == "folder") {
                 widget->onClick();
             } else if (onEditRequested) {
