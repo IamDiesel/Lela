@@ -21,13 +21,15 @@ public:
     // FIX: Diese muessen public sein, damit GuiManager und HaDialogAdd sie nutzen koennen!
     static void clearWidgets();
     static String generateEntityId(String type, String input);
+    
+    // --- FIX: Methode nach public verschoben, damit DialogFolder und DialogAdd sie aufrufen duerfen ---
+    static void helper_saveWidgets(); 
 
 private:
     static std::vector<HAWidget*> widgets;
     static std::vector<lv_obj_t*> tab_pages;
 
     static void helper_loadWidgets();
-    static void helper_saveWidgets();
 
     static void btn_back_event_cb(lv_event_t * e);
     static void btn_edit_event_cb(lv_event_t * e);

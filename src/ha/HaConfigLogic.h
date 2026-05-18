@@ -2,6 +2,13 @@
 #include <Arduino.h>
 #include <vector>
 
+// --- NEU: Die Einzelbedingung ---
+struct HACondition {
+    String entity;
+    String op;    // "==", "!=", ">", "<", ">=", "<="
+    String value;
+};
+
 struct HAWidgetDef {
     String entity_id = "";
     String type = "light";
@@ -42,11 +49,16 @@ struct HAWidgetDef {
     String tap_action_service = "";
     String tap_action_target = "";
 
-    // --- NEU: GEBACKENE OPTIONEN & LIMITS ---
+    // --- GEBACKENE OPTIONEN & LIMITS ---
     String select_options = "";
     float slider_min = 0.0f;
     float slider_max = 100.0f;
     float slider_step = 1.0f;
+
+    // --- NEU: Das Regelwerk und die Ordner-Kinder ---
+    String conditions_type = "AND"; // Entweder "AND" oder "OR"
+    std::vector<HACondition> conditions;
+    std::vector<HAWidgetDef> children; 
 };
 
 struct HADashboardDef {

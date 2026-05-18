@@ -53,6 +53,14 @@ lv_obj_t* HaDialogEdit::lbl_v_y_val = nullptr;
 lv_obj_t* HaDialogEdit::btn_color_on = nullptr;
 lv_obj_t* HaDialogEdit::btn_color_off = nullptr;
 
+lv_obj_t* HaDialogEdit::dd_cond_type = nullptr;
+lv_obj_t* HaDialogEdit::ta_cond1_entity = nullptr;
+lv_obj_t* HaDialogEdit::dd_cond1_op = nullptr;
+lv_obj_t* HaDialogEdit::ta_cond1_val = nullptr;
+lv_obj_t* HaDialogEdit::ta_cond2_entity = nullptr;
+lv_obj_t* HaDialogEdit::dd_cond2_op = nullptr;
+lv_obj_t* HaDialogEdit::ta_cond2_val = nullptr;
+
 String HaDialogEdit::selected_color_on = "";
 String HaDialogEdit::selected_color_off = "";
 String HaDialogEdit::last_search_term = "";
@@ -89,6 +97,9 @@ void HaDialogEdit::resetState() {
     lbl_c_w_val = nullptr; lbl_c_h_val = nullptr; lbl_c_x_val = nullptr; lbl_c_y_val = nullptr;
     lbl_v_w_val = nullptr; lbl_v_h_val = nullptr; lbl_v_gap_val = nullptr; lbl_v_y_val = nullptr;
     btn_color_on = nullptr; btn_color_off = nullptr;
+    
+    dd_cond_type = nullptr; ta_cond1_entity = nullptr; dd_cond1_op = nullptr; ta_cond1_val = nullptr;
+    ta_cond2_entity = nullptr; dd_cond2_op = nullptr; ta_cond2_val = nullptr;
 }
 
 void HaDialogEdit::updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix) {
@@ -198,7 +209,13 @@ void HaDialogEdit::btn_save_event_cb(lv_event_t * e) {
             if (sel_icon.startsWith("Standard") || sel_icon.startsWith("---") || sel_icon.startsWith("Keine Treffer")) {
                 current_widget->setMdiIcon("");
             } else {
-                current_widget->setMdiIcon(sel_icon);
+                // --- FIX: Hier schneiden wir den unsichtbaren UTF-8 Code ab ---
+                int space_idx = sel_icon.indexOf(' ');
+                if (space_idx != -1) {
+                    current_widget->setMdiIcon(sel_icon.substring(space_idx + 1));
+                } else {
+                    current_widget->setMdiIcon(sel_icon);
+                }
             }
         }
     }
@@ -237,6 +254,31 @@ void HaDialogEdit::btn_save_event_cb(lv_event_t * e) {
             lv_slider_get_value(slider_vac_y),
             "", ""
         );
+    }
+
+    if (dd_cond_type && lv_obj_is_valid(dd_cond_type) && ta_cond1_entity && lv_obj_is_valid(ta_cond1_entity)) {
+        String type = (lv_dropdown_get_selected(dd_cond_type) == 0) ? "AND" : "OR";
+        std::vector<HACondition> conds;
+        
+        String ent1 = String(lv_textarea_get_text(ta_cond1_entity)); ent1.trim();
+        if (ent1.length() > 0) {
+            HACondition c1; c1.entity = ent1;
+            char buf[10]; lv_dropdown_get_selected_str(dd_cond1_op, buf, sizeof(buf)); c1.op = String(buf);
+            c1.value = String(lv_textarea_get_text(ta_cond1_val)); c1.value.trim();
+            conds.push_back(c1);
+        }
+        
+        if (ta_cond2_entity && lv_obj_is_valid(ta_cond2_entity)) {
+            String ent2 = String(lv_textarea_get_text(ta_cond2_entity)); ent2.trim();
+            if (ent2.length() > 0) {
+                HACondition c2; c2.entity = ent2;
+                char buf[10]; lv_dropdown_get_selected_str(dd_cond2_op, buf, sizeof(buf)); c2.op = String(buf);
+                c2.value = String(lv_textarea_get_text(ta_cond2_val)); c2.value.trim();
+                conds.push_back(c2);
+            }
+        }
+        
+        current_widget->setConditions(type, conds);
     }
 
     if (overlay && lv_obj_is_valid(overlay)) {
@@ -507,6 +549,41 @@ void HaDialogEdit::buildVacuumTab(lv_obj_t* parent, HAWidget* w) {
     slider_vac_y = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -50, 100, w->getChartYOfs(), v_cb, lbl_v_y_val);
 }
 
+void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
+    UIHelper::createLabel(parent, "Sichtbarkeit:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 10);
+    dd_cond_type = UIHelper::createDropdown(parent, 250, 40, LV_ALIGN_TOP_LEFT, 160, 5, "AND (Alle erfuellt)\nOR (Eine erfuellt)", w->getConditionsType() == "OR" ? 1 : 0);
+
+    UIHelper::createLabel(parent, "Bedingung 1:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 60);
+    String c1_ent = "", c1_op = "==", c1_val = "";
+    if (w->getConditions().size() > 0) {
+        c1_ent = w->getConditions()[0].entity; c1_op = w->getConditions()[0].op; c1_val = w->getConditions()[0].value;
+    }
+    ta_cond1_entity = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 10, 90, c1_ent.c_str(), "Entitaet (z.B. switch.tv)");
+    bindKeyboardToTextarea(ta_cond1_entity);
+    
+    int op1_idx = 0;
+    if(c1_op=="!=") op1_idx=1; else if(c1_op==">") op1_idx=2; else if(c1_op=="<") op1_idx=3; else if(c1_op==">=") op1_idx=4; else if(c1_op=="<=") op1_idx=5;
+    dd_cond1_op = UIHelper::createDropdown(parent, 80, 40, LV_ALIGN_TOP_LEFT, 270, 90, "==\n!=\n>\n<\n>=\n<=", op1_idx);
+    
+    ta_cond1_val = UIHelper::createTextarea(parent, 150, 40, LV_ALIGN_TOP_LEFT, 360, 90, c1_val.c_str(), "Wert (z.B. on)");
+    bindKeyboardToTextarea(ta_cond1_val);
+
+    UIHelper::createLabel(parent, "Bedingung 2:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 150);
+    String c2_ent = "", c2_op = "==", c2_val = "";
+    if (w->getConditions().size() > 1) {
+        c2_ent = w->getConditions()[1].entity; c2_op = w->getConditions()[1].op; c2_val = w->getConditions()[1].value;
+    }
+    ta_cond2_entity = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 10, 180, c2_ent.c_str(), "Entitaet (Optional)");
+    bindKeyboardToTextarea(ta_cond2_entity);
+    
+    int op2_idx = 0;
+    if(c2_op=="!=") op2_idx=1; else if(c2_op==">") op2_idx=2; else if(c2_op=="<") op2_idx=3; else if(c2_op==">=") op2_idx=4; else if(c2_op=="<=") op2_idx=5;
+    dd_cond2_op = UIHelper::createDropdown(parent, 80, 40, LV_ALIGN_TOP_LEFT, 270, 180, "==\n!=\n>\n<\n>=\n<=", op2_idx);
+    
+    ta_cond2_val = UIHelper::createTextarea(parent, 150, 40, LV_ALIGN_TOP_LEFT, 360, 180, c2_val.c_str(), "Wert");
+    bindKeyboardToTextarea(ta_cond2_val);
+}
+
 void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     if (overlay != nullptr || HaColorPicker::isActive()) return; 
     current_widget = w;
@@ -556,6 +633,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     buildSizeTab(lv_tabview_add_tab(tv, "Groesse"), w);
     buildDisplayTab(lv_tabview_add_tab(tv, "Anzeige"), w);
     buildLayoutTab(lv_tabview_add_tab(tv, "Layout"), w);
+    buildConditionTab(lv_tabview_add_tab(tv, "Bedingung"), w); 
     
     if (w->getType() == "sensor") buildChartTab(lv_tabview_add_tab(tv, "Diagramm"), w);
     else if (w->getType() == "vacuum") buildVacuumTab(lv_tabview_add_tab(tv, "Buttons"), w);

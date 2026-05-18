@@ -1,7 +1,9 @@
 #pragma once
 #include <Arduino.h>
 #include <time.h> 
+#include <vector>
 #include "LVGL_Driver.h"
+#include "HaConfigLogic.h" // Wichtig fuer das HACondition Struct
 
 String formatEntityName(String entity_id, String name);
 String getSafeIcon(String mdi);
@@ -39,11 +41,14 @@ protected:
     String tap_service = "";
     String tap_target = "";
 
-    // --- NEU: Speicherplaetze fuer eingebackene Konfigurationen ---
     String baked_options = "";
     float baked_min = 0.0f;
     float baked_max = 100.0f;
     float baked_step = 1.0f;
+
+    // --- SCHRITT 3: Speicher fuer die Bedingungen ---
+    String conditions_type = "AND";
+    std::vector<HACondition> conditions;
 
     lv_obj_t* icon_label;
     lv_obj_t* name_label;
@@ -61,6 +66,11 @@ public:
     static void (*onMediaControlRequested)(HAWidget* w); 
     static void (*onVacuumControlRequested)(HAWidget* w); 
 
+    // --- SCHRITT 2: Globale Liste und Condition-Checking ---
+    static std::vector<HAWidget*> all_active_widgets;
+    static void checkAllConditions();
+    virtual void checkConditions() {} 
+
     HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off);
     virtual ~HAWidget();
 
@@ -77,13 +87,17 @@ public:
     String getTapService();
     String getTapTarget();
 
-    // --- NEU: Getter/Setter fuer Fabrik & Widgets ---
     void setBakedOptions(String opts) { baked_options = opts; }
     String getBakedOptions() { return baked_options; }
     void setBakedLimits(float mn, float mx, float stp) { baked_min = mn; baked_max = mx; baked_step = stp; }
     float getBakedMin() { return baked_min; }
     float getBakedMax() { return baked_max; }
     float getBakedStep() { return baked_step; }
+
+    // --- SCHRITT 3: Getter/Setter fuer Bedingungen ---
+    void setConditions(String type, std::vector<HACondition> conds) { conditions_type = type; conditions = conds; }
+    String getConditionsType() { return conditions_type; }
+    std::vector<HACondition> getConditions() { return conditions; }
     
     virtual void setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max);
 
@@ -116,6 +130,9 @@ public:
     virtual String getChartMax();
     virtual String getMediaContentType();
     virtual String getMediaContentId();
+
+    // --- SCHRITT 2: Container Zugriff fuer FolderWidget ---
+    lv_obj_t* getContainer() { return container; }
 
     virtual void updateState(String state);
     virtual void onClick() = 0; 

@@ -1,6 +1,7 @@
 #include "HAWidgetBase.h"
 #include "HaWebsocketLogic.h"
 #include "MdiMapper.h"
+#include <algorithm> 
 
 bool HAWidget::editModeActive = false;
 void (*HAWidget::onEditRequested)(HAWidget*) = nullptr;
@@ -10,6 +11,14 @@ void (*HAWidget::onMediaControlRequested)(HAWidget*) = nullptr;
 void (*HAWidget::onVacuumControlRequested)(HAWidget*) = nullptr; 
 
 static bool widget_is_dragging = false;
+
+std::vector<HAWidget*> HAWidget::all_active_widgets;
+
+void HAWidget::checkAllConditions() {
+    for (auto w : all_active_widgets) {
+        if (w) w->checkConditions();
+    }
+}
 
 String formatEntityName(String entity_id, String name) {
     if (name.length() > 0) return name; 
@@ -31,7 +40,6 @@ String getSafeIcon(String mdi) {
 }
 
 String getIconForEntity(String entity_id, String mdi_icon) {
-    // FIX: 0xEF für LVGL System-Icons, 0xF3 für deine Custom MDI lela_icons!
     if (mdi_icon.length() > 0 && mdi_icon.length() <= 4) {
         uint8_t firstByte = (uint8_t)mdi_icon[0];
         if (firstByte == 0xEF || firstByte == 0xF3) {
@@ -52,7 +60,6 @@ String getIconForEntity(String entity_id, String mdi_icon) {
         }
     }
     
-    // Robuster Fallback
     if (entity_id.indexOf("switch.") != -1 || entity_id.indexOf("input_boolean.") != -1 || entity_id.indexOf("button.") != -1 || entity_id.indexOf("input_button.") != -1) {
         String icon = getAutoIcon("mdi:power");
         if (icon != "") return icon;
@@ -114,9 +121,11 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
     lv_obj_set_style_text_color(name_label, lv_color_white(), 0);
     
     setSize(w, h); 
+    all_active_widgets.push_back(this);
 }
 
 HAWidget::~HAWidget() { 
+    all_active_widgets.erase(std::remove(all_active_widgets.begin(), all_active_widgets.end(), this), all_active_widgets.end());
     if (container && lv_obj_is_valid(container)) { lv_obj_remove_event_cb(container, widget_event_cb); lv_obj_del_async(container); }
 }
 
@@ -149,7 +158,6 @@ void HAWidget::setPosition(int x, int y, bool snap) { this->snap_to_grid = snap;
 void HAWidget::setSnapToGrid(bool snap) { this->snap_to_grid = snap; }
 void HAWidget::setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max) { show_chart = show; chart_w_pct = w_p; chart_h_pct = h_p; chart_x_ofs = x_ofs; chart_y_ofs = y_ofs; chart_min = c_min; chart_max = c_max; }
 
-// --- NEU: Tap-Action Setter/Getter ---
 void HAWidget::setTapAction(String domain, String service, String target) { tap_domain = domain; tap_service = service; tap_target = target; }
 String HAWidget::getTapDomain() { return tap_domain; }
 String HAWidget::getTapService() { return tap_service; }
@@ -189,7 +197,15 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
                 lv_obj_set_pos(obj, x, y);
             }
         } 
-        else if (code == LV_EVENT_SHORT_CLICKED) { if (onEditRequested) onEditRequested(widget); } 
+        else if (code == LV_EVENT_SHORT_CLICKED) { 
+            // --- DER FIX IST HIER ---
+            // Wenn es ein Ordner ist, leiten wir es an seine eigene Logik um
+            if (widget->getType() == "folder") {
+                widget->onClick();
+            } else if (onEditRequested) {
+                onEditRequested(widget); 
+            }
+        } 
         else if (code == LV_EVENT_RELEASED) {
             if (widget_is_dragging) {
                 widget_is_dragging = false;

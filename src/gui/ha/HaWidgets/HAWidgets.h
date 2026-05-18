@@ -8,6 +8,7 @@
 #include "HAMediaWidget.h"
 #include "HASelectWidget.h"
 #include "HANumberWidget.h"
-#include "HACoverWidget.h" 
+#include "HACoverWidget.h"
 #include "HAClimateWidget.h"
-#include "HATextWidget.h" // NEU
+#include "HATextWidget.h"
+#include "HAFolderWidget.h" // NEU

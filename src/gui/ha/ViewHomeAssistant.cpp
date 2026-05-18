@@ -15,6 +15,7 @@
 #include "HaColorPicker.h" 
 #include "HaDialogTab.h"
 #include "HaEditToolbar.h"
+#include "HaDialogFolder.h" 
 
 #include <algorithm> 
 
@@ -31,10 +32,6 @@ volatile bool ViewHomeAssistant::pendingHaReload = false;
 uint16_t ViewHomeAssistant::currentActiveTab = 0;
 
 static lv_obj_t* btn_back = nullptr;
-
-// =========================================================
-// 1. HELPER-FUNKTIONEN ZUM LADEN & SPEICHERN
-// =========================================================
 
 void ViewHomeAssistant::helper_loadWidgets() {
     clearWidgets();
@@ -93,11 +90,6 @@ void ViewHomeAssistant::helper_saveWidgets() {
     pendingHaReload = true;
 }
 
-// =========================================================
-// 2. EVENTS UND HAUPT-LOGIK
-// =========================================================
-
-// FIX: Die vermisste Funktion ist wieder da!
 String ViewHomeAssistant::generateEntityId(String type, String input) {
     input.trim();
     if (input.indexOf('.') != -1) {
@@ -166,6 +158,7 @@ lv_obj_t* ViewHomeAssistant::build() {
     HaDialogMedia::resetState(); 
     HaDialogTab::resetState();
     HaEditToolbar::resetState();
+    HaDialogFolder::resetState(); 
     
     if (HaColorPicker::isActive()) HaColorPicker::hide();
     if (HaDialogLight::isActive()) HaDialogLight::hide();
@@ -241,6 +234,12 @@ void ViewHomeAssistant::update() {
     HaDialogImport::checkPendingEvents();
     HaDialogMedia::update();
     
+    static uint32_t lastConditionCheck = 0;
+    if (millis() - lastConditionCheck > 500) {
+        lastConditionCheck = millis();
+        HAWidget::checkAllConditions();
+    }
+    
     static uint32_t reloadWait = 0;
     
     if (pendingHaReload) { 
@@ -278,7 +277,8 @@ void ViewHomeAssistant::update() {
         
         for (HAWidget* w : widgets) {
             String state = HaWebsocketLogic_GetState(w->getEntityId());
-            if (state.length() > 0) {
+            // --- FIX: Erlaube auch dem Ordner, Updates anzunehmen, um sie weiterzureichen! ---
+            if (state.length() > 0 || w->getType() == "folder") {
                 w->updateState(state);
             }
         }

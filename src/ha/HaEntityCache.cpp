@@ -88,20 +88,39 @@ void HaEntityCache::ClearAll() {
     }
 }
 
+// --- NEU: Der rekursive Helfer fuer die VIP-Liste ---
+static void recursivelyAddTrackedEntities(const HAWidgetDef& w, std::vector<String>& tracked) {
+    // 1. Die Haupt-Entitaet des Widgets
+    if (w.entity_id.length() > 0 && std::find(tracked.begin(), tracked.end(), w.entity_id) == tracked.end()) {
+        tracked.push_back(w.entity_id);
+    }
+    // 2. Alle Entitaeten, die in den Bedingungen (Conditions) genutzt werden!
+    for (const auto& c : w.conditions) {
+        if (c.entity.length() > 0 && std::find(tracked.begin(), tracked.end(), c.entity) == tracked.end()) {
+            tracked.push_back(c.entity);
+        }
+    }
+    // 3. Wenn es ein Ordner ist: Rekursiv in die Kinder abtauchen!
+    for (const auto& child : w.children) {
+        recursivelyAddTrackedEntities(child, tracked);
+    }
+}
+
 void HaEntityCache::UpdateTrackedEntities() {
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
         trackedEntities.clear();
+        
+        // Geht ueber alle Dashboards und nutzt unseren neuen, rekursiven Helfer
         for (const auto& tab : HaConfigLogic::dashboards) {
             for (const auto& w : tab.widgets) {
-                if (std::find(trackedEntities.begin(), trackedEntities.end(), w.entity_id) == trackedEntities.end()) {
-                    trackedEntities.push_back(w.entity_id);
-                }
+                recursivelyAddTrackedEntities(w, trackedEntities);
             }
         }
         xSemaphoreGive(mutex);
     }
     triggerRestStateFetch = true;
 }
+// -----------------------------------------------------
 
 void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
     String entity_id = doc["entity_id"].as<String>();
@@ -113,7 +132,6 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
             f_name = attr["friendly_name"].as<String>();
         }
         
-        // --- NEU: text und input_text zum globalen Adressbuch hinzugefuegt ---
         if (entity_id.startsWith("light.") || entity_id.startsWith("switch.") || 
             entity_id.startsWith("select.") || entity_id.startsWith("input_select.") || 
             entity_id.startsWith("number.") || entity_id.startsWith("input_number.") ||
@@ -136,7 +154,6 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     }
                 }
             }
-            // Wir koennen GetMax() nutzen, um die maximal erlaubte Textlaenge auszulesen!
             else if (entity_id.startsWith("number.") || entity_id.startsWith("input_number.") || 
                      entity_id.startsWith("text.") || entity_id.startsWith("input_text.")) {
                 if (!attr["min"].isNull()) globalMinMap[entity_id] = attr["min"].as<float>();

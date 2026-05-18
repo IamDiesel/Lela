@@ -37,7 +37,6 @@ private:
     static lv_obj_t* slider_text_margin;
     static lv_obj_t* slider_state_margin;
 
-    // --- DIE FEHLENDEN LABELS ---
     static lv_obj_t* lbl_i_m_val;
     static lv_obj_t* lbl_t_m_val;
     static lv_obj_t* lbl_s_m_val;
@@ -53,11 +52,19 @@ private:
     static lv_obj_t* btn_color_on;
     static lv_obj_t* btn_color_off;
     
-    // --- DER FEHLENDE FARBSCHALTER ---
     static bool picking_color_on;
     static String selected_color_on;
     static String selected_color_off;
     static String last_search_term;
+
+    // --- NEU: UI-Elemente fuer den Bedingungs-Tab ---
+    static lv_obj_t* dd_cond_type;
+    static lv_obj_t* ta_cond1_entity;
+    static lv_obj_t* dd_cond1_op;
+    static lv_obj_t* ta_cond1_val;
+    static lv_obj_t* ta_cond2_entity;
+    static lv_obj_t* dd_cond2_op;
+    static lv_obj_t* ta_cond2_val;
 
     // Backups für Abbruch
     static int orig_w, orig_h, orig_i_align, orig_t_align, orig_s_align;
@@ -70,6 +77,7 @@ private:
     static void buildLayoutTab(lv_obj_t* parent, HAWidget* w);
     static void buildChartTab(lv_obj_t* parent, HAWidget* w);
     static void buildVacuumTab(lv_obj_t* parent, HAWidget* w);
+    static void buildConditionTab(lv_obj_t* parent, HAWidget* w); // NEU
 
     static void updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix);
     static void bindKeyboardToTextarea(lv_obj_t* ta);

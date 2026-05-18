@@ -49,7 +49,6 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     }
-    // --- NEU: Klima / Thermostat ---
     else if (wDef.type == "climate") {
         new_widget = new HAClimateWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
@@ -57,13 +56,30 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     }
-    // --- NEU: Text / input_text Widget ---
     else if (wDef.type == "text") {
         new_widget = new HATextWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
+    }
+    else if (wDef.type == "folder") {
+        // --- NEU in diesem Code-Block (aber aus Schritt 2 uebernommen) ---
+        HAFolderWidget* folder = new HAFolderWidget(
+            parent, tab_idx, wDef.type, wDef.entity_id, 
+            wDef.x, wDef.y, wDef.w, wDef.h, 
+            wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
+        );
+        
+        for (const auto& childDef : wDef.children) {
+            HAWidget* child = HaWidgetFactory::createWidget(folder->getContainer(), tab_idx, childDef);
+            if (child) {
+                lv_obj_set_pos(child->getContainer(), 0, 0);
+                lv_obj_set_size(child->getContainer(), LV_PCT(100), LV_PCT(100));
+                folder->addChild(child, childDef);
+            }
+        }
+        new_widget = folder;
     }
     else if (wDef.type == "select") {
         new_widget = new HASelectWidget(
@@ -101,9 +117,11 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             wDef.tap_action_domain, wDef.tap_action_service, wDef.tap_action_target
         );
 
-        // --- NEU: Reiche gebackene Werte an das Widget-Objekt durch ---
         new_widget->setBakedOptions(wDef.select_options);
         new_widget->setBakedLimits(wDef.slider_min, wDef.slider_max, wDef.slider_step);
+
+        // --- NEU: Die Bedingungen beim Erzeugen an das Widget uebergeben ---
+        new_widget->setConditions(wDef.conditions_type, wDef.conditions);
     }
 
     return new_widget;
@@ -149,11 +167,18 @@ HAWidgetDef HaWidgetFactory::createDefFromWidget(HAWidget* w) {
     def.tap_action_service = w->getTapService();
     def.tap_action_target = w->getTapTarget();
 
-    // --- NEU: Sichere gebackene Werte zurueck in die Definition ---
     def.select_options = w->getBakedOptions();
     def.slider_min = w->getBakedMin();
     def.slider_max = w->getBakedMax();
     def.slider_step = w->getBakedStep();
+
+    // --- NEU: Die Bedingungen beim Speichern in die Def zurueckschreiben ---
+    def.conditions_type = w->getConditionsType();
+    def.conditions = w->getConditions();
+
+    if (def.type == "folder") {
+        def.children = ((HAFolderWidget*)w)->getChildrenDefs();
+    }
 
     return def;
 }

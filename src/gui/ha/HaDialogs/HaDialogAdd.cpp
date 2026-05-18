@@ -5,6 +5,9 @@
 #include "SharedData.h"
 #include "HAWidgets.h"
 #include "HaEntityCache.h" 
+#include "HAFolderWidget.h" 
+#include "HaWidgetFactory.h" 
+#include "HaDialogFolder.h" // NEU: Damit wir den Dialog wieder oeffnen koennen
 #include <lvgl.h>
 
 static lv_obj_t* add_widget_overlay = nullptr;
@@ -13,12 +16,15 @@ static lv_obj_t* ta_widget_entity = nullptr;
 static lv_obj_t* lbl_preview = nullptr; 
 static lv_obj_t* roller_search = nullptr; 
 
+HAFolderWidget* HaDialogAdd::target_folder = nullptr; 
+
 void HaDialogAdd::resetState() {
     add_widget_overlay = nullptr;
     dd_widget_type = nullptr;
     ta_widget_entity = nullptr;
     lbl_preview = nullptr;
     roller_search = nullptr;
+    target_folder = nullptr;
 }
 
 static void updateAddWidgetPreview() {
@@ -31,12 +37,18 @@ static void updateAddWidgetPreview() {
     String input_txt = String(lv_textarea_get_text(ta_widget_entity));
     input_txt.trim();
     
-    if (input_txt.length() == 0) {
+    if (input_txt.length() == 0 && e_type != "folder") {
         lv_label_set_text(lbl_preview, "Vorschau: ...");
         lv_obj_set_style_text_color(lbl_preview, lv_color_white(), 0);
         return;
     }
     
+    if (e_type == "folder") {
+        lv_label_set_text(lbl_preview, "Status: Leerer Ordner wird angelegt");
+        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0x3498DB), 0);
+        return;
+    }
+
     String e_id = ViewHomeAssistant::generateEntityId(e_type, input_txt);
     bool exists = HaEntityCache::EntityExists(e_id); 
     String ha_name = HaEntityCache::GetEntityName(e_id);
@@ -53,8 +65,10 @@ static void updateAddWidgetPreview() {
     lv_label_set_text(lbl_preview, previewText.c_str());
 }
 
-void HaDialogAdd::showAddWidgetDialog() {
+void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
     if (add_widget_overlay != nullptr) return; 
+    
+    target_folder = folder; 
     
     add_widget_overlay = lv_obj_create(ViewHomeAssistant::screen);
     lv_obj_set_size(add_widget_overlay, 1280, 720);
@@ -71,7 +85,11 @@ void HaDialogAdd::showAddWidgetDialog() {
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
     lv_obj_t* lbl = lv_label_create(panel);
-    lv_label_set_text(lbl, "Neues Widget Manuell Erstellen");
+    if (target_folder) {
+        lv_label_set_text(lbl, "Widget in Ordner einfuegen");
+    } else {
+        lv_label_set_text(lbl, "Neues Widget Manuell Erstellen");
+    }
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 10);
 
@@ -84,7 +102,8 @@ void HaDialogAdd::showAddWidgetDialog() {
         "text\ninput_text\n"
         "cover\nclimate\nfan\n"
         "input_button\nbutton\nscene\nscript\nautomation\n"
-        "sensor\nbinary_sensor\nweather\nperson\ndevice_tracker"
+        "sensor\nbinary_sensor\nweather\nperson\ndevice_tracker\n"
+        "folder" 
     );
     lv_obj_set_width(dd_widget_type, 400);
     lv_obj_set_style_text_font(dd_widget_type, &lv_font_montserrat_24, 0);
@@ -195,8 +214,9 @@ void HaDialogAdd::showAddWidgetDialog() {
             else if (e_type == "select" || e_type == "input_select") w_type = "select";
             else if (e_type == "number" || e_type == "input_number") w_type = "number";
             else if (e_type == "text" || e_type == "input_text") w_type = "text";
+            else if (e_type == "folder") w_type = "folder"; 
             
-            if (input_txt.length() > 0) {
+            if (input_txt.length() > 0 || w_type == "folder") {
                 uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
                 if(act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
                 ViewHomeAssistant::currentActiveTab = act_tab;
@@ -206,11 +226,12 @@ void HaDialogAdd::showAddWidgetDialog() {
                 def.type = w_type;
                 def.x = 20; def.y = 20; def.w = 160; def.h = 105;
                 def.name = friendly_name; 
+                if (w_type == "folder" && def.name == "") def.name = "Neuer Ordner";
                 def.mdi_icon = cached_icon; 
                 def.color_on = "";
                 def.color_off = "";
 
-                if (w_type == "cover" || w_type == "vacuum" || w_type == "climate" || w_type == "text") {
+                if (w_type == "cover" || w_type == "vacuum" || w_type == "climate" || w_type == "text" || w_type == "folder") {
                     def.w = 340; 
                 }
                 
@@ -222,7 +243,6 @@ void HaDialogAdd::showAddWidgetDialog() {
                     def.chart_y_ofs = 10;   
                 }
 
-                // --- HIER IST DER FIX: Zwei absolut unabhängige IF-Blöcke! ---
                 if (w_type == "select" || w_type == "climate") {
                     std::vector<String> opts = HaEntityCache::GetGlobalOptions(e_id);
                     String opt_str = "";
@@ -238,24 +258,53 @@ void HaDialogAdd::showAddWidgetDialog() {
                     def.slider_max = HaEntityCache::GetGlobalMax(e_id);
                     def.slider_step = HaEntityCache::GetGlobalStep(e_id);
                 }
-                // -------------------------------------------------------------
                 
-                HaConfigLogic::dashboards[act_tab].widgets.push_back(def);
-                HaConfigLogic::Save();
-                HaWebsocketLogic_UpdateTrackedEntities();
-                ViewHomeAssistant::pendingHaReload = true; 
+                // --- FIX: Ordner-Logik ueberarbeitet (Kein Reload + RAM Speichern) ---
+                if (target_folder) {
+                    HAWidget* child = HaWidgetFactory::createWidget(target_folder->getContainer(), act_tab, def);
+                    if (child) {
+                        lv_obj_set_pos(child->getContainer(), 0, 0);
+                        lv_obj_set_size(child->getContainer(), LV_PCT(100), LV_PCT(100));
+                        target_folder->addChild(child, def);
+                    }
+                    
+                    // Speichert die Ordner-Struktur wasserdicht
+                    ViewHomeAssistant::helper_saveWidgets();
+                    
+                    // Blockiert den Reload, damit Edit-Mode aktiv bleibt
+                    ViewHomeAssistant::pendingHaReload = false;
+                    
+                    lv_obj_del_async(add_widget_overlay);
+                    add_widget_overlay = nullptr;
+                    lbl_preview = nullptr;
+                    roller_search = nullptr;
+                    
+                    // Oeffnet den Ordner direkt wieder
+                    HAFolderWidget* tf = target_folder;
+                    target_folder = nullptr;
+                    HaDialogFolder::show(tf);
+                    
+                    return; 
+                } else {
+                    HaConfigLogic::dashboards[act_tab].widgets.push_back(def);
+                    HaConfigLogic::Save();
+                    HaWebsocketLogic_UpdateTrackedEntities();
+                    ViewHomeAssistant::pendingHaReload = true; 
+                }
             } else {
                 lv_obj_del_async(add_widget_overlay);
             }
             add_widget_overlay = nullptr;
             lbl_preview = nullptr;
             roller_search = nullptr;
+            target_folder = nullptr;
         } else if(code == LV_EVENT_CANCEL) {
             playToneI2S(600, 100, true);
             lv_obj_del_async(add_widget_overlay);
             add_widget_overlay = nullptr;
             lbl_preview = nullptr;
             roller_search = nullptr;
+            target_folder = nullptr;
         }
     }, LV_EVENT_ALL, NULL);
     
@@ -271,5 +320,6 @@ void HaDialogAdd::showAddWidgetDialog() {
         add_widget_overlay = nullptr;
         lbl_preview = nullptr;
         roller_search = nullptr;
+        target_folder = nullptr;
     }, LV_EVENT_CLICKED, NULL);
 }
