@@ -64,7 +64,11 @@ private:
     static lv_obj_t* dd_cond2_op;
     static lv_obj_t* ta_cond2_val;
 
-    // --- NEU: Tracking-Variablen fuer die Bedingungs-Suche ---
+    // --- NEU: Textfelder fuer den Aktion-Tab ---
+    static lv_obj_t* ta_action_domain;
+    static lv_obj_t* ta_action_service;
+    static lv_obj_t* ta_action_target;
+
     static lv_obj_t* roller_cond_search; 
     static lv_obj_t* current_cond_ta;    
 
@@ -78,6 +82,7 @@ private:
     static void buildChartTab(lv_obj_t* parent, HAWidget* w);
     static void buildVacuumTab(lv_obj_t* parent, HAWidget* w);
     static void buildConditionTab(lv_obj_t* parent, HAWidget* w); 
+    static void buildActionTab(lv_obj_t* parent, HAWidget* w); // NEU
 
     static void updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix);
     static void bindKeyboardToTextarea(lv_obj_t* ta);

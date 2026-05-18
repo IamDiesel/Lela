@@ -6,7 +6,7 @@
 #include "MdiMapper.h"
 #include "HaColorPicker.h"
 #include "UIHelper.h"
-#include "HaEntityCache.h" // NEU: Wichtig fuer die Live-Suche in den Bedingungen!
+#include "HaEntityCache.h" 
 
 lv_obj_t* HaDialogEdit::overlay = nullptr; 
 lv_obj_t* HaDialogEdit::edit_panel = nullptr;          
@@ -62,7 +62,11 @@ lv_obj_t* HaDialogEdit::ta_cond2_entity = nullptr;
 lv_obj_t* HaDialogEdit::dd_cond2_op = nullptr;
 lv_obj_t* HaDialogEdit::ta_cond2_val = nullptr;
 
-// --- NEU: Initialisierung der Statics ---
+// --- NEU: Pointers fuer die Aktion ---
+lv_obj_t* HaDialogEdit::ta_action_domain = nullptr;
+lv_obj_t* HaDialogEdit::ta_action_service = nullptr;
+lv_obj_t* HaDialogEdit::ta_action_target = nullptr;
+
 lv_obj_t* HaDialogEdit::roller_cond_search = nullptr;
 lv_obj_t* HaDialogEdit::current_cond_ta = nullptr;
 
@@ -105,6 +109,8 @@ void HaDialogEdit::resetState() {
     
     dd_cond_type = nullptr; ta_cond1_entity = nullptr; dd_cond1_op = nullptr; ta_cond1_val = nullptr;
     ta_cond2_entity = nullptr; dd_cond2_op = nullptr; ta_cond2_val = nullptr;
+    
+    ta_action_domain = nullptr; ta_action_service = nullptr; ta_action_target = nullptr;
     
     roller_cond_search = nullptr;
     current_cond_ta = nullptr;
@@ -230,6 +236,18 @@ void HaDialogEdit::btn_save_event_cb(lv_event_t * e) {
     current_widget->setColors(selected_color_on, selected_color_off);
     if (cb_snap && lv_obj_is_valid(cb_snap)) {
         current_widget->setSnapToGrid(lv_obj_has_state(cb_snap, LV_STATE_CHECKED));
+    }
+    
+    // --- NEU: Aktion Speichern ---
+    if (ta_action_domain && lv_obj_is_valid(ta_action_domain) &&
+        ta_action_service && lv_obj_is_valid(ta_action_service) &&
+        ta_action_target && lv_obj_is_valid(ta_action_target)) {
+        
+        current_widget->setTapAction(
+            String(lv_textarea_get_text(ta_action_domain)),
+            String(lv_textarea_get_text(ta_action_service)),
+            String(lv_textarea_get_text(ta_action_target))
+        );
     }
     
     if (current_widget->getType() == "sensor" && cb_chart && lv_obj_is_valid(cb_chart) && 
@@ -590,7 +608,6 @@ void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
     ta_cond2_val = UIHelper::createTextarea(parent, 150, 40, LV_ALIGN_TOP_LEFT, 360, 180, c2_val.c_str(), "Wert");
     bindKeyboardToTextarea(ta_cond2_val);
 
-    // --- NEU: Live-Suche Event fuer beide Textfelder ---
     auto cond_search_cb = [](lv_event_t* e) {
         lv_event_code_t code = lv_event_get_code(e);
         lv_obj_t* ta = lv_event_get_target(e);
@@ -608,10 +625,7 @@ void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
                         if (k < hits.size() - 1) opts += "\n";
                     }
                     lv_roller_set_options(roller_cond_search, opts.c_str(), LV_ROLLER_MODE_NORMAL);
-                    
-                    // Positioniert den Roller dynamisch unter dem aktiven Textfeld
                     lv_obj_align_to(roller_cond_search, ta, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
-                    
                     lv_obj_clear_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
                     lv_obj_move_foreground(roller_cond_search); 
                 } else {
@@ -625,6 +639,54 @@ void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
     
     lv_obj_add_event_cb(ta_cond1_entity, cond_search_cb, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(ta_cond2_entity, cond_search_cb, LV_EVENT_ALL, NULL);
+}
+
+// --- NEU: Der UI Aufbau fuer den Action-Tab ---
+void HaDialogEdit::buildActionTab(lv_obj_t* parent, HAWidget* w) {
+    UIHelper::createLabel(parent, "Benutzerdefinierte Klick-Aktion (Optional):", nullptr, LV_ALIGN_TOP_LEFT, 10, 10, 0x00A0FF);
+    
+    UIHelper::createLabel(parent, "Domain:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 60);
+    ta_action_domain = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 100, 50, w->getTapDomain().c_str(), "z.B. light");
+    bindKeyboardToTextarea(ta_action_domain);
+
+    UIHelper::createLabel(parent, "Service:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 120);
+    ta_action_service = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 100, 110, w->getTapService().c_str(), "z.B. toggle");
+    bindKeyboardToTextarea(ta_action_service);
+
+    UIHelper::createLabel(parent, "Ziel:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 180);
+    ta_action_target = UIHelper::createTextarea(parent, 380, 40, LV_ALIGN_TOP_LEFT, 100, 170, w->getTapTarget().c_str(), "Entitaet (z.B. light.flur)");
+    bindKeyboardToTextarea(ta_action_target);
+
+    // Wir recyclen genau dieselbe Such-Logik fuer das Ziel-Feld!
+    auto entity_search_cb = [](lv_event_t* e) {
+        lv_event_code_t code = lv_event_get_code(e);
+        lv_obj_t* ta = lv_event_get_target(e);
+        
+        if (code == LV_EVENT_FOCUSED) {
+            current_cond_ta = ta; // Nutzt den gleichen Pointer
+        } else if (code == LV_EVENT_VALUE_CHANGED) {
+            String txt = lv_textarea_get_text(ta);
+            if (txt.length() >= 2 && roller_cond_search) {
+                std::vector<String> hits = HaEntityCache::SearchEntities(txt, 5);
+                if (hits.size() > 0) {
+                    String opts = "";
+                    for (size_t k = 0; k < hits.size(); k++) {
+                        opts += hits[k];
+                        if (k < hits.size() - 1) opts += "\n";
+                    }
+                    lv_roller_set_options(roller_cond_search, opts.c_str(), LV_ROLLER_MODE_NORMAL);
+                    lv_obj_align_to(roller_cond_search, ta, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
+                    lv_obj_clear_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_move_foreground(roller_cond_search); 
+                } else {
+                    lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
+                }
+            } else if (roller_cond_search) {
+                lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    };
+    lv_obj_add_event_cb(ta_action_target, entity_search_cb, LV_EVENT_ALL, NULL);
 }
 
 void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
@@ -658,9 +720,8 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     lv_obj_align(tv, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_text_font(lv_tabview_get_tab_btns(tv), &lv_font_montserrat_24, 0);
 
-    // --- NEU: Roller fuer die Live-Suche initialisieren ---
     roller_cond_search = lv_roller_create(edit_panel);
-    lv_obj_set_size(roller_cond_search, 250, 110);
+    lv_obj_set_size(roller_cond_search, 300, 110);
     lv_obj_set_style_text_font(roller_cond_search, &lv_font_montserrat_16, 0);
     lv_roller_set_visible_row_count(roller_cond_search, 3);
     lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
@@ -669,8 +730,6 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
         if (current_cond_ta && lv_obj_is_valid(current_cond_ta)) {
             char buf[128];
             lv_roller_get_selected_str(roller_cond_search, buf, sizeof(buf));
-            
-            // Fuegt exakt die Entitaet (inkl. Domain) in das Textfeld ein
             lv_textarea_set_text(current_cond_ta, buf);
             lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
         }
@@ -688,7 +747,6 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
                 lv_obj_clear_state(ta, LV_STATE_FOCUSED); 
                 lv_event_send(ta, LV_EVENT_DEFOCUSED, NULL); 
             }
-            // Wenn die Tastatur geschlossen wird, verschwindet auch der Such-Roller
             if (roller_cond_search) lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
         }
     }, LV_EVENT_ALL, NULL);
@@ -696,6 +754,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     buildSizeTab(lv_tabview_add_tab(tv, "Groesse"), w);
     buildDisplayTab(lv_tabview_add_tab(tv, "Anzeige"), w);
     buildLayoutTab(lv_tabview_add_tab(tv, "Layout"), w);
+    buildActionTab(lv_tabview_add_tab(tv, "Aktion"), w); // NEU
     buildConditionTab(lv_tabview_add_tab(tv, "Bedingung"), w); 
     
     if (w->getType() == "sensor") buildChartTab(lv_tabview_add_tab(tv, "Diagramm"), w);
