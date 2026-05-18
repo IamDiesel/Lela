@@ -6,6 +6,7 @@
 #include "MdiMapper.h"
 #include "HaColorPicker.h"
 #include "UIHelper.h"
+#include "HaEntityCache.h" // NEU: Wichtig fuer die Live-Suche in den Bedingungen!
 
 lv_obj_t* HaDialogEdit::overlay = nullptr; 
 lv_obj_t* HaDialogEdit::edit_panel = nullptr;          
@@ -61,6 +62,10 @@ lv_obj_t* HaDialogEdit::ta_cond2_entity = nullptr;
 lv_obj_t* HaDialogEdit::dd_cond2_op = nullptr;
 lv_obj_t* HaDialogEdit::ta_cond2_val = nullptr;
 
+// --- NEU: Initialisierung der Statics ---
+lv_obj_t* HaDialogEdit::roller_cond_search = nullptr;
+lv_obj_t* HaDialogEdit::current_cond_ta = nullptr;
+
 String HaDialogEdit::selected_color_on = "";
 String HaDialogEdit::selected_color_off = "";
 String HaDialogEdit::last_search_term = "";
@@ -100,6 +105,9 @@ void HaDialogEdit::resetState() {
     
     dd_cond_type = nullptr; ta_cond1_entity = nullptr; dd_cond1_op = nullptr; ta_cond1_val = nullptr;
     ta_cond2_entity = nullptr; dd_cond2_op = nullptr; ta_cond2_val = nullptr;
+    
+    roller_cond_search = nullptr;
+    current_cond_ta = nullptr;
 }
 
 void HaDialogEdit::updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix) {
@@ -209,7 +217,6 @@ void HaDialogEdit::btn_save_event_cb(lv_event_t * e) {
             if (sel_icon.startsWith("Standard") || sel_icon.startsWith("---") || sel_icon.startsWith("Keine Treffer")) {
                 current_widget->setMdiIcon("");
             } else {
-                // --- FIX: Hier schneiden wir den unsichtbaren UTF-8 Code ab ---
                 int space_idx = sel_icon.indexOf(' ');
                 if (space_idx != -1) {
                     current_widget->setMdiIcon(sel_icon.substring(space_idx + 1));
@@ -582,6 +589,42 @@ void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
     
     ta_cond2_val = UIHelper::createTextarea(parent, 150, 40, LV_ALIGN_TOP_LEFT, 360, 180, c2_val.c_str(), "Wert");
     bindKeyboardToTextarea(ta_cond2_val);
+
+    // --- NEU: Live-Suche Event fuer beide Textfelder ---
+    auto cond_search_cb = [](lv_event_t* e) {
+        lv_event_code_t code = lv_event_get_code(e);
+        lv_obj_t* ta = lv_event_get_target(e);
+        
+        if (code == LV_EVENT_FOCUSED) {
+            current_cond_ta = ta;
+        } else if (code == LV_EVENT_VALUE_CHANGED) {
+            String txt = lv_textarea_get_text(ta);
+            if (txt.length() >= 2 && roller_cond_search) {
+                std::vector<String> hits = HaEntityCache::SearchEntities(txt, 5);
+                if (hits.size() > 0) {
+                    String opts = "";
+                    for (size_t k = 0; k < hits.size(); k++) {
+                        opts += hits[k];
+                        if (k < hits.size() - 1) opts += "\n";
+                    }
+                    lv_roller_set_options(roller_cond_search, opts.c_str(), LV_ROLLER_MODE_NORMAL);
+                    
+                    // Positioniert den Roller dynamisch unter dem aktiven Textfeld
+                    lv_obj_align_to(roller_cond_search, ta, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
+                    
+                    lv_obj_clear_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_move_foreground(roller_cond_search); 
+                } else {
+                    lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
+                }
+            } else if (roller_cond_search) {
+                lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    };
+    
+    lv_obj_add_event_cb(ta_cond1_entity, cond_search_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(ta_cond2_entity, cond_search_cb, LV_EVENT_ALL, NULL);
 }
 
 void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
@@ -615,6 +658,24 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     lv_obj_align(tv, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_text_font(lv_tabview_get_tab_btns(tv), &lv_font_montserrat_24, 0);
 
+    // --- NEU: Roller fuer die Live-Suche initialisieren ---
+    roller_cond_search = lv_roller_create(edit_panel);
+    lv_obj_set_size(roller_cond_search, 250, 110);
+    lv_obj_set_style_text_font(roller_cond_search, &lv_font_montserrat_16, 0);
+    lv_roller_set_visible_row_count(roller_cond_search, 3);
+    lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_add_event_cb(roller_cond_search, [](lv_event_t* e) {
+        if (current_cond_ta && lv_obj_is_valid(current_cond_ta)) {
+            char buf[128];
+            lv_roller_get_selected_str(roller_cond_search, buf, sizeof(buf));
+            
+            // Fuegt exakt die Entitaet (inkl. Domain) in das Textfeld ein
+            lv_textarea_set_text(current_cond_ta, buf);
+            lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
+        }
+    }, LV_EVENT_VALUE_CHANGED, NULL);
+
     kb = lv_keyboard_create(overlay);
     lv_obj_set_size(kb, 1280, 350); 
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -627,6 +688,8 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
                 lv_obj_clear_state(ta, LV_STATE_FOCUSED); 
                 lv_event_send(ta, LV_EVENT_DEFOCUSED, NULL); 
             }
+            // Wenn die Tastatur geschlossen wird, verschwindet auch der Such-Roller
+            if (roller_cond_search) lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
         }
     }, LV_EVENT_ALL, NULL);
 

@@ -10,7 +10,6 @@ private:
     static HAWidget* current_widget;
     static lv_obj_t* kb;
 
-    // Statische Felder (werden beim Speichern ausgelesen)
     static lv_obj_t* ta_name;
     static lv_obj_t* ta_icon_search; 
     static lv_obj_t* dd_icon_cat;
@@ -57,7 +56,6 @@ private:
     static String selected_color_off;
     static String last_search_term;
 
-    // --- NEU: UI-Elemente fuer den Bedingungs-Tab ---
     static lv_obj_t* dd_cond_type;
     static lv_obj_t* ta_cond1_entity;
     static lv_obj_t* dd_cond1_op;
@@ -66,23 +64,24 @@ private:
     static lv_obj_t* dd_cond2_op;
     static lv_obj_t* ta_cond2_val;
 
-    // Backups für Abbruch
+    // --- NEU: Tracking-Variablen fuer die Bedingungs-Suche ---
+    static lv_obj_t* roller_cond_search; 
+    static lv_obj_t* current_cond_ta;    
+
     static int orig_w, orig_h, orig_i_align, orig_t_align, orig_s_align;
     static int orig_i_margin, orig_t_margin, orig_s_margin;
     static int orig_c_w, orig_c_h, orig_c_x, orig_c_y;
 
-    // Hilfsfunktionen für UI Aufbau
     static void buildSizeTab(lv_obj_t* parent, HAWidget* w);
     static void buildDisplayTab(lv_obj_t* parent, HAWidget* w);
     static void buildLayoutTab(lv_obj_t* parent, HAWidget* w);
     static void buildChartTab(lv_obj_t* parent, HAWidget* w);
     static void buildVacuumTab(lv_obj_t* parent, HAWidget* w);
-    static void buildConditionTab(lv_obj_t* parent, HAWidget* w); // NEU
+    static void buildConditionTab(lv_obj_t* parent, HAWidget* w); 
 
     static void updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix);
     static void bindKeyboardToTextarea(lv_obj_t* ta);
 
-    // Callbacks
     static void icon_search_event_cb(lv_event_t * e);
     static void dd_icon_cat_event_cb(lv_event_t * e);
     static void btn_save_event_cb(lv_event_t * e);

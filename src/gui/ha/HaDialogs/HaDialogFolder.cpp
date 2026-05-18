@@ -5,6 +5,7 @@
 #include "HaConfigLogic.h"
 #include "UIHelper.h"
 #include "SharedData.h"
+#include "HaWidgetFactory.h" // NEU: Damit wir das Widget für die Kopie neu bauen können!
 
 lv_obj_t* HaDialogFolder::overlay = nullptr;
 HAFolderWidget* HaDialogFolder::current_folder = nullptr;
@@ -53,14 +54,40 @@ void HaDialogFolder::show(HAFolderWidget* folder) {
         }
         UIHelper::createLabel(row, title.c_str(), &lv_font_montserrat_20, LV_ALIGN_LEFT_MID, 10, 0);
 
-        UIHelper::createButton(row, 120, 40, LV_ALIGN_RIGHT_MID, -140, 0, 0x2980B9, "Editieren", [](lv_event_t* e){
+        // --- NEU: Das Button-Trio (Edit, Kopie, Löschen) sauber nebeneinander aufgereiht ---
+        UIHelper::createButton(row, 90, 40, LV_ALIGN_RIGHT_MID, -210, 0, 0x2980B9, "Edit", [](lv_event_t* e){
             HAWidget* w = (HAWidget*)lv_event_get_user_data(e);
             HaDialogFolder::resetState();
             HaDialogEdit::showWidgetEditDialog(w); 
         }, child.widget);
 
-        // --- FIX: Loeschen blockiert nun auch den Reload ---
-        UIHelper::createButton(row, 120, 40, LV_ALIGN_RIGHT_MID, -10, 0, 0xAA0000, "Loeschen", [](lv_event_t* e){
+        // --- NEU: Die Kopier-Funktion ---
+        UIHelper::createButton(row, 90, 40, LV_ALIGN_RIGHT_MID, -110, 0, 0x27AE60, "Kopie", [](lv_event_t* e){
+            HAWidget* w = (HAWidget*)lv_event_get_user_data(e);
+            if (current_folder) {
+                // 1. Definition ziehen und anpassen
+                HAWidgetDef def = HaWidgetFactory::createDefFromWidget(w);
+                def.name += " (Kopie)";
+                
+                // 2. Kind sofort unsichtbar erzeugen
+                HAWidget* new_child = HaWidgetFactory::createWidget(current_folder->getContainer(), current_folder->getTabIndex(), def);
+                if (new_child) {
+                    lv_obj_set_pos(new_child->getContainer(), 0, 0);
+                    lv_obj_set_size(new_child->getContainer(), LV_PCT(100), LV_PCT(100));
+                    current_folder->addChild(new_child, def);
+                    
+                    // 3. Speichern und Dialog neu laden ohne Edit-Modus Abbruch!
+                    ViewHomeAssistant::helper_saveWidgets();
+                    ViewHomeAssistant::pendingHaReload = false;
+                    
+                    HAFolderWidget* tf = current_folder;
+                    HaDialogFolder::resetState();
+                    HaDialogFolder::show(tf);
+                }
+            }
+        }, child.widget);
+
+        UIHelper::createButton(row, 90, 40, LV_ALIGN_RIGHT_MID, -10, 0, 0xAA0000, "Loesch.", [](lv_event_t* e){
             HAWidget* w = (HAWidget*)lv_event_get_user_data(e);
             if (current_folder) {
                 current_folder->removeChild(w);
