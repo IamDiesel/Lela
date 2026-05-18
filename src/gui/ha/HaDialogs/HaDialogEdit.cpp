@@ -62,7 +62,6 @@ lv_obj_t* HaDialogEdit::ta_cond2_entity = nullptr;
 lv_obj_t* HaDialogEdit::dd_cond2_op = nullptr;
 lv_obj_t* HaDialogEdit::ta_cond2_val = nullptr;
 
-// --- NEU: Pointers fuer die Aktion ---
 lv_obj_t* HaDialogEdit::ta_action_domain = nullptr;
 lv_obj_t* HaDialogEdit::ta_action_service = nullptr;
 lv_obj_t* HaDialogEdit::ta_action_target = nullptr;
@@ -238,7 +237,6 @@ void HaDialogEdit::btn_save_event_cb(lv_event_t * e) {
         current_widget->setSnapToGrid(lv_obj_has_state(cb_snap, LV_STATE_CHECKED));
     }
     
-    // --- NEU: Aktion Speichern ---
     if (ta_action_domain && lv_obj_is_valid(ta_action_domain) &&
         ta_action_service && lv_obj_is_valid(ta_action_service) &&
         ta_action_target && lv_obj_is_valid(ta_action_target)) {
@@ -369,30 +367,30 @@ void HaDialogEdit::bindKeyboardToTextarea(lv_obj_t* ta) {
 }
 
 void HaDialogEdit::buildSizeTab(lv_obj_t* parent, HAWidget* w) {
-    UIHelper::createButton(parent, 80, 80, LV_ALIGN_LEFT_MID, 20, -50, 0xAA0000, LV_SYMBOL_MINUS, [](lv_event_t* e){ 
+    UIHelper::createButton(parent, 80, 80, LV_ALIGN_LEFT_MID, 40, -50, 0xAA0000, LV_SYMBOL_MINUS, [](lv_event_t* e){ 
         if(current_widget) { int nw = current_widget->getW() - 40; if (nw < 100) nw = 100; current_widget->setSize(nw, current_widget->getH()); }
     });
     UIHelper::createLabel(parent, "Breite", &lv_font_montserrat_24, LV_ALIGN_CENTER, 0, -50);
-    UIHelper::createButton(parent, 80, 80, LV_ALIGN_RIGHT_MID, -20, -50, 0x27AE60, LV_SYMBOL_PLUS, [](lv_event_t* e){ 
+    UIHelper::createButton(parent, 80, 80, LV_ALIGN_RIGHT_MID, -40, -50, 0x27AE60, LV_SYMBOL_PLUS, [](lv_event_t* e){ 
         if(current_widget) current_widget->setSize(current_widget->getW() + 40, current_widget->getH()); 
     });
 
-    UIHelper::createButton(parent, 80, 80, LV_ALIGN_LEFT_MID, 20, 50, 0xAA0000, LV_SYMBOL_MINUS, [](lv_event_t* e){ 
+    UIHelper::createButton(parent, 80, 80, LV_ALIGN_LEFT_MID, 40, 50, 0xAA0000, LV_SYMBOL_MINUS, [](lv_event_t* e){ 
         if(current_widget) { int nh = current_widget->getH() - 40; if (nh < 80) nh = 80; current_widget->setSize(current_widget->getW(), nh); }
     });
     UIHelper::createLabel(parent, "Hoehe", &lv_font_montserrat_24, LV_ALIGN_CENTER, 0, 50);
-    UIHelper::createButton(parent, 80, 80, LV_ALIGN_RIGHT_MID, -20, 50, 0x27AE60, LV_SYMBOL_PLUS, [](lv_event_t* e){ 
+    UIHelper::createButton(parent, 80, 80, LV_ALIGN_RIGHT_MID, -40, 50, 0x27AE60, LV_SYMBOL_PLUS, [](lv_event_t* e){ 
         if(current_widget) current_widget->setSize(current_widget->getW(), current_widget->getH() + 40); 
     });
 }
 
 void HaDialogEdit::buildDisplayTab(lv_obj_t* parent, HAWidget* w) {
     UIHelper::createLabel(parent, "Name:", &lv_font_montserrat_16, LV_ALIGN_TOP_LEFT, 10, 10);
-    ta_name = UIHelper::createTextarea(parent, 500, 40, LV_ALIGN_TOP_LEFT, 100, 0, w->getName().c_str());
+    ta_name = UIHelper::createTextarea(parent, 700, 40, LV_ALIGN_TOP_LEFT, 100, 0, w->getName().c_str());
     bindKeyboardToTextarea(ta_name);
 
     UIHelper::createLabel(parent, "Suche:", &lv_font_montserrat_16, LV_ALIGN_TOP_LEFT, 10, 60);
-    ta_icon_search = UIHelper::createTextarea(parent, 500, 40, LV_ALIGN_TOP_LEFT, 100, 50, last_search_term.c_str(), "z.B. arrow");
+    ta_icon_search = UIHelper::createTextarea(parent, 700, 40, LV_ALIGN_TOP_LEFT, 100, 50, last_search_term.c_str(), "z.B. arrow");
     bindKeyboardToTextarea(ta_icon_search);
     lv_obj_add_event_cb(ta_icon_search, icon_search_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
@@ -402,10 +400,10 @@ void HaDialogEdit::buildDisplayTab(lv_obj_t* parent, HAWidget* w) {
         cat_opts += icon_categories[i].name; 
         if(i < num_icon_categories - 1) cat_opts += "\n"; 
     }
-    dd_icon_cat = UIHelper::createDropdown(parent, 500, 40, LV_ALIGN_TOP_LEFT, 100, 100, cat_opts.c_str(), 0, dd_icon_cat_event_cb);
+    dd_icon_cat = UIHelper::createDropdown(parent, 700, 40, LV_ALIGN_TOP_LEFT, 100, 100, cat_opts.c_str(), 0, dd_icon_cat_event_cb);
 
     UIHelper::createLabel(parent, "Icon:", &lv_font_montserrat_16, LV_ALIGN_TOP_LEFT, 10, 160);
-    dd_icon = UIHelper::createDropdown(parent, 500, 40, LV_ALIGN_TOP_LEFT, 100, 150, "", 0);
+    dd_icon = UIHelper::createDropdown(parent, 700, 40, LV_ALIGN_TOP_LEFT, 100, 150, "", 0);
     
     int sel_cat = 0, sel_icon = 1;
     if (w->getMdiIcon() != "") {
@@ -431,13 +429,13 @@ void HaDialogEdit::buildDisplayTab(lv_obj_t* parent, HAWidget* w) {
     }
 
     UIHelper::createLabel(parent, "Personalisierte Farben:", nullptr, LV_ALIGN_TOP_LEFT, 10, 205, 0x00A0FF);
-    btn_color_on = UIHelper::createButton(parent, 280, 50, LV_ALIGN_TOP_LEFT, 10, 230, 0x555555, "Laden...", [](lv_event_t* e){ 
+    btn_color_on = UIHelper::createButton(parent, 350, 50, LV_ALIGN_TOP_LEFT, 10, 230, 0x555555, "Laden...", [](lv_event_t* e){ 
         playToneI2S(800, 100, true); HaColorPicker::show(selected_color_on, [](String color) {
             selected_color_on = color; updateColorBtn(btn_color_on, selected_color_on, "Aktiv:");
         });
     });
     
-    btn_color_off = UIHelper::createButton(parent, 280, 50, LV_ALIGN_TOP_LEFT, 320, 230, 0x555555, "Laden...", [](lv_event_t* e){ 
+    btn_color_off = UIHelper::createButton(parent, 350, 50, LV_ALIGN_TOP_LEFT, 380, 230, 0x555555, "Laden...", [](lv_event_t* e){ 
         playToneI2S(800, 100, true); HaColorPicker::show(selected_color_off, [](String color) {
             selected_color_off = color; updateColorBtn(btn_color_off, selected_color_off, "Inaktiv:");
         });
@@ -462,23 +460,23 @@ void HaDialogEdit::buildLayoutTab(lv_obj_t* parent, HAWidget* w) {
     UIHelper::createLabel(parent, "Icon:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, y+10);
     dd_icon_pos = UIHelper::createDropdown(parent, 140, 40, LV_ALIGN_TOP_LEFT, 80, y, "Oben\nMitte\nUnten\nLinks\nRechts", alignToIdx(orig_i_align), layout_change_cb);
     UIHelper::createLabel(parent, "Abstand:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 240, y+10);
-    slider_icon_margin = UIHelper::createSlider(parent, 200, 20, LV_ALIGN_TOP_LEFT, 350, y+10, -50, 100, orig_i_margin, layout_change_cb);
-    lbl_i_m_val = UIHelper::createLabel(parent, (String(orig_i_margin) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 570, y+10);
+    slider_icon_margin = UIHelper::createSlider(parent, 300, 20, LV_ALIGN_TOP_LEFT, 350, y+10, -50, 100, orig_i_margin, layout_change_cb);
+    lbl_i_m_val = UIHelper::createLabel(parent, (String(orig_i_margin) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 680, y+10);
 
     y += 60;
     UIHelper::createLabel(parent, "Text:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, y+10);
     dd_text_pos = UIHelper::createDropdown(parent, 140, 40, LV_ALIGN_TOP_LEFT, 80, y, "Oben\nMitte\nUnten\nLinks\nRechts", alignToIdx(orig_t_align), layout_change_cb);
     UIHelper::createLabel(parent, "Abstand:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 240, y+10);
-    slider_text_margin = UIHelper::createSlider(parent, 200, 20, LV_ALIGN_TOP_LEFT, 350, y+10, -50, 100, orig_t_margin, layout_change_cb);
-    lbl_t_m_val = UIHelper::createLabel(parent, (String(orig_t_margin) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 570, y+10);
+    slider_text_margin = UIHelper::createSlider(parent, 300, 20, LV_ALIGN_TOP_LEFT, 350, y+10, -50, 100, orig_t_margin, layout_change_cb);
+    lbl_t_m_val = UIHelper::createLabel(parent, (String(orig_t_margin) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 680, y+10);
 
     y += 60;
     if (w->getType() == "sensor") {
         UIHelper::createLabel(parent, "Wert:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, y+10);
         dd_state_pos = UIHelper::createDropdown(parent, 140, 40, LV_ALIGN_TOP_LEFT, 80, y, "Oben\nMitte\nUnten\nLinks\nRechts", alignToIdx(orig_s_align), layout_change_cb);
         UIHelper::createLabel(parent, "Abstand:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 240, y+10);
-        slider_state_margin = UIHelper::createSlider(parent, 200, 20, LV_ALIGN_TOP_LEFT, 350, y+10, -50, 100, orig_s_margin, layout_change_cb);
-        lbl_s_m_val = UIHelper::createLabel(parent, (String(orig_s_margin) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 570, y+10);
+        slider_state_margin = UIHelper::createSlider(parent, 300, 20, LV_ALIGN_TOP_LEFT, 350, y+10, -50, 100, orig_s_margin, layout_change_cb);
+        lbl_s_m_val = UIHelper::createLabel(parent, (String(orig_s_margin) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 680, y+10);
     }
 
     cb_snap = UIHelper::createCheckbox(parent, "Am Raster einrasten (Snap 10px)", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, y+60, w->getSnapToGrid());
@@ -502,31 +500,31 @@ void HaDialogEdit::buildChartTab(lv_obj_t* parent, HAWidget* w) {
     };
 
     UIHelper::createLabel(parent, "Breite:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lbl_c_w_val = UIHelper::createLabel(parent, (String(w->getChartWPct()) + " %").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_chart_w = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 50, 100, w->getChartWPct(), s_cb, lbl_c_w_val);
+    lbl_c_w_val = UIHelper::createLabel(parent, (String(w->getChartWPct()) + " %").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 560, cy);
+    slider_chart_w = UIHelper::createSlider(parent, 400, 20, LV_ALIGN_TOP_LEFT, 140, cy+2, 50, 100, w->getChartWPct(), s_cb, lbl_c_w_val);
     cy += 40;
 
     UIHelper::createLabel(parent, "Hoehe:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lbl_c_h_val = UIHelper::createLabel(parent, (String(w->getChartHPct()) + " %").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_chart_h = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 20, 100, w->getChartHPct(), s_cb, lbl_c_h_val);
+    lbl_c_h_val = UIHelper::createLabel(parent, (String(w->getChartHPct()) + " %").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 560, cy);
+    slider_chart_h = UIHelper::createSlider(parent, 400, 20, LV_ALIGN_TOP_LEFT, 140, cy+2, 20, 100, w->getChartHPct(), s_cb, lbl_c_h_val);
     cy += 40;
 
     UIHelper::createLabel(parent, "X-Pos:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lbl_c_x_val = UIHelper::createLabel(parent, (String(w->getChartXOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_chart_x = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -100, 100, w->getChartXOfs(), s_cb, lbl_c_x_val);
+    lbl_c_x_val = UIHelper::createLabel(parent, (String(w->getChartXOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 560, cy);
+    slider_chart_x = UIHelper::createSlider(parent, 400, 20, LV_ALIGN_TOP_LEFT, 140, cy+2, -100, 100, w->getChartXOfs(), s_cb, lbl_c_x_val);
     cy += 40;
 
     UIHelper::createLabel(parent, "Y-Pos:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lbl_c_y_val = UIHelper::createLabel(parent, (String(w->getChartYOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_chart_y = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -200, 100, w->getChartYOfs(), s_cb, lbl_c_y_val);
+    lbl_c_y_val = UIHelper::createLabel(parent, (String(w->getChartYOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 560, cy);
+    slider_chart_y = UIHelper::createSlider(parent, 400, 20, LV_ALIGN_TOP_LEFT, 140, cy+2, -200, 100, w->getChartYOfs(), s_cb, lbl_c_y_val);
     cy += 50;
 
     UIHelper::createLabel(parent, "Min. Wert:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy+10);
-    ta_chart_min = UIHelper::createTextarea(parent, 150, 40, LV_ALIGN_TOP_LEFT, 120, cy, w->getChartMin().c_str(), "Auto");
+    ta_chart_min = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 140, cy, w->getChartMin().c_str(), "Auto");
     bindKeyboardToTextarea(ta_chart_min);
 
-    UIHelper::createLabel(parent, "Max. Wert:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 300, cy+10);
-    ta_chart_max = UIHelper::createTextarea(parent, 150, 40, LV_ALIGN_TOP_LEFT, 420, cy, w->getChartMax().c_str(), "Auto");
+    UIHelper::createLabel(parent, "Max. Wert:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 420, cy+10);
+    ta_chart_max = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 530, cy, w->getChartMax().c_str(), "Auto");
     bindKeyboardToTextarea(ta_chart_max);
 }
 
@@ -555,23 +553,23 @@ void HaDialogEdit::buildVacuumTab(lv_obj_t* parent, HAWidget* w) {
     };
 
     UIHelper::createLabel(parent, "Breite:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lbl_v_w_val = UIHelper::createLabel(parent, (String(w->getChartWPct()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_vac_w = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 30, 100, w->getChartWPct(), v_cb, lbl_v_w_val);
+    lbl_v_w_val = UIHelper::createLabel(parent, (String(w->getChartWPct()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 560, cy);
+    slider_vac_w = UIHelper::createSlider(parent, 400, 20, LV_ALIGN_TOP_LEFT, 140, cy+2, 30, 100, w->getChartWPct(), v_cb, lbl_v_w_val);
     cy += 50;
 
     UIHelper::createLabel(parent, "Hoehe:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lbl_v_h_val = UIHelper::createLabel(parent, (String(w->getChartHPct()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_vac_h = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 20, 80, w->getChartHPct(), v_cb, lbl_v_h_val);
+    lbl_v_h_val = UIHelper::createLabel(parent, (String(w->getChartHPct()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 560, cy);
+    slider_vac_h = UIHelper::createSlider(parent, 400, 20, LV_ALIGN_TOP_LEFT, 140, cy+2, 20, 80, w->getChartHPct(), v_cb, lbl_v_h_val);
     cy += 50;
 
     UIHelper::createLabel(parent, "Abstand:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lbl_v_gap_val = UIHelper::createLabel(parent, (String(w->getChartXOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_vac_gap = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, 0, 80, w->getChartXOfs(), v_cb, lbl_v_gap_val);
+    lbl_v_gap_val = UIHelper::createLabel(parent, (String(w->getChartXOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 560, cy);
+    slider_vac_gap = UIHelper::createSlider(parent, 400, 20, LV_ALIGN_TOP_LEFT, 140, cy+2, 0, 80, w->getChartXOfs(), v_cb, lbl_v_gap_val);
     cy += 50;
 
     UIHelper::createLabel(parent, "Y-Pos:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, cy);
-    lbl_v_y_val = UIHelper::createLabel(parent, (String(w->getChartYOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 400, cy);
-    slider_vac_y = UIHelper::createSlider(parent, 250, 20, LV_ALIGN_TOP_LEFT, 120, cy+2, -50, 100, w->getChartYOfs(), v_cb, lbl_v_y_val);
+    lbl_v_y_val = UIHelper::createLabel(parent, (String(w->getChartYOfs()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 560, cy);
+    slider_vac_y = UIHelper::createSlider(parent, 400, 20, LV_ALIGN_TOP_LEFT, 140, cy+2, -50, 100, w->getChartYOfs(), v_cb, lbl_v_y_val);
 }
 
 void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
@@ -583,14 +581,14 @@ void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
     if (w->getConditions().size() > 0) {
         c1_ent = w->getConditions()[0].entity; c1_op = w->getConditions()[0].op; c1_val = w->getConditions()[0].value;
     }
-    ta_cond1_entity = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 10, 90, c1_ent.c_str(), "Entitaet (z.B. switch.tv)");
+    ta_cond1_entity = UIHelper::createTextarea(parent, 360, 40, LV_ALIGN_TOP_LEFT, 10, 90, c1_ent.c_str(), "Entitaet (z.B. switch.tv)");
     bindKeyboardToTextarea(ta_cond1_entity);
     
     int op1_idx = 0;
     if(c1_op=="!=") op1_idx=1; else if(c1_op==">") op1_idx=2; else if(c1_op=="<") op1_idx=3; else if(c1_op==">=") op1_idx=4; else if(c1_op=="<=") op1_idx=5;
-    dd_cond1_op = UIHelper::createDropdown(parent, 80, 40, LV_ALIGN_TOP_LEFT, 270, 90, "==\n!=\n>\n<\n>=\n<=", op1_idx);
+    dd_cond1_op = UIHelper::createDropdown(parent, 80, 40, LV_ALIGN_TOP_LEFT, 380, 90, "==\n!=\n>\n<\n>=\n<=", op1_idx);
     
-    ta_cond1_val = UIHelper::createTextarea(parent, 150, 40, LV_ALIGN_TOP_LEFT, 360, 90, c1_val.c_str(), "Wert (z.B. on)");
+    ta_cond1_val = UIHelper::createTextarea(parent, 320, 40, LV_ALIGN_TOP_LEFT, 470, 90, c1_val.c_str(), "Wert (z.B. on)");
     bindKeyboardToTextarea(ta_cond1_val);
 
     UIHelper::createLabel(parent, "Bedingung 2:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 150);
@@ -598,14 +596,14 @@ void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
     if (w->getConditions().size() > 1) {
         c2_ent = w->getConditions()[1].entity; c2_op = w->getConditions()[1].op; c2_val = w->getConditions()[1].value;
     }
-    ta_cond2_entity = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 10, 180, c2_ent.c_str(), "Entitaet (Optional)");
+    ta_cond2_entity = UIHelper::createTextarea(parent, 360, 40, LV_ALIGN_TOP_LEFT, 10, 180, c2_ent.c_str(), "Entitaet (Optional)");
     bindKeyboardToTextarea(ta_cond2_entity);
     
     int op2_idx = 0;
     if(c2_op=="!=") op2_idx=1; else if(c2_op==">") op2_idx=2; else if(c2_op=="<") op2_idx=3; else if(c2_op==">=") op2_idx=4; else if(c2_op=="<=") op2_idx=5;
-    dd_cond2_op = UIHelper::createDropdown(parent, 80, 40, LV_ALIGN_TOP_LEFT, 270, 180, "==\n!=\n>\n<\n>=\n<=", op2_idx);
+    dd_cond2_op = UIHelper::createDropdown(parent, 80, 40, LV_ALIGN_TOP_LEFT, 380, 180, "==\n!=\n>\n<\n>=\n<=", op2_idx);
     
-    ta_cond2_val = UIHelper::createTextarea(parent, 150, 40, LV_ALIGN_TOP_LEFT, 360, 180, c2_val.c_str(), "Wert");
+    ta_cond2_val = UIHelper::createTextarea(parent, 320, 40, LV_ALIGN_TOP_LEFT, 470, 180, c2_val.c_str(), "Wert");
     bindKeyboardToTextarea(ta_cond2_val);
 
     auto cond_search_cb = [](lv_event_t* e) {
@@ -641,29 +639,27 @@ void HaDialogEdit::buildConditionTab(lv_obj_t* parent, HAWidget* w) {
     lv_obj_add_event_cb(ta_cond2_entity, cond_search_cb, LV_EVENT_ALL, NULL);
 }
 
-// --- NEU: Der UI Aufbau fuer den Action-Tab ---
 void HaDialogEdit::buildActionTab(lv_obj_t* parent, HAWidget* w) {
     UIHelper::createLabel(parent, "Benutzerdefinierte Klick-Aktion (Optional):", nullptr, LV_ALIGN_TOP_LEFT, 10, 10, 0x00A0FF);
     
     UIHelper::createLabel(parent, "Domain:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 60);
-    ta_action_domain = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 100, 50, w->getTapDomain().c_str(), "z.B. light");
+    ta_action_domain = UIHelper::createTextarea(parent, 300, 40, LV_ALIGN_TOP_LEFT, 120, 50, w->getTapDomain().c_str(), "z.B. light");
     bindKeyboardToTextarea(ta_action_domain);
 
     UIHelper::createLabel(parent, "Service:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 120);
-    ta_action_service = UIHelper::createTextarea(parent, 250, 40, LV_ALIGN_TOP_LEFT, 100, 110, w->getTapService().c_str(), "z.B. toggle");
+    ta_action_service = UIHelper::createTextarea(parent, 300, 40, LV_ALIGN_TOP_LEFT, 120, 110, w->getTapService().c_str(), "z.B. toggle");
     bindKeyboardToTextarea(ta_action_service);
 
     UIHelper::createLabel(parent, "Ziel:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 180);
-    ta_action_target = UIHelper::createTextarea(parent, 380, 40, LV_ALIGN_TOP_LEFT, 100, 170, w->getTapTarget().c_str(), "Entitaet (z.B. light.flur)");
+    ta_action_target = UIHelper::createTextarea(parent, 670, 40, LV_ALIGN_TOP_LEFT, 120, 170, w->getTapTarget().c_str(), "Entitaet (z.B. light.flur)");
     bindKeyboardToTextarea(ta_action_target);
 
-    // Wir recyclen genau dieselbe Such-Logik fuer das Ziel-Feld!
     auto entity_search_cb = [](lv_event_t* e) {
         lv_event_code_t code = lv_event_get_code(e);
         lv_obj_t* ta = lv_event_get_target(e);
         
         if (code == LV_EVENT_FOCUSED) {
-            current_cond_ta = ta; // Nutzt den gleichen Pointer
+            current_cond_ta = ta; 
         } else if (code == LV_EVENT_VALUE_CHANGED) {
             String txt = lv_textarea_get_text(ta);
             if (txt.length() >= 2 && roller_cond_search) {
@@ -707,7 +703,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
 
     edit_panel = lv_obj_create(overlay);
-    lv_obj_set_size(edit_panel, 680, 560); 
+    lv_obj_set_size(edit_panel, 860, 580); // <--- DEUTLICH BREITER ---
     lv_obj_set_style_bg_color(edit_panel, lv_color_hex(0x222222), 0);
     lv_obj_add_flag(edit_panel, LV_OBJ_FLAG_CLICKABLE); 
     lv_obj_clear_flag(edit_panel, LV_OBJ_FLAG_GESTURE_BUBBLE); 
@@ -716,12 +712,12 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     else lv_obj_align(edit_panel, LV_ALIGN_BOTTOM_MID, 0, -10);
 
     lv_obj_t* tv = lv_tabview_create(edit_panel, LV_DIR_TOP, 50);
-    lv_obj_set_size(tv, 680, 480); 
+    lv_obj_set_size(tv, 860, 500); // <--- MEHR PLATZ FUER DIE TABS ---
     lv_obj_align(tv, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_text_font(lv_tabview_get_tab_btns(tv), &lv_font_montserrat_24, 0);
 
     roller_cond_search = lv_roller_create(edit_panel);
-    lv_obj_set_size(roller_cond_search, 300, 110);
+    lv_obj_set_size(roller_cond_search, 380, 110);
     lv_obj_set_style_text_font(roller_cond_search, &lv_font_montserrat_16, 0);
     lv_roller_set_visible_row_count(roller_cond_search, 3);
     lv_obj_add_flag(roller_cond_search, LV_OBJ_FLAG_HIDDEN);
@@ -754,7 +750,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     buildSizeTab(lv_tabview_add_tab(tv, "Groesse"), w);
     buildDisplayTab(lv_tabview_add_tab(tv, "Anzeige"), w);
     buildLayoutTab(lv_tabview_add_tab(tv, "Layout"), w);
-    buildActionTab(lv_tabview_add_tab(tv, "Aktion"), w); // NEU
+    buildActionTab(lv_tabview_add_tab(tv, "Aktion"), w); 
     buildConditionTab(lv_tabview_add_tab(tv, "Bedingung"), w); 
     
     if (w->getType() == "sensor") buildChartTab(lv_tabview_add_tab(tv, "Diagramm"), w);

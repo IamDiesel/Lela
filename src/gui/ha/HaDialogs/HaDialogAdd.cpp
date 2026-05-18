@@ -7,7 +7,7 @@
 #include "HaEntityCache.h" 
 #include "HAFolderWidget.h" 
 #include "HaWidgetFactory.h" 
-#include "HaDialogFolder.h" // NEU: Damit wir den Dialog wieder oeffnen koennen
+#include "HaDialogFolder.h" 
 #include <lvgl.h>
 
 static lv_obj_t* add_widget_overlay = nullptr;
@@ -78,7 +78,7 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
     lv_obj_clear_flag(add_widget_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
     lv_obj_t* panel = lv_obj_create(add_widget_overlay);
-    lv_obj_set_size(panel, 600, 450);
+    lv_obj_set_size(panel, 860, 480); // <--- DEUTLICH BREITER ---
     lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
     lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
@@ -105,12 +105,12 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
         "sensor\nbinary_sensor\nweather\nperson\ndevice_tracker\n"
         "folder" 
     );
-    lv_obj_set_width(dd_widget_type, 400);
+    lv_obj_set_width(dd_widget_type, 600); // <--- VOLLE BREITE AUSNUTZEN ---
     lv_obj_set_style_text_font(dd_widget_type, &lv_font_montserrat_24, 0);
     lv_obj_align(dd_widget_type, LV_ALIGN_TOP_MID, 0, 60);
 
     ta_widget_entity = lv_textarea_create(panel);
-    lv_obj_set_size(ta_widget_entity, 400, 80);
+    lv_obj_set_size(ta_widget_entity, 600, 80);
     lv_textarea_set_placeholder_text(ta_widget_entity, "Name (z.B. Deckenlampe)");
     lv_obj_set_style_text_font(ta_widget_entity, &lv_font_montserrat_24, 0);
     lv_obj_align(ta_widget_entity, LV_ALIGN_TOP_MID, 0, 140);
@@ -122,7 +122,7 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
     lv_obj_set_style_text_align(lbl_preview, LV_TEXT_ALIGN_CENTER, 0);
 
     roller_search = lv_roller_create(panel);
-    lv_obj_set_size(roller_search, 400, 110);
+    lv_obj_set_size(roller_search, 600, 110);
     lv_obj_align(roller_search, LV_ALIGN_TOP_MID, 0, 230); 
     lv_obj_set_style_text_font(roller_search, &lv_font_montserrat_16, 0);
     lv_roller_set_visible_row_count(roller_search, 3);
@@ -259,7 +259,6 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
                     def.slider_step = HaEntityCache::GetGlobalStep(e_id);
                 }
                 
-                // --- FIX: Ordner-Logik ueberarbeitet (Kein Reload + RAM Speichern) ---
                 if (target_folder) {
                     HAWidget* child = HaWidgetFactory::createWidget(target_folder->getContainer(), act_tab, def);
                     if (child) {
@@ -268,10 +267,7 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
                         target_folder->addChild(child, def);
                     }
                     
-                    // Speichert die Ordner-Struktur wasserdicht
                     ViewHomeAssistant::helper_saveWidgets();
-                    
-                    // Blockiert den Reload, damit Edit-Mode aktiv bleibt
                     ViewHomeAssistant::pendingHaReload = false;
                     
                     lv_obj_del_async(add_widget_overlay);
@@ -279,7 +275,6 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
                     lbl_preview = nullptr;
                     roller_search = nullptr;
                     
-                    // Oeffnet den Ordner direkt wieder
                     HAFolderWidget* tf = target_folder;
                     target_folder = nullptr;
                     HaDialogFolder::show(tf);
