@@ -23,7 +23,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         if (msg == "on" || msg == "true" || msg == "1") {
             if (isBabyArmed && !babyAlarmActive) {
                 babyAlarmActive = true;
-                babyMuted = false;
+                muteBaby = false;
                 wakeDisplay();
                 gui.switchScreen(SCREEN_BABY, LV_SCR_LOAD_ANIM_NONE);
             }

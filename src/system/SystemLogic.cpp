@@ -119,7 +119,7 @@ void SystemLogic_Update() {
                 if (isArmed && !alarmActive && !disconnectAlarmActive && millis() > cooldownUntil) {
                     if (pWinCount >= WINDOW_SIZE && abs(currentPressure - currentAvg) > thresholdVal) { 
                         alarmActive = true; 
-                        muted = false; 
+                        muteAlarm = false; 
                         wakeDisplay(); 
                         gui.switchScreen(SCREEN_CATMAT, LV_SCR_LOAD_ANIM_NONE); 
                     }
@@ -128,13 +128,13 @@ void SystemLogic_Update() {
         }
     }
     
-    if (!muted && !isTrackerMode) { 
+    if (!muteAlarm && !isTrackerMode) { 
         static uint32_t lastBeep = 0; 
         if (alarmActive) { 
             if (millis() - lastBeep > 2500) { playCatAlarmI2S(); lastBeep = millis(); } 
         } else if (disconnectAlarmActive) { 
             if (millis() - lastBeep > 3000) { playToneI2S(440, 200, false); playToneI2S(349, 200, false); playToneI2S(261, 500, false); lastBeep = millis(); } 
-        } else if (babyAlarmActive && !babyMuted) {
+        } else if (babyAlarmActive && !muteBaby) {
             if (millis() - lastBeep > 2500) { playBabyAlarmI2S(); lastBeep = millis(); }
         }
     }
@@ -143,7 +143,7 @@ void SystemLogic_Update() {
     static bool lastDongleAlarmSent = false;
     bool shouldDongleAlarm = false;
 
-    if (dongleAlarmEnabled && alarmActive && !muted) {
+    if (dongleAlarmEnabled && alarmActive && !muteAlarm) {
         shouldDongleAlarm = true;
     }
 

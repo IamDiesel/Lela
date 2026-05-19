@@ -30,7 +30,7 @@ void ViewPopups::init() {
     lv_obj_set_style_border_width(pnl_baby, 0, 0);
     lv_obj_add_event_cb(pnl_baby, [](lv_event_t* e){ 
         playToneI2S(800, 100, true); 
-        babyMuted = true; 
+        muteBaby = true; 
     }, LV_EVENT_CLICKED, NULL);
     
     lbl_baby_alarm = lv_label_create(pnl_baby);
@@ -46,7 +46,7 @@ void ViewPopups::init() {
     lv_obj_set_style_border_width(pnl_cat, 0, 0);
     lv_obj_add_event_cb(pnl_cat, [](lv_event_t* e){ 
         playToneI2S(800, 100, true); 
-        muted = true; 
+        muteAlarm = true; 
     }, LV_EVENT_CLICKED, NULL);
     
     lbl_cat_alarm = lv_label_create(pnl_cat);
@@ -58,8 +58,8 @@ void ViewPopups::init() {
 
 void ViewPopups::update() {
     // --- Alarm Cross-Logic ---
-    bool catNeedsPopup = (alarmActive && !muted);
-    bool babyNeedsPopup = (babyAlarmActive && !babyMuted);
+    bool catNeedsPopup = (alarmActive && !muteAlarm);
+    bool babyNeedsPopup = (babyAlarmActive && !muteBaby);
     
     ScreenID scr = gui.getCurrentScreen();
     

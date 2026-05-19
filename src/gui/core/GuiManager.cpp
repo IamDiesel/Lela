@@ -320,7 +320,8 @@ void GuiManager::toggleQuickOverlay() {
     lv_obj_add_event_cb(quickOverlay, gestureEventWrapper, LV_EVENT_GESTURE, this);
 
     lv_obj_t* panel = lv_obj_create(quickOverlay);
-    lv_obj_set_size(panel, 600, 500);
+    lv_obj_set_width(panel, 600);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
     lv_obj_set_style_bg_opa(panel, 240, 0);
@@ -331,53 +332,144 @@ void GuiManager::toggleQuickOverlay() {
     lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE); 
 
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(panel, 20, 0);
+    lv_obj_set_style_pad_row(panel, 15, 0);
+
     lv_obj_add_event_cb(panel, [](lv_event_t* e){}, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t* label_vol = lv_label_create(panel); 
-    lv_label_set_text(label_vol, "Alarm- / UI-Lautstaerke"); 
-    lv_obj_align(label_vol, LV_ALIGN_TOP_MID, 0, 30); 
-    lv_obj_set_style_text_font(label_vol, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(label_vol, lv_color_white(), 0);
-    
-    lv_obj_t* slider_vol = lv_slider_create(panel); 
-    lv_obj_set_size(slider_vol, 400, 30); 
-    lv_obj_align(slider_vol, LV_ALIGN_TOP_MID, 0, 70); 
-    lv_slider_set_range(slider_vol, 0, 100); 
-    lv_slider_set_value(slider_vol, volumePercent, LV_ANIM_OFF); 
-    lv_obj_add_event_cb(slider_vol, volumeSliderWrapper, LV_EVENT_VALUE_CHANGED, this);
-    lv_obj_add_flag(slider_vol, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-    lv_obj_t* label_stream_vol = lv_label_create(panel); 
-    lv_label_set_text(label_stream_vol, "Babyphone Stream"); 
-    lv_obj_align(label_stream_vol, LV_ALIGN_TOP_MID, 0, 140); 
-    lv_obj_set_style_text_font(label_stream_vol, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(label_stream_vol, lv_color_hex(0x4FA5D6), 0); 
-    
-    lv_obj_t* slider_stream_vol = lv_slider_create(panel); 
-    lv_obj_set_size(slider_stream_vol, 400, 30); 
-    lv_obj_align(slider_stream_vol, LV_ALIGN_TOP_MID, 0, 180); 
-    lv_slider_set_range(slider_stream_vol, 0, 100); 
-    lv_slider_set_value(slider_stream_vol, streamVolumePercent, LV_ANIM_OFF); 
-    lv_obj_add_event_cb(slider_stream_vol, [](lv_event_t* e){
-        playToneI2S(1000, 50, true);
-        lv_obj_t * slider = (lv_obj_t *)lv_event_get_target(e);
-        GuiManager * manager = (GuiManager *)lv_event_get_user_data(e);
-        streamVolumePercent = lv_slider_get_value(slider);
-        manager->preferences.begin("catmat", false);
-        manager->preferences.putInt("streamVol", streamVolumePercent);
-        manager->preferences.end();
-    }, LV_EVENT_VALUE_CHANGED, this);
-    lv_obj_add_flag(slider_stream_vol, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    static bool mixerExpanded = false;
 
-    lv_obj_t* label_br = lv_label_create(panel); 
-    lv_label_set_text(label_br, "Helligkeit"); 
-    lv_obj_align(label_br, LV_ALIGN_TOP_MID, 0, 250); 
-    lv_obj_set_style_text_font(label_br, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(label_br, lv_color_white(), 0);
-    
-    lv_obj_t* slider_br = lv_slider_create(panel); 
-    lv_obj_set_size(slider_br, 400, 30); 
-    lv_obj_align(slider_br, LV_ALIGN_TOP_MID, 0, 290); 
+    lv_obj_t* title_vol = lv_label_create(panel); 
+    lv_label_set_text(title_vol, "System-Lautstaerke"); 
+    lv_obj_set_style_text_font(title_vol, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(title_vol, lv_color_white(), 0);
+
+    lv_obj_t* row_master = lv_obj_create(panel);
+    lv_obj_set_size(row_master, 560, 50);
+    lv_obj_set_style_bg_opa(row_master, 0, 0);
+    lv_obj_set_style_border_width(row_master, 0, 0);
+    lv_obj_set_style_pad_all(row_master, 0, 0);
+    lv_obj_clear_flag(row_master, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* btn_mute_master = lv_btn_create(row_master);
+    lv_obj_set_size(btn_mute_master, 50, 50);
+    lv_obj_align(btn_mute_master, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_bg_color(btn_mute_master, lv_color_hex(muteMaster ? 0xAA0000 : 0x555555), 0);
+    lv_obj_t* lbl_mute_master = lv_label_create(btn_mute_master);
+    lv_label_set_text(lbl_mute_master, muteMaster ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+    lv_obj_center(lbl_mute_master);
+    lv_obj_add_event_cb(btn_mute_master, [](lv_event_t* e){
+        playToneI2S(800, 15, true);
+        muteMaster = !muteMaster;
+        lv_obj_t* btn = lv_event_get_target(e);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(muteMaster ? 0xAA0000 : 0x555555), 0);
+        lv_label_set_text(lv_obj_get_child(btn, 0), muteMaster ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+        SharedData::Save();
+    }, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t* slider_master = lv_slider_create(row_master);
+    lv_obj_set_size(slider_master, 370, 20);
+    lv_obj_align(slider_master, LV_ALIGN_LEFT_MID, 65, 0);
+    lv_slider_set_range(slider_master, 0, 100);
+    lv_slider_set_value(slider_master, volMaster, LV_ANIM_OFF);
+    lv_obj_add_event_cb(slider_master, [](lv_event_t* e){
+        volMaster = lv_slider_get_value(lv_event_get_target(e));
+        SharedData::Save();
+    }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_flag(slider_master, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+    lv_obj_t* btn_mixer = lv_btn_create(row_master);
+    lv_obj_set_size(btn_mixer, 100, 50);
+    lv_obj_align(btn_mixer, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(btn_mixer, lv_color_hex(0x00A0FF), 0);
+    lv_obj_t* lbl_mixer = lv_label_create(btn_mixer);
+    lv_label_set_text(lbl_mixer, "Mixer " LV_SYMBOL_DOWN);
+    lv_obj_center(lbl_mixer);
+
+    lv_obj_t* container_slaves = lv_obj_create(panel);
+    lv_obj_set_size(container_slaves, 560, 160);
+    lv_obj_set_style_bg_color(container_slaves, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_border_width(container_slaves, 0, 0);
+    lv_obj_set_style_radius(container_slaves, 10, 0);
+    lv_obj_set_style_pad_all(container_slaves, 5, 0);
+    lv_obj_clear_flag(container_slaves, LV_OBJ_FLAG_SCROLLABLE);
+    if (!mixerExpanded) lv_obj_add_flag(container_slaves, LV_OBJ_FLAG_HIDDEN);
+
+    auto create_slave_row = [](lv_obj_t* parent, int y_ofs, const char* name, int* vol_var, bool* mute_var) {
+        lv_obj_t* row = lv_obj_create(parent);
+        lv_obj_set_size(row, 540, 45);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, y_ofs);
+        lv_obj_set_style_bg_opa(row, 0, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* btn_mute = lv_btn_create(row);
+        lv_obj_set_size(btn_mute, 45, 45);
+        lv_obj_align(btn_mute, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_bg_color(btn_mute, lv_color_hex(*mute_var ? 0xAA0000 : 0x555555), 0);
+        lv_obj_t* lbl_mute = lv_label_create(btn_mute);
+        lv_label_set_text(lbl_mute, *mute_var ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+        lv_obj_center(lbl_mute);
+        
+        lv_obj_add_event_cb(btn_mute, [](lv_event_t* e){
+            bool* m = (bool*)lv_event_get_user_data(e);
+            *m = !(*m);
+            playToneI2S(800, 15, true);
+            lv_obj_t* btn = lv_event_get_target(e);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(*m ? 0xAA0000 : 0x555555), 0);
+            lv_label_set_text(lv_obj_get_child(btn, 0), *m ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+            SharedData::Save();
+        }, LV_EVENT_CLICKED, mute_var);
+
+        lv_obj_t* lbl_name = lv_label_create(row);
+        lv_label_set_text(lbl_name, name);
+        lv_obj_set_style_text_color(lbl_name, lv_color_white(), 0);
+        lv_obj_align(lbl_name, LV_ALIGN_LEFT_MID, 55, 0);
+
+        lv_obj_t* slider = lv_slider_create(row);
+        lv_obj_set_size(slider, 300, 20);
+        lv_obj_align(slider, LV_ALIGN_RIGHT_MID, -10, 0);
+        lv_slider_set_range(slider, 0, 100);
+        lv_slider_set_value(slider, *vol_var, LV_ANIM_OFF);
+        lv_obj_add_flag(slider, LV_OBJ_FLAG_GESTURE_BUBBLE);
+        
+        lv_obj_add_event_cb(slider, [](lv_event_t* e){
+            int* v = (int*)lv_event_get_user_data(e);
+            *v = lv_slider_get_value(lv_event_get_target(e));
+            SharedData::Save();
+        }, LV_EVENT_VALUE_CHANGED, vol_var);
+    };
+
+    create_slave_row(container_slaves, 5, "UI", &volUI, &muteUI);
+    create_slave_row(container_slaves, 55, "Alarm", &volAlarm, &muteAlarm);
+    create_slave_row(container_slaves, 105, "Baby", &volBaby, &muteBaby);
+
+    lv_obj_add_event_cb(btn_mixer, [](lv_event_t* e){
+        playToneI2S(800, 15, true);
+        lv_obj_t* container = (lv_obj_t*)lv_event_get_user_data(e);
+        mixerExpanded = !mixerExpanded;
+        if (mixerExpanded) lv_obj_clear_flag(container, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(container, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_CLICKED, container_slaves);
+
+    lv_obj_t* title_br = lv_label_create(panel); 
+    lv_label_set_text(title_br, "Helligkeit"); 
+    lv_obj_set_style_text_font(title_br, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(title_br, lv_color_white(), 0);
+
+    lv_obj_t* row_br = lv_obj_create(panel);
+    lv_obj_set_size(row_br, 560, 40);
+    lv_obj_set_style_bg_opa(row_br, 0, 0);
+    lv_obj_set_style_border_width(row_br, 0, 0);
+    lv_obj_set_style_pad_all(row_br, 0, 0);
+    lv_obj_clear_flag(row_br, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* slider_br = lv_slider_create(row_br); 
+    lv_obj_set_size(slider_br, 450, 20); 
+    lv_obj_align(slider_br, LV_ALIGN_CENTER, 0, 0); 
     lv_slider_set_range(slider_br, 1, 100); 
     lv_slider_set_value(slider_br, brightnessPercent, LV_ANIM_OFF); 
     lv_obj_add_flag(slider_br, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -396,9 +488,16 @@ void GuiManager::toggleQuickOverlay() {
         manager->preferences.end();
     }, LV_EVENT_RELEASED, this);
 
-    lv_obj_t * btn_off = lv_btn_create(panel); 
+    lv_obj_t* bottom_btns = lv_obj_create(panel);
+    lv_obj_set_size(bottom_btns, 560, 70);
+    lv_obj_set_style_bg_opa(bottom_btns, 0, 0);
+    lv_obj_set_style_border_width(bottom_btns, 0, 0);
+    lv_obj_set_style_pad_all(bottom_btns, 0, 0);
+    lv_obj_clear_flag(bottom_btns, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * btn_off = lv_btn_create(bottom_btns); 
     lv_obj_set_size(btn_off, 140, 60); 
-    lv_obj_align(btn_off, LV_ALIGN_BOTTOM_MID, -90, -40); 
+    lv_obj_align(btn_off, LV_ALIGN_LEFT_MID, 80, 0); 
     lv_obj_set_style_bg_color(btn_off, lv_color_hex(0x555555), 0); 
     lv_obj_add_event_cb(btn_off, btn_screen_off_event_cb, LV_EVENT_CLICKED, this); 
     lv_obj_add_flag(btn_off, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -408,9 +507,9 @@ void GuiManager::toggleQuickOverlay() {
     lv_obj_set_style_text_font(lbl_off, &lv_font_montserrat_24, 0);
     lv_obj_center(lbl_off);
 
-    lv_obj_t * btn_sd = lv_btn_create(panel); 
+    lv_obj_t * btn_sd = lv_btn_create(bottom_btns); 
     lv_obj_set_size(btn_sd, 140, 60); 
-    lv_obj_align(btn_sd, LV_ALIGN_BOTTOM_MID, 90, -40); 
+    lv_obj_align(btn_sd, LV_ALIGN_RIGHT_MID, -80, 0); 
     lv_obj_set_style_bg_color(btn_sd, lv_color_hex(0xAA0000), 0); 
     lv_obj_add_event_cb(btn_sd, btn_shutdown_event_cb, LV_EVENT_CLICKED, NULL); 
     lv_obj_add_flag(btn_sd, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -422,15 +521,7 @@ void GuiManager::toggleQuickOverlay() {
 }
 
 void GuiManager::volumeSliderWrapper(lv_event_t * e) {
-    playToneI2S(1000, 50, true);
-    lv_obj_t * slider = (lv_obj_t *)lv_event_get_target(e);
-    GuiManager * manager = (GuiManager *)lv_event_get_user_data(e);
-    
-    volumePercent = lv_slider_get_value(slider);
-    
-    manager->preferences.begin("catmat", false);
-    manager->preferences.putInt("volumePercent", volumePercent);
-    manager->preferences.end();
+    // Unused
 }
 
 void GuiManager::gestureEventWrapper(lv_event_t * e) { 

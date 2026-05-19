@@ -122,7 +122,7 @@ static void audioProducerTask(void * pvParameters) {
             continue; 
         }
         
-        M5.Speaker.setChannelVolume(0, (streamVolumePercent * 255) / 100);
+        M5.Speaker.setChannelVolume(0, (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f ));
 
         if (audioFormat == 1) {
             AudioFileSourceHTTPStream *in = new AudioFileSourceHTTPStream(babyStreamUrl.c_str());
@@ -131,7 +131,7 @@ static void audioProducerTask(void * pvParameters) {
 
             if (in && aac && out && aac->begin(in, out)) {
                 while (isAudioStreaming && aac->isRunning()) {
-                    M5.Speaker.setChannelVolume(0, (streamVolumePercent * 255) / 100);
+                    M5.Speaker.setChannelVolume(0, (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f ));
                     if (!aac->loop()) aac->stop();
                     vTaskDelay(1); 
                 }
@@ -155,7 +155,7 @@ static void audioProducerTask(void * pvParameters) {
                     uint32_t lastDataMs = millis();
                     
                     while (isAudioStreaming && http.connected() && stream->connected()) {
-                        M5.Speaker.setChannelVolume(0, (streamVolumePercent * 255) / 100);
+                        M5.Speaker.setChannelVolume(0, (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f ));
                         
                         int available = stream->available();
                         if (available > 1) {

@@ -119,7 +119,7 @@ void setup() {
     if (speaker_ok) {
         Serial.println("[AUDIO-DIAG] ERFOLG: Audio-Hardware ist online!");
         M5.Speaker.setVolume(255);
-        int uiVol = (volumePercent * 255) / 100;
+        int uiVol = (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteUI ? 0 : volUI/100.0f) * 255.0f );
         M5.Speaker.setChannelVolume(1, uiVol);
         
         M5.Speaker.tone(262, 100, 1, true); delay(100);

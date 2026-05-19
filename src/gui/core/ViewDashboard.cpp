@@ -35,8 +35,8 @@ void ViewDashboard::btn_baby_event_cb(lv_event_t * e) {
     
     playToneI2S(800, 100, true);
     
-    if (babyAlarmActive && !babyMuted) {
-        babyMuted = true;
+    if (babyAlarmActive && !muteBaby) {
+        muteBaby = true;
     } else {
         gui.switchScreen(SCREEN_BABY, LV_SCR_LOAD_ANIM_NONE); 
     }
@@ -52,8 +52,8 @@ void ViewDashboard::btn_cat_event_cb(lv_event_t * e) {
     
     playToneI2S(800, 100, true);
     
-    if (alarmActive && !muted) {
-        muted = true;
+    if (alarmActive && !muteAlarm) {
+        muteAlarm = true;
     } else {
         gui.switchScreen(SCREEN_CATMAT, LV_SCR_LOAD_ANIM_NONE); 
     }
@@ -186,7 +186,7 @@ void ViewDashboard::update() {
 
     bool fastBlink = (millis() % 1000 < 500);
 
-    if (babyAlarmActive && !babyMuted) {
+    if (babyAlarmActive && !muteBaby) {
         if (fastBlink != s_lastBlinkBaby || !s_lastBabyAlarm || s_lastBabyMuted) {
             lv_obj_set_style_bg_color(btnBaby, fastBlink ? lv_color_hex(0xFF0000) : lv_color_hex(0xAA0000), 0);
             lv_label_set_text(lblBaby, LV_SYMBOL_BELL "\nBABY\nALARM!\n(Klick = Mute)");
@@ -196,16 +196,16 @@ void ViewDashboard::update() {
             s_lastBlinkBaby = fastBlink;
         }
     } else {
-        if (s_lastBabyAlarm || s_lastBabyMuted != babyMuted) {
+        if (s_lastBabyAlarm || s_lastBabyMuted != muteBaby) {
             lv_obj_set_style_bg_color(btnBaby, lv_color_hex(0x4FA5D6), 0);
             lv_label_set_text(lblBaby, "Baby\nMonitor");
             
             s_lastBabyAlarm = false; 
-            s_lastBabyMuted = babyMuted;
+            s_lastBabyMuted = muteBaby;
         }
     }
 
-    if (alarmActive && !muted) {
+    if (alarmActive && !muteAlarm) {
         if (fastBlink != s_lastBlinkCat || !s_lastCatAlarm || s_lastCatMuted) {
             lv_obj_set_style_bg_color(btnCat, fastBlink ? lv_color_hex(0xFF0000) : lv_color_hex(0xAA0000), 0);
             lv_label_set_text(lblCat, LV_SYMBOL_BELL "\nCATMAT\nALARM!\n(Klick = Mute)");
@@ -215,12 +215,12 @@ void ViewDashboard::update() {
             s_lastBlinkCat = fastBlink;
         }
     } else {
-        if (s_lastCatAlarm || s_lastCatMuted != muted) {
+        if (s_lastCatAlarm || s_lastCatMuted != muteAlarm) {
             lv_obj_set_style_bg_color(btnCat, lv_color_hex(0xE67E22), 0);
             lv_label_set_text(lblCat, "CatMat");
             
             s_lastCatAlarm = false; 
-            s_lastCatMuted = muted;
+            s_lastCatMuted = muteAlarm;
         }
     }
 }

@@ -129,8 +129,8 @@ static void btn_ptt_event_cb(lv_event_t * e) {
 static void btn_mute_event_cb(lv_event_t * e) { 
     playToneI2S(800, 100, true); 
     if (babyAlarmActive) {
-        if (!babyMuted) babyMuted = true; 
-        else { babyAlarmActive = false; babyMuted = false; }
+        if (!muteBaby) muteBaby = true; 
+        else { babyAlarmActive = false; muteBaby = false; }
     } else {
         isBabyArmed = !isBabyArmed;
     }
@@ -382,7 +382,7 @@ void ViewBaby::update() {
     
     bool fastBlink = (millis() % 600 < 300);
 
-    int curBtnState = babyAlarmActive ? (babyMuted ? 4 : 3) : (isBabyArmed ? 2 : 1);
+    int curBtnState = babyAlarmActive ? (muteBaby ? 4 : 3) : (isBabyArmed ? 2 : 1);
     uint32_t targetBtnColor = 0x555555; const char* targetBtnText = "";
 
     switch(curBtnState) {

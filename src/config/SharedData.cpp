@@ -31,13 +31,12 @@ String mqttPass = "";
 String haIP = SECRET_HA_IP;
 int haPort = SECRET_HA_PORT;
 
-// --- Globale Stream Variablen Initialisierung ---
 String streamIp = SECRET_STREAM_IP;
 bool useCustomUrls = false;
 String camEntity = SECRET_CAM_ENTITY;
 String babyStreamUrl = SECRET_BABY_STREAM_URL;
 
-String topbarStatusMsg = ""; // NEU: Initialisierung
+String topbarStatusMsg = ""; 
 
 String mqttBabyTopic = SECRET_MQTT_BABY_TOPIC;
 String mqttCameraTriggerTopic = SECRET_MQTT_CAM_TRIGGER;
@@ -95,7 +94,6 @@ uint32_t lastConnectTime = 0;
 bool isArmed = false;                  
 bool wasArmedBeforeDisconnect = false; 
 bool alarmActive = false;
-bool muted = false;
 bool wifiStarted = false;
 bool timeSynced = false;
 uint32_t cooldownUntil = 0;
@@ -106,7 +104,6 @@ bool isBatteryCharging = false;
 int autoHealedDisconnectCount = 0; 
 
 bool babyAlarmActive = false;
-bool babyMuted = false;
 
 int32_t rawPressure = 0;
 int32_t taraOffset = 0;
@@ -120,8 +117,17 @@ int32_t pressWindow[WINDOW_SIZE];
 int pWinIdx = 0;
 int pWinCount = 0;
 
-int volumePercent = 50;
-int streamVolumePercent = 50; 
+// --- NEU: Standardwerte Volumes ---
+int volMaster = 80;
+int volUI = 100;
+int volAlarm = 100;
+int volBaby = 100;
+
+bool muteMaster = false;
+bool muteUI = false;
+bool muteAlarm = false;
+bool muteBaby = false;
+
 int thresholdVal = 150;
 bool isDarkMode = true;
 int graphTimeSeconds = 150;
@@ -194,13 +200,11 @@ void Data_Init() {
     haIP = preferences.getString("haIP", SECRET_HA_IP);
     haPort = preferences.getInt("haPort", SECRET_HA_PORT);
     
-    // --- Stream Konfiguration laden ---
     streamIp = preferences.getString("strIp", SECRET_STREAM_IP);
     useCustomUrls = preferences.getBool("useCstUrl", false);
     camEntity = preferences.getString("camEntity", SECRET_CAM_ENTITY);
     babyStreamUrl = preferences.getString("babyUrl", SECRET_BABY_STREAM_URL);
 
-    // Zwingender Zusammenbau der URLs, wenn Expertenmodus AUS ist
     if (!useCustomUrls) {
         camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?random=0";
         babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio";
@@ -208,8 +212,17 @@ void Data_Init() {
     
     audioFormat = preferences.getInt("audioFmt", 0); 
     camHackMode = preferences.getInt("camHackM", 0); 
-    volumePercent = preferences.getInt("volumePercent", 50);
-    streamVolumePercent = preferences.getInt("streamVol", 50);
+
+    // --- NEU: Volume Laden ---
+    volMaster = preferences.getInt("volM", 80);
+    volUI = preferences.getInt("volU", 100);
+    volAlarm = preferences.getInt("volA", 100);
+    volBaby = preferences.getInt("volB", 100);
+    muteMaster = preferences.getBool("mutM", false);
+    muteUI = preferences.getBool("mutU", false);
+    muteAlarm = preferences.getBool("mutA", false);
+    muteBaby = preferences.getBool("mutB", false);
+    
     thresholdVal = preferences.getInt("thr", 150);
     taraOffset = preferences.getUInt("off", 0);
     isDarkMode = preferences.getBool("dark", true);
@@ -249,21 +262,46 @@ void calcMultiplex() {
     }
 }
 
+// --- NEU: Master/Slave Audio Engine ---
 void audioTask(void *pvParameters) {
     AudioMsg msg;
     while(1) {
         if (xQueueReceive(audioQueue, &msg, portMAX_DELAY) == pdTRUE) {
-            if (!muted || msg.isUiSound) {
-                M5.Speaker.setChannelVolume(1, (volumePercent * 255) / 100);
-                int streamVol = (streamVolumePercent * 255) / 100;
-                if (isAudioStreaming) M5.Speaker.setChannelVolume(0, streamVol / 3); 
+            
+            float effMaster = muteMaster ? 0.0f : (volMaster / 100.0f);
+            float effUI = muteUI ? 0.0f : (volUI / 100.0f);
+            float effAlarm = muteAlarm ? 0.0f : (volAlarm / 100.0f);
+            float effBaby = muteBaby ? 0.0f : (volBaby / 100.0f); 
 
-                if (msg.soundType == 0) M5.Speaker.tone(msg.freq, msg.duration, 1, true); 
-                else if (msg.soundType == 1) M5.Speaker.tone(600, 200, 1, true); 
-                else if (msg.soundType == 2) M5.Speaker.tone(1100, 100, 1, true);
-                
-                vTaskDelay(pdMS_TO_TICKS(msg.duration + 50));
-                if (isAudioStreaming) M5.Speaker.setChannelVolume(0, streamVol);
+            float volFactor = 0.0f;
+            if (msg.volumeChannel == 0) volFactor = effMaster * effUI;
+            else if (msg.volumeChannel == 1) volFactor = effMaster * effAlarm;
+            else if (msg.volumeChannel == 2) volFactor = effMaster * effBaby;
+
+            if (volFactor <= 0.01f) continue; // Muted -> Direkt abbrechen, spielt keinen Ton
+
+            if (isAudioStreaming) {
+                int streamVol = (int)(effMaster * effBaby * 255.0f);
+                if (streamVol > 255) streamVol = 255;
+                M5.Speaker.setChannelVolume(0, streamVol / 3); // Ducking waehrend Ton spielt
+            }
+
+            int toneVol = (int)(volFactor * 255.0f);
+            if (toneVol > 255) toneVol = 255;
+            M5.Speaker.setChannelVolume(1, toneVol);
+
+            if (msg.soundType == 0) M5.Speaker.tone(msg.freq, msg.duration, 1, true); 
+            else if (msg.soundType == 1) M5.Speaker.tone(600, 200, 1, true); // Baby Alarm
+            else if (msg.soundType == 2) M5.Speaker.tone(1100, 100, 1, true); // Cat Alarm
+            else if (msg.soundType == 3) M5.Speaker.tone(800, 100, 1, true); // Slider Bing
+            else if (msg.soundType == 4) M5.Speaker.tone(150, 15, 1, true); // Moderner Klick!
+            
+            vTaskDelay(pdMS_TO_TICKS(msg.duration + 50));
+            
+            if (isAudioStreaming) {
+                int streamVol = (int)(effMaster * effBaby * 255.0f);
+                if (streamVol > 255) streamVol = 255;
+                M5.Speaker.setChannelVolume(0, streamVol);
             }
         }
     }
@@ -279,12 +317,44 @@ void Audio_Init() {
 void playToneI2S(uint16_t freq, uint32_t duration_ms, bool isUiSound) {
     static uint32_t last_tone_time = 0;
     if (isUiSound) { if (millis() - last_tone_time < 150) return; last_tone_time = millis(); }
-    if(audioQueue != NULL) { AudioMsg msg; msg.freq = freq; msg.duration = duration_ms; msg.isUiSound = isUiSound; msg.soundType = 0; xQueueSend(audioQueue, &msg, 0); }
+    if(audioQueue != NULL) { 
+        AudioMsg msg; 
+        msg.freq = freq; 
+        msg.duration = isUiSound ? 15 : duration_ms; 
+        msg.soundType = isUiSound ? 4 : 0; // 4 = Moderner Klick
+        msg.volumeChannel = isUiSound ? 0 : 1; 
+        xQueueSend(audioQueue, &msg, 0); 
+    }
 }
 
-void playBabyAlarmI2S() { if(audioQueue != NULL && !muted) { AudioMsg msg; msg.isUiSound = false; msg.soundType = 1; xQueueSend(audioQueue, &msg, 0); } }
-void playCatAlarmI2S() { if(audioQueue != NULL && !muted) { AudioMsg msg; msg.isUiSound = false; msg.soundType = 2; xQueueSend(audioQueue, &msg, 0); } }
-void fullReset() { alarmActive = false; disconnectAlarmActive = false; muted = false; isArmed = false; cooldownUntil = millis() + 5000; topbarStatusMsg = ""; }
+void playBingI2S(uint8_t volChannel) {
+    if(audioQueue != NULL) { 
+        AudioMsg msg; msg.freq = 800; msg.duration = 100; 
+        msg.soundType = 3; msg.volumeChannel = volChannel; 
+        xQueueSend(audioQueue, &msg, 0); 
+    }
+}
+
+void playBabyAlarmI2S() { if(audioQueue != NULL && !muteAlarm) { AudioMsg msg; msg.soundType = 1; msg.volumeChannel = 1; msg.duration=200; xQueueSend(audioQueue, &msg, 0); } }
+void playCatAlarmI2S() { if(audioQueue != NULL && !muteAlarm) { AudioMsg msg; msg.soundType = 2; msg.volumeChannel = 1; msg.duration=100; xQueueSend(audioQueue, &msg, 0); } }
+
+// --- FIX: Ersetzt die veralteten muted und babyMuted ---
+void fullReset() { alarmActive = false; disconnectAlarmActive = false; muteAlarm = false; isArmed = false; cooldownUntil = millis() + 5000; topbarStatusMsg = ""; }
 void wakeDisplay() { requestWake = true; M5.Display.wakeup(); }
 void sleepDisplay() { requestSleep = true; M5.Display.sleep(); }
 void factoryReset() { preferences.begin("catmat", false); preferences.clear(); preferences.end(); delay(1000); ESP.restart(); }
+
+namespace SharedData {
+    void Save() {
+        preferences.begin("catmat", false);
+        preferences.putInt("volM", volMaster);
+        preferences.putInt("volU", volUI);
+        preferences.putInt("volA", volAlarm);
+        preferences.putInt("volB", volBaby);
+        preferences.putBool("mutM", muteMaster);
+        preferences.putBool("mutU", muteUI);
+        preferences.putBool("mutA", muteAlarm);
+        preferences.putBool("mutB", muteBaby);
+        preferences.end();
+    }
+}

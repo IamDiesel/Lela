@@ -15,18 +15,18 @@
 
 enum GraphMode { GRAPH_MODE_PRESSURE = 0, GRAPH_MODE_BLE_RSSI, GRAPH_MODE_WLAN_RSSI, GRAPH_MODE_BLE_INTERVAL, GRAPH_MODE_KIPPY_RSSI };
 
-struct AudioMsg { uint16_t freq; uint32_t duration; bool isUiSound; uint8_t soundType; };
+// NEU: volumeChannel: 0=UI, 1=Alarm, 2=Baby
+struct AudioMsg { uint16_t freq; uint32_t duration; uint8_t soundType; uint8_t volumeChannel; };
 
 extern SemaphoreHandle_t bleMutex;
 
-extern bool dongleAlarmEnabled; // Ob der T-Dongle mitalarmieren soll
+extern bool dongleAlarmEnabled; 
 extern bool audioDebugEnabled;
 extern String audioLogs[10];
 extern int audioLogIdx;
 extern void addAudioLog(String msg);
 
 extern bool babyAlarmActive;
-extern bool babyMuted;
 
 extern String wifiSsid;
 extern String wifiPass;
@@ -37,13 +37,11 @@ extern String mqttPass;
 extern String haIP;
 extern int haPort;
 
-// --- NEU: Globale Stream Variablen ---
 extern String streamIp; 
 extern bool useCustomUrls; 
-extern String camEntity; // Wird als Video-URL verwendet
-extern String babyStreamUrl; // Wird als Audio-URL verwendet
+extern String camEntity; 
+extern String babyStreamUrl; 
 
-// NEU: Topbar Fehler Status
 extern String topbarStatusMsg;
 
 extern String mqttBabyTopic;
@@ -117,7 +115,6 @@ extern uint32_t lastConnectTime;
 extern bool isArmed;                 
 extern bool wasArmedBeforeDisconnect;
 extern bool alarmActive;
-extern bool muted;
 extern bool wifiStarted;
 extern bool timeSynced; 
 extern uint32_t cooldownUntil;
@@ -139,8 +136,17 @@ extern int32_t pressWindow[WINDOW_SIZE];
 extern int pWinIdx;
 extern int pWinCount;
 
-extern int volumePercent;
-extern int streamVolumePercent;
+// --- NEU: Getrenntes Lautstaerke-System ---
+extern int volMaster;
+extern int volUI;
+extern int volAlarm;
+extern int volBaby;
+
+extern bool muteMaster;
+extern bool muteUI;
+extern bool muteAlarm;
+extern bool muteBaby;
+
 extern int thresholdVal; 
 extern bool isDarkMode; 
 extern int graphTimeSeconds; 
@@ -184,6 +190,9 @@ void Audio_Init();
 void calcMultiplex();
 void playToneI2S(uint16_t freq, uint32_t duration_ms, bool isUiSound = false);
 
+// NEU: Sound fuer Slider Release
+void playBingI2S(uint8_t volChannel); 
+
 void playBabyAlarmI2S();
 void playCatAlarmI2S();
 
@@ -191,3 +200,7 @@ void fullReset();
 void wakeDisplay();
 void sleepDisplay();
 void factoryReset();
+
+namespace SharedData {
+    void Save();
+}

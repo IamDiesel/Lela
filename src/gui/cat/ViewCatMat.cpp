@@ -194,7 +194,7 @@ static void btn_auto_fit_event_cb(lv_event_t * e) { playToneI2S(800, 100, true);
 static void btn_mute_event_cb(lv_event_t * e) { 
     playToneI2S(800, 100, true);
     if (alarmActive || disconnectAlarmActive) {
-        if (!muted) muted = true; else { alarmActive = false; disconnectAlarmActive = false; muted = false; isArmed = false; }
+        if (!muteAlarm) muteAlarm = true; else { alarmActive = false; disconnectAlarmActive = false; muteAlarm = false; isArmed = false; }
     } else {
         isArmed = !isArmed;
     }
@@ -453,7 +453,7 @@ void ViewCatMat::update() {
 
     ViewTopbar_Update();
 
-    int curBtnState = alarmActive ? (muted ? 4 : 3) : (disconnectAlarmActive ? (muted ? 6 : 5) : (isArmed ? 2 : 1));
+    int curBtnState = alarmActive ? (muteAlarm ? 4 : 3) : (disconnectAlarmActive ? (muteAlarm ? 6 : 5) : (isArmed ? 2 : 1));
     uint32_t targetBtnColor = 0x555555; const char* targetBtnText = "";
 
     bool fastBlink = (millis() % 600 < 300);
@@ -490,7 +490,7 @@ void ViewCatMat::update() {
 
         if (s_currentPressure != currentPressure || s_rawPressure != rawPressure) {
             if (!matEnabled) { lv_label_set_text(label_pressure, "OFF"); lv_label_set_text(label_avg, "DEAKTIVIERT"); lv_label_set_text(label_raw, "RAW: --"); } 
-            else if (connected) { lv_label_set_text_fmt(label_pressure, "%d", currentPressure); lv_label_set_text_fmt(label_avg, muted ? "STUMM" : "Schnitt: %d", currentAvg); lv_label_set_text_fmt(label_raw, "RAW: %d", rawPressure); } 
+            else if (connected) { lv_label_set_text_fmt(label_pressure, "%d", currentPressure); lv_label_set_text_fmt(label_avg, muteAlarm ? "STUMM" : "Schnitt: %d", currentAvg); lv_label_set_text_fmt(label_raw, "RAW: %d", rawPressure); } 
             else { lv_label_set_text(label_pressure, "- - -"); lv_label_set_text(label_avg, fastBlink ? "Verbinde..." : ""); lv_label_set_text(label_raw, "RAW: --"); }
             lv_obj_set_style_text_color(label_pressure, TEXT_COLOR, 0); lv_obj_set_style_text_color(label_avg, TEXT_COLOR, 0);
             s_currentPressure = currentPressure; s_rawPressure = rawPressure;
