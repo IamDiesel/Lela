@@ -159,7 +159,7 @@ lv_obj_t* ViewDashboard::build() {
     ViewTopbar_Create(scr);
 
     lv_obj_t* swipe_blocker = lv_obj_create(scr);
-    lv_obj_set_size(swipe_blocker, 1280, 100);
+    lv_obj_set_size(swipe_blocker, 1300, 100); //1280
     lv_obj_align(swipe_blocker, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(swipe_blocker, lv_color_hex(0x222222), 0);
     lv_obj_set_style_bg_opa(swipe_blocker, 150, 0);

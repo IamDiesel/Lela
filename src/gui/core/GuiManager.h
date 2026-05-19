@@ -16,25 +16,14 @@ public:
     void switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type);
     ScreenID getCurrentScreen() const;
     
-    // public, damit Buttons das Menue schliessen duerfen
-    void toggleQuickOverlay();
-    
+    // public, damit Ansichten Globale Gesten abfangen koennen
     static void gestureEventWrapper(lv_event_t * e);
-    static void volumeSliderWrapper(lv_event_t * e);
-    static void brightnessSliderWrapper(lv_event_t * e);
 
     Preferences preferences;
 private:
     ScreenID currentScreen;
-    lv_obj_t* quickOverlay = nullptr;
 
     void handleGesture(lv_event_t * e);
-    
-    // Deklarationen für die Screen-Builder (werden in den View-Klassen implementiert)
-    lv_obj_t* createDashboard();
-    lv_obj_t* createCatMatPlaceholder();
-    lv_obj_t* createBabyPlaceholder();
-    lv_obj_t* createSettingsPlaceholder();
 };
 
 extern GuiManager gui;

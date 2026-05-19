@@ -61,6 +61,8 @@
 #include "VideoLogic.h"    
 #include "HaWebsocketLogic.h" 
 #include "BleLogic.h"
+#include "ViewBootScreen.h"
+
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
 extern void lvgl_port_unlock(void);

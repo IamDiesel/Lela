@@ -173,7 +173,8 @@ void HaDialogEdit::handleWidgetDeleteDrop(HAWidget* w) {
         lv_obj_set_size(panel, 500, 250); lv_obj_center(panel);
         lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
 
-        UIHelper::createLabel(panel, "Widget loeschen?", &lv_font_montserrat_24, LV_ALIGN_TOP_MID, 0, 30);
+        lv_obj_t* lbl_del = UIHelper::createLabel(panel, "Widget loeschen?", &lv_font_montserrat_24, LV_ALIGN_TOP_MID, 0, 30);
+        lv_obj_set_style_text_color(lbl_del, lv_color_white(), 0);
         
         UIHelper::createButton(panel, 200, 60, LV_ALIGN_BOTTOM_RIGHT, -20, -30, 0xAA0000, "Ja, loeschen", [](lv_event_t* e) {
             HAWidget* wid = (HAWidget*)lv_event_get_user_data(e);
