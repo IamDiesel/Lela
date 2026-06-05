@@ -293,15 +293,39 @@ void HASensorWidget::updateState(String state) {
         c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
     }
     
+    uint32_t c_off_val = 0x888888; // Grau als Fallback fuer "Aus"
+    if (color_off.length() > 0 && color_off.startsWith("#")) {
+        c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
+    }
+
+    uint32_t active_color = c_on_val;
+    String display_text = state;
+    
+    // ==============================================================
+    // BUGFIX 1: Status & Farbe fuer binary_sensor auswerten
+    // ==============================================================
+    if (entity_id.startsWith("binary_sensor.")) {
+        // Logik: Ist der Sensor in einem aktiven Zustand?
+        bool isActive = (state == "on" || state == "open" || state == "home" || state == "true" || state == "1");
+        active_color = isActive ? c_on_val : c_off_val;
+        
+        // Uebersetzung in lesbare deutsche Texte
+        if (state == "on") display_text = "An";
+        else if (state == "off") display_text = "Aus";
+        else if (state == "open") display_text = "Offen";
+        else if (state == "closed") display_text = "Zu";
+        else if (state == "home") display_text = "Zuhause";
+        else if (state == "not_home") display_text = "Abwesend";
+    }
+    
     if (!show_chart) {
-        lv_obj_set_style_text_color(icon_label, lv_color_hex(c_on_val), 0);
+        lv_obj_set_style_text_color(icon_label, lv_color_hex(active_color), 0);
     } else if (ser) { 
-        lv_chart_set_series_color(chart, ser, lv_color_hex(c_on_val)); 
-        lv_obj_set_style_bg_color(chart, lv_color_hex(c_on_val), LV_PART_ITEMS); 
+        lv_chart_set_series_color(chart, ser, lv_color_hex(active_color)); 
+        lv_obj_set_style_bg_color(chart, lv_color_hex(active_color), LV_PART_ITEMS); 
     }
     
     String unit = HaWebsocketLogic_GetUnit(entity_id); 
-    String display_text = state;
     
     if (unit.length() > 0 && state != "unavailable" && state != "unknown") {
         display_text += " #888888 " + unit + "#"; 
@@ -331,5 +355,19 @@ void HASensorWidget::updateState(String state) {
     }
 }
 
+// ==============================================================
+// BUGFIX 2: Die tap_action ausführen
+// ==============================================================
 void HASensorWidget::onClick() {
+    // Wenn in der Dashboard-Konfiguration explizit eine Aktion vergeben wurde:
+    if (tap_domain.length() > 0 && tap_service.length() > 0) {
+        String target = tap_target.length() > 0 ? tap_target : entity_id;
+        
+        // Die Signatur hängt von deiner Websocket-Logik ab. 
+        // Oftmals heisst sie "HaWebsocketLogic_CallService" oder ähnlich.
+        // Falls der Compiler hier meckert, passe den Methodennamen bitte exakt
+        // an den an, den ihr in der HaWebsocketLogic vorgesehen habt!
+        extern void HaWebsocketLogic_CallService(String domain, String service, String entity);
+        HaWebsocketLogic_CallService(tap_domain, tap_service, target);
+    }
 }

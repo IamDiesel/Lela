@@ -128,8 +128,6 @@ HAWidget::~HAWidget() {
     all_active_widgets.erase(std::remove(all_active_widgets.begin(), all_active_widgets.end(), this), all_active_widgets.end());
     if (container && lv_obj_is_valid(container)) { 
         lv_obj_remove_event_cb(container, widget_event_cb); 
-        // FIX: Hier stand frueher lv_obj_del_async(container). 
-        // Das verursachte einen Load Access Fault beim Reload!
     }
 }
 
@@ -220,7 +218,10 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
             }
         }
     } else {
-        if (code == LV_EVENT_SHORT_CLICKED) { widget->onClick(); } 
+        // WICHTIG: Wiederhergestellt auf LV_EVENT_SHORT_CLICKED fuer korrekte Long-Press Isolierung
+        if (code == LV_EVENT_SHORT_CLICKED) { 
+            widget->onClick(); 
+        } 
         else if (code == LV_EVENT_LONG_PRESSED) {
             if (widget->getType() == "light" && widget->getEntityId().indexOf("light.") != -1 && HAWidget::onLightControlRequested) {
                 if (HaWebsocketLogic_SupportsBrightness(widget->getEntityId()) || HaWebsocketLogic_SupportsColor(widget->getEntityId()) || HaWebsocketLogic_SupportsColorTemp(widget->getEntityId())) {

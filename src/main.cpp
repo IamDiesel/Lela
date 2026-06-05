@@ -226,6 +226,12 @@ void loop() {
         if (vidFSMode) {
             if (fs_start_time == 0) fs_start_time = millis();
             if (millis() - fs_start_time > 500 && M5.Touch.getCount() > 0) {
+                // ==========================================================
+                // BUGFIX: HARDWARE SYNC BEIM BEENDEN DES VOLLBILDS
+                // ==========================================================
+                M5.Display.waitDisplay(); // Warten bis das Video-Frame 100% gezeichnet ist
+                // ==========================================================
+                
                 vidFSMode = false;
                 fs_start_time = 0;
                 ViewBaby_ExitFS(); 
@@ -237,13 +243,11 @@ void loop() {
         lvgl_port_unlock();
     }
     
-    // Uebergabe des ermittelten Status an die BleLogic!
     BleLogic_SetDongleReady(dongleIsPhysicallyConnected);
 
     SystemLogic_Update(); 
     WebSetupLogic_Update();
 
-    // CPU-Drosselung (Smart Sleep)
     if (M5.Display.getBrightness() == 0) {
         delay(100); 
     } else {

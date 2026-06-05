@@ -32,7 +32,6 @@ static TaskHandle_t videoTaskHandle = NULL;
 static lgfx::PPASrm* ppa_srm = nullptr;
 static jpeg_decoder_handle_t jpeg_engine = NULL;
 
-//#define MAX_JPEG_DOWNLOAD_SIZE 150000  
 // Temporaerer Diagnose-Test:
 #define MAX_JPEG_DOWNLOAD_SIZE 150000  
 #define MAX_PIXEL_BUF_SIZE (1280 * 960 * 2) 
@@ -124,6 +123,12 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                         float zoom_y = 720.0f / pic_info.height;
                         float zoom = (zoom_x < zoom_y) ? zoom_x : zoom_y; 
                         
+                        // ==========================================================
+                        // BUGFIX: HARDWARE-MUTEX FUER PPA & DMA
+                        // ==========================================================
+                        M5.Display.waitDisplay(); // Warten, bis eventuelle DMA-Transfers (z.B. LVGL) fertig sind
+                        M5.Display.startWrite();  // Hardware-Bus exklusiv fuer diesen Task sperren
+                        
                         ppa_srm->pushImageSRM((1280 - (int)(pic_info.width*zoom)) / 2, 
                                              (720 - (int)(pic_info.height*zoom)) / 2, 
                                              0, 0, 0, zoom, zoom, pic_info.width, pic_info.height, (uint16_t*)out_buf);
@@ -134,6 +139,9 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                             M5.Display.setFont(&fonts::FreeSansBold18pt7b);
                             M5.Display.printf("FPS: %d ", currentFps);
                         }
+                        
+                        M5.Display.endWrite(); // Hardware-Bus wieder freigeben
+                        // ==========================================================
                     } else {
                         if (lvgl_port_lock(0)) { 
                             cam_img_dsc[read_idx].header.w = pic_info.width; 
@@ -223,7 +231,6 @@ static void videoTask(void * pvParameters) {
                                         int h = rStr.substring(xIdx + 1).toInt();
                                         int area = w * h;
 
-                                        // Kleinstmoegliche Aufloesung merken (Fallback fuer extreme Faelle)
                                         if (area < minArea && area > 0) { 
                                             minArea = area; minW = w; minH = h; 
                                         }
@@ -233,7 +240,6 @@ static void videoTask(void * pvParameters) {
                                             break;
                                         }
 
-                                        // Suche die groesste Aufloesung, die noch kleiner/gleich der angeforderten ist
                                         if (area <= reqArea && area > bestArea) {
                                             bestArea = area;
                                             fallbackW = w;
@@ -246,7 +252,7 @@ static void videoTask(void * pvParameters) {
                                     if (bestArea > 0) {
                                         finalW = fallbackW; finalH = fallbackH;
                                     } else if (minW > 0) {
-                                        finalW = minW; finalH = minH; // Absoluter Fallback
+                                        finalW = minW; finalH = minH; 
                                     }
                                 }
                             }
@@ -302,9 +308,6 @@ static void videoTask(void * pvParameters) {
         jpeg_del_decoder_engine(jpeg_engine);
         jpeg_engine = NULL;
     }
-    
-    // WICHTIG: Die Puffer werden hier NICHT mehr mit heap_caps_free geloescht!
-    // Sie bleiben fuer den naechsten Start unangetastet im RAM liegen.
     
     videoTaskHandle = NULL;
     vTaskDelete(NULL); 
