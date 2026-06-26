@@ -64,7 +64,6 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
         );
     }
     else if (wDef.type == "folder") {
-        // --- NEU in diesem Code-Block (aber aus Schritt 2 uebernommen) ---
         HAFolderWidget* folder = new HAFolderWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
@@ -72,10 +71,16 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
         );
         
         for (const auto& childDef : wDef.children) {
-            HAWidget* child = HaWidgetFactory::createWidget(folder->getContainer(), tab_idx, childDef);
+            // FIX: Das Kind-Widget erbt die exakten absoluten Dimensionen des Ordners!
+            HAWidgetDef realChildDef = childDef;
+            realChildDef.w = wDef.w; 
+            realChildDef.h = wDef.h; 
+            
+            HAWidget* child = HaWidgetFactory::createWidget(folder->getContainer(), tab_idx, realChildDef);
             if (child) {
                 lv_obj_set_pos(child->getContainer(), 0, 0);
-                lv_obj_set_size(child->getContainer(), LV_PCT(100), LV_PCT(100));
+                // LV_PCT(100) Hack restlos entfernt. Das Widget kennt nun beim Bauen seine absolute 
+                // Pixelbreite und berechnet alle internen Labels direkt korrekt.
                 folder->addChild(child, childDef);
             }
         }
@@ -120,7 +125,6 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
         new_widget->setBakedOptions(wDef.select_options);
         new_widget->setBakedLimits(wDef.slider_min, wDef.slider_max, wDef.slider_step);
 
-        // --- NEU: Die Bedingungen beim Erzeugen an das Widget uebergeben ---
         new_widget->setConditions(wDef.conditions_type, wDef.conditions);
     }
 
@@ -172,7 +176,6 @@ HAWidgetDef HaWidgetFactory::createDefFromWidget(HAWidget* w) {
     def.slider_max = w->getBakedMax();
     def.slider_step = w->getBakedStep();
 
-    // --- NEU: Die Bedingungen beim Speichern in die Def zurueckschreiben ---
     def.conditions_type = w->getConditionsType();
     def.conditions = w->getConditions();
 

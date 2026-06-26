@@ -60,7 +60,9 @@ String getIconForEntity(String entity_id, String mdi_icon) {
         }
     }
     
-    if (entity_id.indexOf("switch.") != -1 || entity_id.indexOf("input_boolean.") != -1 || entity_id.indexOf("button.") != -1 || entity_id.indexOf("input_button.") != -1) {
+    if (entity_id.indexOf("switch.") != -1 || entity_id.indexOf("input_boolean.") != -1 || 
+        entity_id.indexOf("button.") != -1 || entity_id.indexOf("input_button.") != -1 ||
+        entity_id.indexOf("binary_sensor.") != -1) {
         String icon = getAutoIcon("mdi:power");
         if (icon != "") return icon;
         icon = getAutoIcon("mdi:toggle-switch");
@@ -102,6 +104,13 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
     lv_obj_set_style_bg_color(container, lv_color_hex(0x222222), 0); 
     lv_obj_set_style_border_width(container, 2, 0);
     lv_obj_set_style_border_color(container, lv_color_hex(0x555555), 0);
+    
+    // =========================================================================
+    // BUGFIX: PADDING AUF 0 ERZWINGEN!
+    // Entfernt das unsichtbare Theme-Polster. Verhindert, dass Kind-Widgets 
+    // im Ordner nach rechts unten verschoben werden und der Rand abfällt.
+    // =========================================================================
+    lv_obj_set_style_pad_all(container, 0, 0);
     
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLL_CHAIN); 
@@ -155,7 +164,20 @@ void HAWidget::setAlignments(int i_align, int t_align, int s_align, int i_margin
 void HAWidget::setName(String n) { widget_name = formatEntityName(entity_id, n); lv_label_set_text(name_label, widget_name.c_str()); }
 void HAWidget::setMdiIcon(String mdi) { mdi_icon = mdi; lv_label_set_text(icon_label, getIconForEntity(entity_id, mdi_icon).c_str()); }
 void HAWidget::setColors(String on, String off) { color_on = on; color_off = off; String old = current_state; current_state = "force_update"; updateState(old); }
-void HAWidget::setSize(int w, int h) { lv_obj_set_size(container, w, h); lv_obj_set_size(name_label, w - 20, 45); setAlignments(icon_align, text_align, state_align, icon_margin, text_margin, state_margin); }
+
+void HAWidget::setSize(int w, int h) {
+    lv_obj_set_size(container, w, h);
+    
+    if (w >= 20) {
+        lv_obj_set_size(name_label, w - 20, 45);
+    } else {
+        lv_obj_set_width(name_label, LV_PCT(80));
+        lv_obj_set_height(name_label, 45);
+    }
+    
+    setAlignments(icon_align, text_align, state_align, icon_margin, text_margin, state_margin); 
+}
+
 void HAWidget::setPosition(int x, int y, bool snap) { this->snap_to_grid = snap; if (snap) lv_obj_align(container, LV_ALIGN_TOP_LEFT, x, y); else lv_obj_set_pos(container, x, y); }
 void HAWidget::setSnapToGrid(bool snap) { this->snap_to_grid = snap; }
 void HAWidget::setChartConfig(bool show, int w_p, int h_p, int x_ofs, int y_ofs, String c_min, String c_max) { show_chart = show; chart_w_pct = w_p; chart_h_pct = h_p; chart_x_ofs = x_ofs; chart_y_ofs = y_ofs; chart_min = c_min; chart_max = c_max; }
@@ -218,7 +240,6 @@ void HAWidget::widget_event_cb(lv_event_t * e) {
             }
         }
     } else {
-        // WICHTIG: Wiederhergestellt auf LV_EVENT_SHORT_CLICKED fuer korrekte Long-Press Isolierung
         if (code == LV_EVENT_SHORT_CLICKED) { 
             widget->onClick(); 
         } 
