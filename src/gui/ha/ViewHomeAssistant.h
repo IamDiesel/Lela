@@ -18,11 +18,9 @@ public:
     static volatile bool pendingHaReload;
     static uint16_t currentActiveTab;
 
-    // FIX: Diese muessen public sein, damit GuiManager und HaDialogAdd sie nutzen koennen!
     static void clearWidgets();
     static String generateEntityId(String type, String input);
     
-    // --- FIX: Methode nach public verschoben, damit DialogFolder und DialogAdd sie aufrufen duerfen ---
     static void helper_saveWidgets(); 
 
 private:

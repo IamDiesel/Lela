@@ -35,7 +35,12 @@ static lv_obj_t* btn_back = nullptr;
 
 void ViewHomeAssistant::helper_loadWidgets() {
     clearWidgets();
-    HaConfigLogic::Load();
+    
+    // WICHTIGER FIX: Flash-Speicher nur auslesen, wenn er leer ist.
+    if (HaConfigLogic::dashboards.empty()) {
+        HaConfigLogic::Load();
+    }
+    
     HaWebsocketLogic_UpdateTrackedEntities();
     
     tab_pages.clear();
@@ -87,6 +92,10 @@ void ViewHomeAssistant::helper_saveWidgets() {
     
     HaConfigLogic::Save();
     HaWebsocketLogic_UpdateTrackedEntities(); 
+    
+    // NEU: Damit nach dem Editieren die frischen Werte der neuen Widgets geholt werden!
+    HaEntityCache::triggerRestStateFetch = true; 
+    
     pendingHaReload = true;
 }
 
@@ -116,7 +125,7 @@ void ViewHomeAssistant::btn_back_event_cb(lv_event_t * e) {
         HAWidget::editModeActive = false; 
         pendingHaReload = true; 
     } else {
-        gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
     }
 }
 
@@ -150,6 +159,11 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
 }
 
 lv_obj_t* ViewHomeAssistant::build() {
+    if (pendingHaReload) {
+        clearWidgets(); 
+        pendingHaReload = false;
+    }
+
     trash_btn = nullptr; 
 
     HaDialogEdit::resetState(); 
@@ -165,8 +179,6 @@ lv_obj_t* ViewHomeAssistant::build() {
 
     pendingHaReload = false; 
     HAWidget::editModeActive = false; 
-    
-    HaWebsocketLogic_Start();
     
     HAWidget::onEditRequested = HaDialogEdit::showWidgetEditDialog;
     HAWidget::onDeleteRequested = HaDialogEdit::handleWidgetDeleteDrop;
@@ -277,7 +289,6 @@ void ViewHomeAssistant::update() {
         
         for (HAWidget* w : widgets) {
             String state = HaWebsocketLogic_GetState(w->getEntityId());
-            // --- FIX: Erlaube auch dem Ordner, Updates anzunehmen, um sie weiterzureichen! ---
             if (state.length() > 0 || w->getType() == "folder") {
                 w->updateState(state);
             }

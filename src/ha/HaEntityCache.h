@@ -55,8 +55,7 @@ public:
     static float GetGlobalMin(String entity_id);
     static float GetGlobalMax(String entity_id);
     static float GetGlobalStep(String entity_id);
-
-private:
+    
     static SemaphoreHandle_t mutex;
     static std::vector<String> trackedEntities;
     static std::map<String, String> globalEntityMap;
@@ -65,6 +64,9 @@ private:
     static std::map<String, float> globalMinMap;
     static std::map<String, float> globalMaxMap;
     static std::map<String, float> globalStepMap;
+
+private:
+
 
     static std::map<String, String> states;
     static std::map<String, String> icons;

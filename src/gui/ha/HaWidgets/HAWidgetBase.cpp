@@ -59,6 +59,14 @@ String getIconForEntity(String entity_id, String mdi_icon) {
             start = end + 1;
         }
     }
+
+    // Wenn kein Icon explizit fuer das Lela-Widget gesetzt wurde,
+    // versuche das Icon zu nehmen, was in Home Assistant konfiguriert ist (Cached Icon).
+    String ha_cached_icon = HaWebsocketLogic_GetCachedIcon(entity_id);
+    if (ha_cached_icon.length() > 4) {
+        String found = getAutoIcon(ha_cached_icon);
+        if (found != "") return found;
+    }
     
     if (entity_id.indexOf("switch.") != -1 || entity_id.indexOf("input_boolean.") != -1 || 
         entity_id.indexOf("button.") != -1 || entity_id.indexOf("input_button.") != -1 ||
@@ -93,7 +101,7 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
     this->tab_index = tab_idx; this->type = type; this->entity_id = entity; 
     this->mdi_icon = mdi; this->color_on = c_on; this->color_off = c_off; 
     this->widget_name = formatEntityName(entity_id, String(name));
-    this->current_state = "unknown";
+    this->current_state = "";
     
     this->icon_align = LV_ALIGN_TOP_MID; this->text_align = LV_ALIGN_BOTTOM_MID; this->state_align = LV_ALIGN_CENTER;
     this->icon_margin = 5; this->text_margin = 5; this->state_margin = 0; this->snap_to_grid = true; 
@@ -200,7 +208,12 @@ int HAWidget::getChartXOfs() { return chart_x_ofs; } int HAWidget::getChartYOfs(
 String HAWidget::getChartMin() { return chart_min; } String HAWidget::getChartMax() { return chart_max; }
 String HAWidget::getMediaContentType() { return ""; } String HAWidget::getMediaContentId() { return ""; }
 
-void HAWidget::updateState(String state) { this->current_state = state; }
+void HAWidget::updateState(String state) { 
+    this->current_state = state; 
+    if (this->icon_label != nullptr) {
+        lv_label_set_text(this->icon_label, getIconForEntity(this->entity_id, this->mdi_icon).c_str());
+    }
+}
 
 void HAWidget::widget_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
@@ -268,6 +281,8 @@ HALightWidget::HALightWidget(lv_obj_t* parent, int tab_idx, String type, String 
 
 void HALightWidget::updateState(String state) {
     if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) {
+        // Force icon refresh to support live-editing Custom Icons
+        lv_label_set_text(icon_label, getIconForEntity(entity_id, mdi_icon).c_str());
         return; 
     }
     
