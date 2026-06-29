@@ -30,15 +30,10 @@ static void anim_walk_ready_cb(lv_anim_t * a) {
     lv_line_set_points(cat, sit_pts, 11);
 }
 
-// --- FIX: Sicherer Wechsel in den Dashboard-Screen ohne LVGL zu crashen ---
-static void switch_to_dashboard(void * param) {
+static void splash_timer_cb(lv_timer_t * timer) {
+    lv_anim_del_all(); 
     splash_status_label = nullptr; 
     gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE);
-}
-
-static void splash_timer_cb(lv_timer_t * timer) {
-    // LVGL-Sicherer asynchroner Aufruf im naechsten Frame
-    lv_async_call(switch_to_dashboard, NULL);
 }
 
 void ViewBootScreen::show() {

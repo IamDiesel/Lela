@@ -283,10 +283,6 @@ void HASensorWidget::setAlignments(int i_align, int t_align, int s_align, int i_
 
 void HASensorWidget::updateState(String state) {
     if (this->current_state == state) {
-        // Force icon refresh to support live-editing Custom Icons
-        if (!show_chart && unit_label == nullptr) {
-            lv_label_set_text(icon_label, getIconForEntity(entity_id, mdi_icon).c_str());
-        }
         return; 
     }
     

@@ -5,7 +5,7 @@
 #include "ViewSettings.h"
 #include "ViewQuickSettings.h"
 #include "ViewBootScreen.h"
-#include "ViewPower.h" 
+#include "ViewPower.h" // NEU
 #include "LVGL_Driver.h" 
 #include "SharedData.h" 
 #include <WiFi.h>       
@@ -19,7 +19,6 @@ GuiManager gui;
 void GuiManager::init() {
     currentScreen = (ScreenID)99; 
 
-    HaWebsocketLogic_Start();   // HA Hintergrund-Dienst starten
     ViewPower::init();          // Timer fuer Display-Wakeup bei Alarmen
     ViewBootScreen::show();     // Vektorgrafiken und Ladesequenz
 }
@@ -38,11 +37,10 @@ void GuiManager::switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type) 
     }
 
     if (newScreen == SCREEN_HA) {
-        // HaWebsocketLogic_Start(); // Wird nun global in init() gestartet
+        HaWebsocketLogic_Start();
     } else if (currentScreen == SCREEN_HA && newScreen != SCREEN_HA) {
-        // WICHTIG: Alter Screen wird sauber aus RAM geloescht, um Fehler zu vermeiden!
-        ViewHomeAssistant::clearWidgets(); 
-        // HaWebsocketLogic_Stop(); // Websocket laeuft im Hintergrund weiter!
+        ViewHomeAssistant::clearWidgets();
+        HaWebsocketLogic_Stop(); 
     }
 
     ViewQuickSettings::hide();
@@ -72,9 +70,7 @@ void GuiManager::switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type) 
     }
     
     if (nextScr != nullptr) {
-        // FIX: Wir ignorieren aufwaendige Slide-Animationen und erzwingen einen sauberen Schnitt (NONE),
-        // damit der ESP32 die 1280x720 Pixel nicht in Zeitlupe ueber den Bildschirm ziehen muss.
-        lv_scr_load_anim(nextScr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+        lv_scr_load_anim(nextScr, anim_type, 0, 0, true);
         currentScreen = newScreen;
     }
 }
@@ -101,7 +97,6 @@ void GuiManager::handleGesture(lv_event_t * e) {
     }
     
     if (!ViewQuickSettings::isActive()) {
-        // --- FIX: ALLE WECHSEL WIEDER AUF 'LV_SCR_LOAD_ANIM_NONE' GEAENDERT ---
         if (currentScreen == SCREEN_DASHBOARD) {
             if (dir == LV_DIR_LEFT) {
                 switchScreen(SCREEN_CATMAT, LV_SCR_LOAD_ANIM_NONE);

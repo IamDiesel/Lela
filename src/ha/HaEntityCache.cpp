@@ -123,67 +123,30 @@ void HaEntityCache::UpdateTrackedEntities() {
 // -----------------------------------------------------
 
 void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
-    // --- 1. ZERO-ALLOCATION CHECK & EARLY EXIT ---
-    // Wir holen die ID als C-Pointer. Kostet 0 Byte RAM und 0 CPU-Zeit.
-    const char* entity_id_c = doc["entity_id"] | "";
-    if (!entity_id_c || entity_id_c[0] == '\0') return;
+    String entity_id = doc["entity_id"].as<String>();
 
-    // Blitzschnelle Pruefung (ohne String-Objekte!), ob die Domaene fuer das System relevant ist
-    bool is_supported_domain = (
-        strncmp(entity_id_c, "light.", 6) == 0 || 
-        strncmp(entity_id_c, "switch.", 7) == 0 || 
-        strncmp(entity_id_c, "select.", 7) == 0 || 
-        strncmp(entity_id_c, "input_select.", 13) == 0 || 
-        strncmp(entity_id_c, "number.", 7) == 0 || 
-        strncmp(entity_id_c, "input_number.", 13) == 0 ||
-        strncmp(entity_id_c, "text.", 5) == 0 || 
-        strncmp(entity_id_c, "input_text.", 11) == 0 || 
-        strncmp(entity_id_c, "cover.", 6) == 0 || 
-        strncmp(entity_id_c, "climate.", 8) == 0 || 
-        strncmp(entity_id_c, "vacuum.", 7) == 0 || 
-        strncmp(entity_id_c, "media_player.", 13) == 0 ||
-        strncmp(entity_id_c, "button.", 7) == 0 || 
-        strncmp(entity_id_c, "input_button.", 13) == 0
-    );
-
-    // Pruefen, ob sie aktuell auf dem Bildschirm liegt
-    bool isTracked = false;
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        for (size_t i = 0; i < trackedEntities.size(); i++) {
-            if (trackedEntities[i].equals(entity_id_c)) {
-                isTracked = true;
-                break;
-            }
-        }
-        xSemaphoreGive(mutex);
-    }
-
-    // --- DER SPEED-BOOST ---
-    // Wenn 90% der Junk-Entitaeten (Sensoren, Wetter, Updates) weder auf dem Screen 
-    // noch im Add-Menu gebraucht werden, brechen wir HIER ab. Kein Mutex-Lock!
-    if (!is_supported_domain && !isTracked) {
-        return; 
-    }
-
-    // --- 2. AB HIER WIE GEWOHNT ---
-    // Wir locken den Mutex nur noch fuer die wenigen, wirklich benoetigten Entitaeten!
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
-        String entity_id = entity_id_c; // Jetzt erst wird der RAM beansprucht
         String f_name = "";
         JsonObject attr = doc["attributes"];
         if (!attr.isNull() && !attr["friendly_name"].isNull()) {
             f_name = attr["friendly_name"].as<String>();
         }
         
-        // Globale Maps (Fuer das Add-Widget Menue)
-        if (is_supported_domain) {
+        if (entity_id.startsWith("light.") || entity_id.startsWith("switch.") || 
+            entity_id.startsWith("select.") || entity_id.startsWith("input_select.") || 
+            entity_id.startsWith("number.") || entity_id.startsWith("input_number.") ||
+            entity_id.startsWith("text.") || entity_id.startsWith("input_text.") || 
+            entity_id.startsWith("cover.") || entity_id.startsWith("climate.") || 
+            entity_id.startsWith("vacuum.") || entity_id.startsWith("media_player.") ||
+            entity_id.startsWith("button.") || entity_id.startsWith("input_button.")) {
+            
             if (globalEntityMap.size() < 300) {
                 globalEntityMap[entity_id] = f_name;
             }
         }
 
         if (!attr.isNull()) {
-            if (strncmp(entity_id_c, "select.", 7) == 0 || strncmp(entity_id_c, "input_select.", 13) == 0) {
+            if (entity_id.startsWith("select.") || entity_id.startsWith("input_select.")) {
                 if (attr["options"].is<JsonArray>()) {
                     globalOptionsMap[entity_id].clear();
                     for (JsonVariant v : attr["options"].as<JsonArray>()) {
@@ -191,13 +154,13 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     }
                 }
             }
-            else if (strncmp(entity_id_c, "number.", 7) == 0 || strncmp(entity_id_c, "input_number.", 13) == 0 || 
-                     strncmp(entity_id_c, "text.", 5) == 0 || strncmp(entity_id_c, "input_text.", 11) == 0) {
+            else if (entity_id.startsWith("number.") || entity_id.startsWith("input_number.") || 
+                     entity_id.startsWith("text.") || entity_id.startsWith("input_text.")) {
                 if (!attr["min"].isNull()) globalMinMap[entity_id] = attr["min"].as<float>();
                 if (!attr["max"].isNull()) globalMaxMap[entity_id] = attr["max"].as<float>();
                 if (!attr["step"].isNull()) globalStepMap[entity_id] = attr["step"].as<float>();
             }
-            else if (strncmp(entity_id_c, "climate.", 8) == 0) {
+            else if (entity_id.startsWith("climate.")) {
                 if (attr["hvac_modes"].is<JsonArray>()) {
                     globalOptionsMap[entity_id].clear();
                     for (JsonVariant v : attr["hvac_modes"].as<JsonArray>()) {
@@ -210,8 +173,7 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
             }
         }
 
-        // Live-Daten (Fuer die aktuell angezeigten Widgets)
-        if (isTracked) {
+        if (std::find(trackedEntities.begin(), trackedEntities.end(), entity_id) != trackedEntities.end()) {
             states[entity_id] = doc["state"].as<String>();
             
             if (!attr.isNull()) {
@@ -231,7 +193,7 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                 if (!attr["max"].isNull()) maxMap[entity_id] = attr["max"].as<float>();
                 if (!attr["step"].isNull()) stepMap[entity_id] = attr["step"].as<float>();
                 
-                if (strncmp(entity_id_c, "light.", 6) == 0) {
+                if (entity_id.startsWith("light.")) {
                     brightness[entity_id] = attr["brightness"] | -1;
                     colorTemp[entity_id] = attr["color_temp"] | -1;
                     bool s_bri = false; bool s_col = false; bool s_tmp = false; isRGBW[entity_id] = false;
@@ -259,7 +221,7 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     if (!rgbw_color.isNull() && rgbw_color.size() >= 4) white[entity_id] = rgbw_color[3];
                     else white[entity_id] = -1;
                 } 
-                else if (strncmp(entity_id_c, "media_player.", 13) == 0) {
+                else if (entity_id.startsWith("media_player.")) {
                     mediaTitle[entity_id] = attr["media_title"] | "";
                     mediaArtist[entity_id] = attr["media_artist"] | "";
                     mediaVolume[entity_id] = attr["volume_level"] | -1.0f;
@@ -269,11 +231,11 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                         for (JsonVariant v : s_list) sourceList[entity_id].push_back(v.as<String>());
                     }
                 }
-                else if (strncmp(entity_id_c, "cover.", 6) == 0) {
+                else if (entity_id.startsWith("cover.")) {
                     if (!attr["current_position"].isNull()) positionMap[entity_id] = attr["current_position"].as<int>();
                     else positionMap[entity_id] = -1;
                 }
-                else if (strncmp(entity_id_c, "climate.", 8) == 0) {
+                else if (entity_id.startsWith("climate.")) {
                     if (!attr["current_temperature"].isNull()) currentTemperatureMap[entity_id] = attr["current_temperature"].as<float>();
                     else currentTemperatureMap[entity_id] = -99.0f; 
 

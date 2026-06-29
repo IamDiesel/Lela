@@ -20,8 +20,6 @@ HAMediaWidget::HAMediaWidget(lv_obj_t* parent, int tab_idx, String type, String 
 
 void HAMediaWidget::updateState(String state) {
     if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) {
-        // Force icon refresh to support live-editing Custom Icons
-        lv_label_set_text(icon_label, getIconForEntity(entity_id, mdi_icon).c_str());
         return; 
     }
     
