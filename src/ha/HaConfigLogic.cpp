@@ -4,6 +4,8 @@
 #include <algorithm> 
 #include "lvgl.h" 
 #include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 class ConfigRamAllocator : public ArduinoJson::Allocator {
 public:
@@ -15,14 +17,18 @@ static ConfigRamAllocator configAlloc;
 
 std::vector<HADashboardDef> HaConfigLogic::dashboards;
 
+// --- NEU: Rekursiver Mutex fuer absolute Thread-Sicherheit ---
+static SemaphoreHandle_t configMutex = NULL;
+
 void HaConfigLogic::Init() {
+    if (configMutex == NULL) configMutex = xSemaphoreCreateRecursiveMutex();
     if (!LittleFS.begin(true)) {
         Serial.println("LittleFS Mount Failed");
     }
     Load(); 
 }
 
-// --- NEU: Rekursiver Helfer zum Deserialisieren (Laden) von Widgets und deren Kindern ---
+// --- Rekursiver Helfer zum Deserialisieren (Laden) von Widgets ---
 static void deserializeWidget(JsonObject wObj, HAWidgetDef& wDef) {
     if (!wObj["entity"].isNull()) wDef.entity_id = wObj["entity"].as<String>();
     if (!wObj["type"].isNull()) wDef.type = wObj["type"].as<String>();
@@ -67,7 +73,6 @@ static void deserializeWidget(JsonObject wObj, HAWidgetDef& wDef) {
     wDef.slider_max = wObj["slider_max"] | 100.0f;
     wDef.slider_step = wObj["slider_step"] | 1.0f;
 
-    // --- NEU: Laden der Bedingungen ---
     wDef.conditions_type = wObj["conditions_type"] | "AND";
     if (wObj["conditions"].is<JsonArray>()) {
         for (JsonObject j_c : wObj["conditions"].as<JsonArray>()) {
@@ -79,7 +84,6 @@ static void deserializeWidget(JsonObject wObj, HAWidgetDef& wDef) {
         }
     }
 
-    // --- NEU: Laden der Kinder-Widgets ---
     if (wObj["children"].is<JsonArray>()) {
         for (JsonObject j_child : wObj["children"].as<JsonArray>()) {
             HAWidgetDef childDef;
@@ -89,7 +93,7 @@ static void deserializeWidget(JsonObject wObj, HAWidgetDef& wDef) {
     }
 }
 
-// --- NEU: Rekursiver Helfer zum Serialisieren (Speichern) von Widgets und deren Kindern ---
+// --- Rekursiver Helfer zum Serialisieren (Speichern) von Widgets ---
 static void serializeWidget(JsonObject wObj, const HAWidgetDef& w) {
     wObj["entity"] = w.entity_id;
     wObj["type"] = w.type;
@@ -131,7 +135,6 @@ static void serializeWidget(JsonObject wObj, const HAWidgetDef& w) {
     wObj["slider_max"] = w.slider_max;
     wObj["slider_step"] = w.slider_step;
 
-    // --- NEU: Speichern der Bedingungen ---
     if (w.conditions.size() > 0) {
         wObj["conditions_type"] = w.conditions_type;
         JsonArray j_conds = wObj["conditions"].to<JsonArray>();
@@ -143,7 +146,6 @@ static void serializeWidget(JsonObject wObj, const HAWidgetDef& w) {
         }
     }
 
-    // --- NEU: Speichern der Kinder-Widgets ---
     if (w.children.size() > 0) {
         JsonArray j_children = wObj["children"].to<JsonArray>();
         for (const auto& child : w.children) {
@@ -154,67 +156,134 @@ static void serializeWidget(JsonObject wObj, const HAWidgetDef& w) {
 }
 
 void HaConfigLogic::Load() {
-    dashboards.clear();
+    if (configMutex == NULL) configMutex = xSemaphoreCreateRecursiveMutex();
     
-    if (!LittleFS.exists("/ha_config.json")) {
-        HADashboardDef defTab;
-        defTab.name = "Wohnen";
-        dashboards.push_back(defTab);
-        Save();
-        return;
-    }
-
-    File file = LittleFS.open("/ha_config.json", "r");
-    if (!file) return;
-
-    size_t size = file.size();
-    std::unique_ptr<char[]> buf(new char[size]);
-    file.readBytes(buf.get(), size);
-    file.close();
-
-    JsonDocument doc(&configAlloc);
-    DeserializationError error = deserializeJson(doc, buf.get());
-    if (error) return;
-
-    JsonArray tabs = doc["tabs"];
-    for (JsonObject tObj : tabs) {
-        HADashboardDef tDef;
-        tDef.name = tObj["name"] | "Tab";
+    if (xSemaphoreTakeRecursive(configMutex, portMAX_DELAY)) {
+        dashboards.clear();
         
-        JsonArray widgets = tObj["widgets"];
-        for (JsonObject wObj : widgets) {
-            HAWidgetDef wDef;
-            deserializeWidget(wObj, wDef);
-            tDef.widgets.push_back(wDef);
+        if (!LittleFS.exists("/ha_config.json")) {
+            HADashboardDef defTab;
+            defTab.name = "Wohnen";
+            dashboards.push_back(defTab);
+            Save();
+            xSemaphoreGiveRecursive(configMutex);
+            return;
         }
-        dashboards.push_back(tDef);
+
+        File file = LittleFS.open("/ha_config.json", "r");
+        if (!file) {
+            xSemaphoreGiveRecursive(configMutex);
+            return;
+        }
+
+        size_t size = file.size();
+        std::unique_ptr<char[]> buf(new char[size]);
+        file.readBytes(buf.get(), size);
+        file.close();
+
+        JsonDocument doc(&configAlloc);
+        DeserializationError error = deserializeJson(doc, buf.get());
+        if (error) {
+            xSemaphoreGiveRecursive(configMutex);
+            return;
+        }
+
+        JsonArray tabs = doc["tabs"];
+        for (JsonObject tObj : tabs) {
+            String tName = tObj["name"] | "Tab";
+            
+            // --- ANTI-DUPLICATE FIX (Selbstheilung) ---
+            // Wenn der Tab-Name bereits durch eine alte Fehl-Speicherung existiert,
+            // ueberspringen wir ihn einfach beim Laden in den Arbeitsspeicher.
+            bool exists = false;
+            for (const auto& d : dashboards) {
+                if (d.name == tName) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) continue; // Duplikat abfangen!
+
+            HADashboardDef tDef;
+            tDef.name = tName;
+            
+            JsonArray widgets = tObj["widgets"];
+            for (JsonObject wObj : widgets) {
+                HAWidgetDef wDef;
+                deserializeWidget(wObj, wDef);
+                tDef.widgets.push_back(wDef);
+            }
+            dashboards.push_back(tDef);
+        }
+        xSemaphoreGiveRecursive(configMutex);
     }
 }
 
 void HaConfigLogic::Save() {
-    JsonDocument doc(&configAlloc);
-    JsonArray tabs = doc["tabs"].to<JsonArray>();
+    if (configMutex == NULL) configMutex = xSemaphoreCreateRecursiveMutex();
     
-    for (const auto& t : dashboards) {
-        JsonObject tObj = tabs.add<JsonObject>();
-        tObj["name"] = t.name;
-        JsonArray widgets = tObj["widgets"].to<JsonArray>();
+    if (xSemaphoreTakeRecursive(configMutex, portMAX_DELAY)) {
+        JsonDocument doc(&configAlloc);
+        JsonArray tabs = doc["tabs"].to<JsonArray>();
         
-        for (const auto& w : t.widgets) {
-            JsonObject wObj = widgets.add<JsonObject>();
-            serializeWidget(wObj, w);
+        for (const auto& t : dashboards) {
+            JsonObject tObj = tabs.add<JsonObject>();
+            tObj["name"] = t.name;
+            JsonArray widgets = tObj["widgets"].to<JsonArray>();
+            
+            for (const auto& w : t.widgets) {
+                JsonObject wObj = widgets.add<JsonObject>();
+                serializeWidget(wObj, w);
+            }
         }
-    }
 
-    File file = LittleFS.open("/ha_config.json", "w");
-    if (file) {
-        serializeJson(doc, file);
-        file.close();
+        File file = LittleFS.open("/ha_config.json", "w");
+        if (file) {
+            serializeJson(doc, file);
+            file.close();
+        }
+        xSemaphoreGiveRecursive(configMutex);
     }
 }
 
-void HaConfigLogic::AddTab(String name) { HADashboardDef d; d.name = name; dashboards.push_back(d); }
-void HaConfigLogic::DeleteTab(int index) { if (index >= 0 && index < dashboards.size()) { dashboards.erase(dashboards.begin() + index); if (dashboards.size() == 0) AddTab("Wohnen"); } }
-void HaConfigLogic::RenameTab(int index, String newName) { if (index >= 0 && index < dashboards.size()) dashboards[index].name = newName; }
-void HaConfigLogic::MoveTabLeft(int index) { if (index > 0 && index < dashboards.size()) std::swap(dashboards[index], dashboards[index - 1]); }
-void HaConfigLogic::MoveTabRight(int index) { if (index >= 0 && index < dashboards.size() - 1) std::swap(dashboards[index], dashboards[index + 1]); }
+// --- Hilfsfunktionen ebenfalls absichern ---
+
+void HaConfigLogic::AddTab(String name) { 
+    if (xSemaphoreTakeRecursive(configMutex, portMAX_DELAY)) {
+        HADashboardDef d; 
+        d.name = name; 
+        dashboards.push_back(d); 
+        xSemaphoreGiveRecursive(configMutex);
+    }
+}
+
+void HaConfigLogic::DeleteTab(int index) { 
+    if (xSemaphoreTakeRecursive(configMutex, portMAX_DELAY)) {
+        if (index >= 0 && index < dashboards.size()) { 
+            dashboards.erase(dashboards.begin() + index); 
+            if (dashboards.size() == 0) AddTab("Wohnen"); 
+        } 
+        xSemaphoreGiveRecursive(configMutex);
+    }
+}
+
+void HaConfigLogic::RenameTab(int index, String newName) { 
+    if (xSemaphoreTakeRecursive(configMutex, portMAX_DELAY)) {
+        if (index >= 0 && index < dashboards.size()) dashboards[index].name = newName; 
+        xSemaphoreGiveRecursive(configMutex);
+    }
+}
+
+void HaConfigLogic::MoveTabLeft(int index) { 
+    if (xSemaphoreTakeRecursive(configMutex, portMAX_DELAY)) {
+        if (index > 0 && index < dashboards.size()) std::swap(dashboards[index], dashboards[index - 1]); 
+        xSemaphoreGiveRecursive(configMutex);
+    }
+}
+
+void HaConfigLogic::MoveTabRight(int index) { 
+    if (xSemaphoreTakeRecursive(configMutex, portMAX_DELAY)) {
+        if (index >= 0 && index < dashboards.size() - 1) std::swap(dashboards[index], dashboards[index + 1]); 
+        xSemaphoreGiveRecursive(configMutex);
+    }
+}

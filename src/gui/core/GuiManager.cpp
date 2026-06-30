@@ -13,11 +13,26 @@
 #include "ViewHomeAssistant.h" 
 #include "HAWidgets.h"
 #include "HaWebsocketLogic.h"
+#include "HaConfigLogic.h"
 
 GuiManager gui;
 
+// --- NEU: Der Fire-and-Forget Boot-Task ---
+static void configPreloadTask(void* parameter) {
+    // Initialisiert LittleFS und laedt ha_config.json direkt in den PSRAM.
+    // Läuft im Hintergrund, blockiert nicht die UI.
+    HaConfigLogic::Init();
+    
+    // Task ist fertig und beendet sich selbst (gibt seinen Arbeitsspeicher wieder frei)
+    vTaskDelete(NULL);
+}
+
 void GuiManager::init() {
     currentScreen = (ScreenID)99; 
+    
+    // --- NEU: Task auf Core 0 (Netzwerk-Kern) abfeuern ---
+    // Stacksize 8192 reicht locker, Prio 1 ist niedrig genug, um nichts zu stören.
+    xTaskCreatePinnedToCore(configPreloadTask, "Preload_HA_Config", 8192, NULL, 1, NULL, 0);
 
     ViewPower::init();          // Timer fuer Display-Wakeup bei Alarmen
     ViewBootScreen::show();     // Vektorgrafiken und Ladesequenz

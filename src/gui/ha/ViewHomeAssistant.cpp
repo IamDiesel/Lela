@@ -35,7 +35,15 @@ static lv_obj_t* btn_back = nullptr;
 
 void ViewHomeAssistant::helper_loadWidgets() {
     clearWidgets();
-    HaConfigLogic::Load();
+    
+    // --- DER BOOT-PROFIT ---
+    // Da unser neuer Task beim Booten die Datei schon eingelesen hat,
+    // ist '.empty()' hier false. Der langsame Flash-Speicher wird ignoriert!
+    // Die UI greift in 0 Millisekunden auf die PSRAM-Daten zu.
+    if (HaConfigLogic::dashboards.empty()) {
+        HaConfigLogic::Load();
+    }
+    
     HaWebsocketLogic_UpdateTrackedEntities();
     
     tab_pages.clear();
