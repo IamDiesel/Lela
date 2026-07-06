@@ -3,7 +3,7 @@
 #include "secrets.h"
 #include <ArduinoWebsockets.h>
 #include <ArduinoJson.h>
-#include <esp_heap_caps.h> // WICHTIG FUER DEN ZERO-COPY RAM!
+#include <esp_heap_caps.h> 
 
 using namespace websockets;
 
@@ -66,8 +66,10 @@ void onMessageCallback(WebsocketsMessage message) {
     
     String payload = message.data();
 
-    // 1. Live State Updates
+    // 1. Live State Updates und unser Template-Event
     if (payload.indexOf("\"type\":\"event\"") != -1 || payload.indexOf("\"type\": \"event\"") != -1) {
+        
+        // A) Normales State Changed Event
         if (payload.indexOf("\"state_changed\"") != -1) {
             JsonDocument filter; 
             filter["event"]["data"]["entity_id"] = true; 
@@ -78,9 +80,44 @@ void onMessageCallback(WebsocketsMessage message) {
                 HaEntityCache::ProcessParsedEntity(doc["event"]["data"]["new_state"]);
             }
         }
+        
+        // B) --- NEU: Das asynchrone Event für unser Template abfangen ---
+        if (payload.indexOf("\"result\":") != -1 && payload.indexOf("\"id\":" + String(getStatesReqId)) != -1) {
+             prof_req_recv = millis();
+             Serial.printf("[PROFILING] 4. 'Template' Antwort da! Latenz: %d ms, Groesse: %d Bytes\n", prof_req_recv - prof_req_sent, payload.length());
+
+             uint32_t parse_start = millis();
+
+             // KEIN PSRAM MALLOC MEHR! Wir parsen direkt aus dem RAM.
+             JsonDocument doc;
+             DeserializationError err = deserializeJson(doc, payload);
+
+             uint32_t parse_end = millis();
+             Serial.printf("[PROFILING] 5. JSON Parse dauerte: %d ms\n", parse_end - parse_start);
+
+if (!err) {
+                 uint32_t process_start = millis();
+                 
+                 JsonArray arr = doc["event"]["result"].as<JsonArray>();
+                 
+                 // --- DIE RETTUNG FÜR DEN COPROZESSOR ---
+                 // Anstatt 99x ProcessParsedEntity aufzurufen und den Mutex zu quälen,
+                 // schieben wir das ganze Array in einem Rutsch in den Cache!
+                 HaEntityCache::ProcessBulkStates(arr);
+                 
+                 uint32_t process_end = millis();
+                 Serial.printf("[PROFILING] 6. Bulk-Update dauerte: %d ms fuer %d Entities\n", process_end - process_start, arr.size());
+             } else {
+                 Serial.printf("[PROFILING] JSON ERROR: %s\n", err.c_str());
+             }
+        }
+        
+        // WICHTIG: Dieses return beendet den Callback für alle "event" Nachrichten,
+        // damit sie nicht in den Header-Check unten laufen.
         return; 
     }
 
+    // 2. Standard Header Check für alle anderen Nachrichten
     JsonDocument headerFilter;
     headerFilter["type"] = true; 
     headerFilter["id"] = true; 
@@ -95,63 +132,15 @@ void onMessageCallback(WebsocketsMessage message) {
     uint32_t msgId = headerDoc["id"] | 0;
     bool success = headerDoc["success"] | false;
 
-    // 2. Das dicke 'get_states' Paket (ZERO-COPY PARSING)
-    if (msgId == getStatesReqId && getStatesReqId > 0 && success) {
-        prof_req_recv = millis();
-        Serial.printf("[PROFILING] 4. 'get_states' Antwort da! Server-Latenz: %d ms\n", prof_req_recv - prof_req_sent);
-        Serial.printf("[PROFILING] 4a. Paketgroesse: %d Bytes\n", payload.length());
-
-        uint32_t parse_start = millis();
-
-        // --- DER ZERO-COPY FIX ---
-        // Wir reservieren einen bearbeitbaren Puffer im PSRAM und kopieren den Text hinein.
-        char* mut_buf = (char*)heap_caps_malloc(payload.length() + 1, MALLOC_CAP_SPIRAM);
-        if (!mut_buf) {
-            Serial.println("[PROFILING] ERROR: Nicht genug PSRAM fuer Zero-Copy Puffer!");
-            return;
-        }
-        strcpy(mut_buf, payload.c_str()); // Kopiert den String 1x hart in den Puffer
-
-        // --- DER FILTER FIX ---
-        JsonDocument filter;
-        filter["result"][0]["entity_id"] = true;
-        filter["result"][0]["state"] = true;
-        filter["result"][0]["attributes"] = true;
-
-        JsonDocument doc;
-        // Durch die Übergabe von mut_buf (char*) macht ArduinoJson KEINE Stringkopien mehr!
-        DeserializationError err = deserializeJson(doc, mut_buf, DeserializationOption::Filter(filter));
-
-        uint32_t parse_end = millis();
-        Serial.printf("[PROFILING] 5. JSON Zero-Copy Parse dauerte: %d ms\n", parse_end - parse_start);
-
-        if (!err) {
-            uint32_t process_start = millis();
-            
-            JsonArray arr = doc["result"].as<JsonArray>();
-            int count = 0;
-            
-            for (JsonObject entity : arr) {
-                HaEntityCache::ProcessParsedEntity(entity);
-                count++;
-                
-                // Watchdog atmen lassen
-                if (count % 25 == 0) vTaskDelay(pdMS_TO_TICKS(5));
-            }
-            
-            uint32_t process_end = millis();
-            Serial.printf("[PROFILING] 6. ProcessParsedEntity Schleife dauerte: %d ms fuer %d Entities\n", process_end - process_start, count);
-            Serial.printf("[PROFILING] === GESAMTZEIT SEIT CONNECT: %d ms ===\n\n", process_end - prof_start_connect);
-        } else {
-            Serial.printf("[PROFILING] JSON ERROR: %s\n", err.c_str());
-        }
-
-        // Puffer wieder freigeben, nachdem wir alle Daten verarbeitet haben!
-        heap_caps_free(mut_buf);
-        return;
+    // 3. ACK für das Template ignorieren
+    if (msgId == getStatesReqId && type == "result") {
+       if(!success) {
+          Serial.println("[PROFILING] ERROR: HA hat das Template abgelehnt!");
+       }
+       return; 
     }
 
-    // Media Browser Antwort
+    // 4. Media Browser Antwort
     if (msgId == lastMediaBrowseReqId && lastMediaBrowseReqId > 0) {
         if (!success) { pendingMediaBrowserError = true; return; }
         JsonDocument browseFilter;
@@ -176,7 +165,7 @@ void onMessageCallback(WebsocketsMessage message) {
         return;
     }
 
-    // Lovelace Import
+    // 5. Lovelace Import
     if (msgId == lastLovelaceReqId && lastLovelaceReqId > 0) {
         if (!success) {
             importErrorMessage = "Import fehlgeschlagen!\nHome Assistant hat die Anfrage verweigert.";
@@ -191,13 +180,13 @@ void onMessageCallback(WebsocketsMessage message) {
         return;
     }
 
-    // Dashboard Liste laden
+    // 6. Dashboard Liste laden
     if (msgId == lastLovelaceDashboardsReqId && lastLovelaceDashboardsReqId > 0) {
         if (success) HaLovelaceParser::parseDashboardList(payload);
         return;
     }
 
-    // Authentifizierung
+    // 7. Authentifizierung
     if (type == "auth_required") {
         JsonDocument authDoc;
         authDoc["type"] = "auth"; 
@@ -239,14 +228,23 @@ void haWsTask(void *pvParameters) {
                 HaEntityCache::triggerRestStateFetch = false;
                 
                 getStatesReqId = messageIdCounter++;
+                
+                // --- NEU: Wir senden das Template, statt 'get_states' ---
+                // Füge hier die JSON Liste deiner 99 Entitäten ein (kopiere sie aus dem Python Script)
+                String entityListJson = "[\"sensor.powerstream_4932_inverter_output_watts\", \"input_boolean.dobby_seg_kueche\", \"input_button.samsung_tv_info\", \"input_boolean.dobby_seg_schlafzimmer\", \"sensor.pc_daniel_power\", \"light.shelly_snowboard_rgb\", \"sensor.pixel_9_pro_next_alarm\", \"light.schlafzimmerlicht\", \"button.philips_2200_series_power_on_no_clean\", \"input_boolean.philips_alarm_daniel\", \"input_button.tv_ok\", \"switch.shelly_schlaf_arbeitszimmer\", \"input_button.samsung_tv_down\", \"sensor.bett_anne_power\", \"sensor.bett_daniel_power\", \"switch.kuche_kaffee_on\", \"switch.verdampfer_on\", \"input_button.bose_audio_voldown\", \"sensor.smart_plugs_leistungsaufnahme\", \"input_button.bose_audio_poweron\", \"button.philips_2200_series_power_off\", \"switch.pc_daniel_on\", \"light.switchbot_rgbicww_strip_light\", \"input_button.sony_audio_mute\", \"input_button.samsung_tv_left\", \"media_player.55pus655\", \"input_button.tv_up\", \"input_button.samsung_tv_voldown\", \"input_button.samsung_tv_exit\", \"sensor.router_power\", \"input_button.sony_audio_input\", \"input_button.samsung_tv_ok\", \"input_button.tv_back\", \"input_button.tv_home\", \"input_button.bose_audio_bt\", \"switch.tv_schlafzimmer_on\", \"light.sb_lampe_wohnzimmerlampe_rgb\", \"input_button.tv_on_off\", \"input_button.bose_audio_pc\", \"input_button.tv_down\", \"input_button.tv_source\", \"switch.plug_mini_eu_2\", \"light.55pus655_ambilight\", \"sensor.energie_einspeisung\", \"input_boolean.dobby_seg_flur\", \"input_button.tv_left\", \"sensor.temperatur\", \"input_boolean.dobby_seg_kinderzimmer\", \"binary_sensor.philips_2200_series_espresso_led\", \"input_boolean.dobby_seg_wohnzimmer\", \"input_button.amp_source_last\", \"vacuum.valetudo_acclaimedfancyviper\", \"sensor.kuche_kaffee_power\", \"binary_sensor.philips_2200_series_coffee_led\", \"script.dobby_segment_reinigung_starten\", \"sensor.wohnzimmer_lampe_power\", \"binary_sensor.philips_2200_series_play_pause_led\", \"binary_sensor.philips_2200_series_steam_led\", \"input_button.samsung_tv_menue\", \"input_button.samsung_tv_tools\", \"input_button.samsung_tv_power\", \"input_button.sony_audio_power\", \"sensor.feuchtigkeit_2\", \"input_button.samsung_tv_return\", \"switch.bad_on\", \"sensor.temperatur_2\", \"sensor.bad_power\", \"binary_sensor.philips_2200_series_hot_water_led\", \"sensor.ecoflow_energie_smartplugs\", \"sensor.powerstream_4932_battery_input_watts\", \"input_button.samsung_tv_smarthub\", \"input_button.samsung_tv_mute\", \"sensor.powerstream_4932_solar_1_watts\", \"input_button.bose_audio_volup\", \"light.shelly_snowboard_led_dimmer\", \"button.philips_2200_series_power_on\", \"switch.wohnzimmer_lampe_on\", \"input_button.amp_vol_down\", \"input_button.sony_audio_voldown\", \"input_button.amp_on_off\", \"switch.router_on\", \"input_button.tv_right\", \"input_button.samsung_tv_up\", \"light.sb_lampe_dimmerized_light\", \"input_button.sony_audio_volup\", \"sensor.feuchtigkeit\", \"sensor.powerstream_4932_solar_2_watts\", \"sensor.tv_schlafzimmer_power\", \"input_button.samsung_tv_volup\", \"switch.wohnzimmer_on\", \"sensor.wohnzimmer_power\", \"sensor.shelly2pmg3_8cbfea979848_switch_0_power\", \"light.stehlampe_gross_wohnzimmer_on\", \"input_button.amp_source_next\", \"input_button.amp_vol_up\", \"input_button.samsung_tv_right\", \"input_button.samsung_tv_source\", \"input_boolean.philips_alarm_fox\", \"switch.bett_daniel_on\"]";
+                
+                String templateStr = "{% set result = namespace(items=[]) %}{% for e in " + entityListJson + " %}{% set st = states(e) %}{% set result.items = result.items + [{'id': e, 'state': st}] %}{% endfor %}{{ result.items | tojson }}";
+
                 JsonDocument reqDoc;
                 reqDoc["id"] = getStatesReqId;
-                reqDoc["type"] = "get_states";
+                reqDoc["type"] = "render_template";
+                reqDoc["template"] = templateStr;
+                
                 String reqPayload; 
                 serializeJson(reqDoc, reqPayload);
                 
                 prof_req_sent = millis();
-                Serial.printf("[PROFILING] 3. Sende 'get_states' an HA. Zeit seit Auth: %d ms\n", prof_req_sent - prof_auth);
+                Serial.printf("[PROFILING] 3. Sende Template an HA. Zeit seit Auth: %d ms\n", prof_req_sent - prof_auth);
                 
                 HaWebsocketLogic_SendPayload(reqPayload);
             }
