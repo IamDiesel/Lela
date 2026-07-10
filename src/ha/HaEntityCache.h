@@ -55,6 +55,8 @@ public:
     static float GetGlobalMin(String entity_id);
     static float GetGlobalMax(String entity_id);
     static float GetGlobalStep(String entity_id);
+    static std::vector<String> GetTrackedEntities() { return trackedEntities; }
+    //static std::vector<String> GetTrackedEntities() { return trackedEntities; }
 
 private:
     static SemaphoreHandle_t mutex;

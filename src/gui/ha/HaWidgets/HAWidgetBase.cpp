@@ -93,7 +93,11 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
     this->tab_index = tab_idx; this->type = type; this->entity_id = entity; 
     this->mdi_icon = mdi; this->color_on = c_on; this->color_off = c_off; 
     this->widget_name = formatEntityName(entity_id, String(name));
-    this->current_state = "unknown";
+    
+    // FIX 2: "init" statt "unknown"!
+    // Zwingt die GUI dazu, beim Booten den allerersten updateState("unknown") 
+    // nicht zu ueberspringen. Dadurch erhalten die Icons SOFORT ihre Farbe!
+    this->current_state = "init";
     
     this->icon_align = LV_ALIGN_TOP_MID; this->text_align = LV_ALIGN_BOTTOM_MID; this->state_align = LV_ALIGN_CENTER;
     this->icon_margin = 5; this->text_margin = 5; this->state_margin = 0; this->snap_to_grid = true; 
@@ -105,11 +109,6 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
     lv_obj_set_style_border_width(container, 2, 0);
     lv_obj_set_style_border_color(container, lv_color_hex(0x555555), 0);
     
-    // =========================================================================
-    // BUGFIX: PADDING AUF 0 ERZWINGEN!
-    // Entfernt das unsichtbare Theme-Polster. Verhindert, dass Kind-Widgets 
-    // im Ordner nach rechts unten verschoben werden und der Rand abfällt.
-    // =========================================================================
     lv_obj_set_style_pad_all(container, 0, 0);
     
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
