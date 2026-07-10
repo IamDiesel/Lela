@@ -63,11 +63,11 @@ void HaWebsocketLogic_SendPayload(const String& payload) {
     if (haClientMutex != NULL && xSemaphoreTakeRecursive(haClientMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
         
         // ANTI-CRASH FIX: Keine String-Addition (+ Operator), um RAM zu schonen!
-        Serial.print("\n[WS OUT] ");
+        //Serial.print("\n[WS OUT] ");
         unsigned int printLen = (payload.length() > 300) ? 300 : payload.length();
-        Serial.write(payload.c_str(), printLen);
+        //Serial.write(payload.c_str(), printLen);
         if (payload.length() > 300) Serial.print(" ... (gekuerzt)");
-        Serial.println();
+        //Serial.println();
         
         haClient.send(payload);
         xSemaphoreGiveRecursive(haClientMutex);
@@ -116,7 +116,7 @@ void onMessageCallback(WebsocketsMessage message) {
                             HaEntityCache::ProcessParsedEntity(entity);
                         }
                     }
-                    Serial.printf("[DEBUG-EVENT] Chunk-Werte (ID: %d) erfolgreich in Cache uebertragen.\n", msgId);
+                    //Serial.printf("[DEBUG-EVENT] Chunk-Werte (ID: %d) erfolgreich in Cache uebertragen.\n", msgId);
                 }
             }
         }
@@ -126,7 +126,7 @@ void onMessageCallback(WebsocketsMessage message) {
         if (currentSyncState == SYNC_FETCHING_CHUNKS && msgId == templateSubId) {
             currentVipIndex += currentChunkSize;
             waitingForChunk = false; 
-            Serial.printf("[DEBUG-BOOT] Chunk %d abgeschlossen. Gehe zu Index: %d\n", msgId, currentVipIndex);
+            //Serial.printf("[DEBUG-BOOT] Chunk %d abgeschlossen. Gehe zu Index: %d\n", msgId, currentVipIndex);
         }
         return;
     }
@@ -193,12 +193,12 @@ void onMessageCallback(WebsocketsMessage message) {
         HaWebsocketLogic_SendPayload(authPayload);
     }
     else if (type == "auth_ok") {
-        Serial.println("[DEBUG-AUTH] Authentifizierung erfolgreich!");
+        //Serial.println("[DEBUG-AUTH] Authentifizierung erfolgreich!");
         isHaAuthenticated = true;
         
         // Sowohl beim Start als auch beim Reconnect feuern wir die Chunks neu ab.
         // Das stellt sicher, dass wir auf dem aktuellsten Stand sind und die Abo-Listener stehen!
-        Serial.println("[DEBUG-AUTH] Starte VIP-Batching (Gleichzeitig unser Live-Abo!)...");
+        //Serial.println("[DEBUG-AUTH] Starte VIP-Batching (Gleichzeitig unser Live-Abo!)...");
         HaEntityCache::triggerRestStateFetch = true; 
     }
 }
@@ -213,13 +213,13 @@ void haWsTask(void *pvParameters) {
                 currentSyncState = SYNC_FETCHING_CHUNKS;
                 currentVipIndex = 0;
                 waitingForChunk = false;
-                Serial.println("[DEBUG-TASK] Initialisiere Chunk- & Abo-Sequenz.");
+                //Serial.println("[DEBUG-TASK] Initialisiere Chunk- & Abo-Sequenz.");
             }
 
             if (currentSyncState == SYNC_FETCHING_CHUNKS) {
                 
                 if (waitingForChunk && millis() - chunkRequestTime > 3000) {
-                    Serial.printf("[DEBUG-TASK] TIMEOUT! Chunk %d lieferte keine Antwort. Ueberspringe...\n", currentVipIndex);
+                    //Serial.printf("[DEBUG-TASK] TIMEOUT! Chunk %d lieferte keine Antwort. Ueberspringe...\n", currentVipIndex);
                     currentVipIndex += currentChunkSize;
                     waitingForChunk = false;
                 }
@@ -228,7 +228,7 @@ void haWsTask(void *pvParameters) {
                     std::vector<String> vips = HaEntityCache::GetTrackedEntities();
 
                     if (currentVipIndex >= vips.size()) {
-                        Serial.println("[DEBUG-TASK] Alle VIPs geladen. System laeuft ab jetzt im lautlosen Sniper-Modus!");
+                        //Serial.println("[DEBUG-TASK] Alle VIPs geladen. System laeuft ab jetzt im lautlosen Sniper-Modus!");
                         currentSyncState = SYNC_SUBSCRIBED;
                         
                         // ABSOLUTER GAMECHANGER: 
@@ -262,10 +262,10 @@ void haWsTask(void *pvParameters) {
                     
                     String reqPayload; serializeJson(reqDoc, reqPayload); 
                     
-                    Serial.print("\n[DEBUG-TASK] Sende Chunk Abo: ");
+                    //Serial.print("\n[DEBUG-TASK] Sende Chunk Abo: ");
                     unsigned int pLen = (reqPayload.length() > 120) ? 120 : reqPayload.length();
-                    Serial.write(reqPayload.c_str(), pLen);
-                    Serial.println();
+                    //Serial.write(reqPayload.c_str(), pLen);
+                    //Serial.println();
                     
                     HaWebsocketLogic_SendPayload(reqPayload); 
                     
@@ -323,11 +323,11 @@ void haWsTask(void *pvParameters) {
 void onEventsCallback(WebsocketsEvent event, String data) {
     if (event == WebsocketsEvent::ConnectionOpened) {
         isHaConnected = true; 
-        Serial.println("[DEBUG] Websocket Verbunden.");
+        //Serial.println("[DEBUG] Websocket Verbunden.");
     } else if (event == WebsocketsEvent::ConnectionClosed) { 
         isHaConnected = false; 
         isHaAuthenticated = false; 
-        Serial.println("[DEBUG] Websocket Getrennt.");
+        //Serial.println("[DEBUG] Websocket Getrennt.");
     }
 }
 
