@@ -15,7 +15,6 @@ public:
     static void ClearAll();
     static void UpdateTrackedEntities();
     static void ProcessParsedEntity(JsonObject doc);
-    static void ProcessBulkStates(JsonArray arr);
     
     static String GetState(String entity_id);
     static String GetCachedIcon(String entity_id);
