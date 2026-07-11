@@ -14,7 +14,20 @@ static SemaphoreHandle_t haClientMutex = NULL;
 
 static uint32_t lastPingTime = 0;
 static uint32_t messageIdCounter = 1;
-static uint32_t getStatesReqId = 0; 
+
+// --- Die neue Batching State Machine ---
+enum SyncState {
+    SYNC_INIT = 0,
+    SYNC_FETCHING_CHUNKS = 1,
+    SYNC_SUBSCRIBED = 2
+};
+static SyncState currentSyncState = SYNC_INIT;
+static uint32_t templateSubId = 0; 
+
+static int currentVipIndex = 0;
+static int currentChunkSize = 0;
+static bool waitingForChunk = false;
+
 static volatile TaskHandle_t haTaskHandle = NULL;
 static volatile bool haShouldRun = false;
 
@@ -56,6 +69,14 @@ uint32_t HaWebsocketLogic_GetNextMessageId() {
 
 void HaWebsocketLogic_SendPayload(const String& payload) {
     if (haClientMutex != NULL && xSemaphoreTakeRecursive(haClientMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        
+        // ANTI-CRASH FIX: Keine String-Addition (+ Operator), um RAM zu schonen!
+        //Serial.print("\n[WS OUT] ");
+        unsigned int printLen = (payload.length() > 300) ? 300 : payload.length();
+        //Serial.write(payload.c_str(), printLen);
+        if (payload.length() > 300) Serial.print(" ... (gekuerzt)");
+        //Serial.println();
+        
         haClient.send(payload);
         xSemaphoreGiveRecursive(haClientMutex);
     }
@@ -177,6 +198,8 @@ if (!err) {
             isImporting = true;
             HaLovelaceParser::parseCards(payload, targetViewIndex, currentImportTab);
         }
+        if (requestingViewsOnly) HaLovelaceParser::parseViewsList(payload);
+        else { isImporting = true; HaLovelaceParser::parseCards(payload, targetViewIndex, currentImportTab); }
         return;
     }
 
@@ -196,6 +219,7 @@ if (!err) {
         HaWebsocketLogic_SendPayload(authPayload);
     }
     else if (type == "auth_ok") {
+        //Serial.println("[DEBUG-AUTH] Authentifizierung erfolgreich!");
         isHaAuthenticated = true;
         prof_auth = millis();
         Serial.printf("[PROFILING] 2. Auth_OK. Dauer seit Connect: %d ms\n", prof_auth - prof_connected);
@@ -221,6 +245,8 @@ void onEventsCallback(WebsocketsEvent event, String data) {
 }
 
 void haWsTask(void *pvParameters) {
+    static uint32_t chunkRequestTime = 0;
+    
     while (haShouldRun) {
         if (WiFi.status() == WL_CONNECTED) {
             
@@ -284,7 +310,8 @@ void haWsTask(void *pvParameters) {
                 }
                 xSemaphoreGiveRecursive(haClientMutex);
             }
-            vTaskDelay(pdMS_TO_TICKS(10)); 
+            // ANTI-STAU FIX: Reduziert auf 2ms! Der WLAN Chip wird deutlich aggressiver geleert.
+            vTaskDelay(pdMS_TO_TICKS(2)); 
         } else {
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
@@ -301,6 +328,19 @@ void haWsTask(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
+void onEventsCallback(WebsocketsEvent event, String data) {
+    if (event == WebsocketsEvent::ConnectionOpened) {
+        isHaConnected = true; 
+        //Serial.println("[DEBUG] Websocket Verbunden.");
+    } else if (event == WebsocketsEvent::ConnectionClosed) { 
+        isHaConnected = false; 
+        isHaAuthenticated = false; 
+        //Serial.println("[DEBUG] Websocket Getrennt.");
+    }
+}
+
+
+
 void HaWebsocketLogic_Start() {
     if (haShouldRun && haTaskHandle != NULL) return; 
     
@@ -309,6 +349,9 @@ void HaWebsocketLogic_Start() {
     }
     
     haShouldRun = true; 
+    currentSyncState = SYNC_INIT; 
+    currentVipIndex = 0;
+    waitingForChunk = false;
     HaEntityCache::Init();
     
     if (haClientMutex == NULL) haClientMutex = xSemaphoreCreateRecursiveMutex();

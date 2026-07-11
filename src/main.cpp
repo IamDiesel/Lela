@@ -16,9 +16,17 @@
     volatile bool dongleIsPhysicallyConnected = false;
 
     // Wir parsen die internen Bibliotheks-Logs, um den Status sicher zu ermitteln!
+    // Wir parsen die internen Bibliotheks-Logs, um den Status sicher zu ermitteln!
     void usbHostLogger(const char* msg) {
         String s = String(msg);
         s.toLowerCase();
+        
+        // --- ANTI-SPAM FILTER ---
+        // Unterdruecke die nervige Dauermeldung, wenn der Dongle fehlt
+        if (s.indexOf("falling back to cdc") >= 0 || s.indexOf("vcp open returned null") >= 0) {
+            dongleIsPhysicallyConnected = false;
+            return; // Sofort abbrechen, NICHT printen!
+        }
         
         // Die Bibliothek meldet typischerweise Verbindungsereignisse im Log
         if (s.indexOf("disconnect") >= 0 || s.indexOf("error") >= 0 || s.indexOf("fail") >= 0 || s.indexOf("unmount") >= 0) {
