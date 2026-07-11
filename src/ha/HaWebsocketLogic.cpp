@@ -3,6 +3,7 @@
 #include "secrets.h"
 #include <ArduinoWebsockets.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h> 
 
 using namespace websockets;
 
@@ -29,6 +30,13 @@ static bool waitingForChunk = false;
 
 static volatile TaskHandle_t haTaskHandle = NULL;
 static volatile bool haShouldRun = false;
+
+// --- PROFILING VARIABLEN ---
+static uint32_t prof_start_connect = 0;
+static uint32_t prof_connected = 0;
+static uint32_t prof_auth = 0;
+static uint32_t prof_req_sent = 0;
+static uint32_t prof_req_recv = 0;
 
 // Globale Import Variablen
 std::vector<String> availableDashboardUrls;
@@ -76,8 +84,61 @@ void HaWebsocketLogic_SendPayload(const String& payload) {
 
 void onMessageCallback(WebsocketsMessage message) {
     if (!message.isText()) return;
+    
     String payload = message.data();
 
+    // 1. Live State Updates und unser Template-Event
+    if (payload.indexOf("\"type\":\"event\"") != -1 || payload.indexOf("\"type\": \"event\"") != -1) {
+        
+        // A) Normales State Changed Event
+        if (payload.indexOf("\"state_changed\"") != -1) {
+            JsonDocument filter; 
+            filter["event"]["data"]["entity_id"] = true; 
+            filter["event"]["data"]["new_state"] = true;
+            
+            JsonDocument doc; 
+            if (!deserializeJson(doc, payload, DeserializationOption::Filter(filter))) {
+                HaEntityCache::ProcessParsedEntity(doc["event"]["data"]["new_state"]);
+            }
+        }
+        
+        // B) --- NEU: Das asynchrone Event für unser Template abfangen ---
+        if (payload.indexOf("\"result\":") != -1 && payload.indexOf("\"id\":" + String(getStatesReqId)) != -1) {
+             prof_req_recv = millis();
+             Serial.printf("[PROFILING] 4. 'Template' Antwort da! Latenz: %d ms, Groesse: %d Bytes\n", prof_req_recv - prof_req_sent, payload.length());
+
+             uint32_t parse_start = millis();
+
+             // KEIN PSRAM MALLOC MEHR! Wir parsen direkt aus dem RAM.
+             JsonDocument doc;
+             DeserializationError err = deserializeJson(doc, payload);
+
+             uint32_t parse_end = millis();
+             Serial.printf("[PROFILING] 5. JSON Parse dauerte: %d ms\n", parse_end - parse_start);
+
+if (!err) {
+                 uint32_t process_start = millis();
+                 
+                 JsonArray arr = doc["event"]["result"].as<JsonArray>();
+                 
+                 // --- DIE RETTUNG FÜR DEN COPROZESSOR ---
+                 // Anstatt 99x ProcessParsedEntity aufzurufen und den Mutex zu quälen,
+                 // schieben wir das ganze Array in einem Rutsch in den Cache!
+                 HaEntityCache::ProcessBulkStates(arr);
+                 
+                 uint32_t process_end = millis();
+                 Serial.printf("[PROFILING] 6. Bulk-Update dauerte: %d ms fuer %d Entities\n", process_end - process_start, arr.size());
+             } else {
+                 Serial.printf("[PROFILING] JSON ERROR: %s\n", err.c_str());
+             }
+        }
+        
+        // WICHTIG: Dieses return beendet den Callback für alle "event" Nachrichten,
+        // damit sie nicht in den Header-Check unten laufen.
+        return; 
+    }
+
+    // 2. Standard Header Check für alle anderen Nachrichten
     JsonDocument headerFilter;
     headerFilter["type"] = true; 
     headerFilter["id"] = true; 
@@ -92,63 +153,21 @@ void onMessageCallback(WebsocketsMessage message) {
     uint32_t msgId = headerDoc["id"] | 0;
     bool success = headerDoc["success"] | false;
 
-    // ==============================================================
-    // CHUNK EVENT (Gilt fuer Initial-Load UND Live-Updates!)
-    // ==============================================================
-    if (type == "event") {
-        JsonDocument eventFilter;
-        eventFilter["event"]["result"] = true;
-        JsonDocument eventDoc;
-        
-        if (!deserializeJson(eventDoc, payload, DeserializationOption::Filter(eventFilter))) {
-            String jsonResultString = eventDoc["event"]["result"].as<String>();
-            
-            if (jsonResultString != "null" && jsonResultString.length() > 0) {
-                JsonDocument dataDoc;
-                DeserializationError err = deserializeJson(dataDoc, jsonResultString);
-                
-                if (!err && dataDoc.is<JsonArray>()) {
-                    JsonArray arr = dataDoc.as<JsonArray>();
-                    for (JsonObject entity : arr) {
-                        String eid = entity["entity_id"] | entity["id"] | "";
-                        if (eid.length() > 0) {
-                            entity["entity_id"] = eid; 
-                            HaEntityCache::ProcessParsedEntity(entity);
-                        }
-                    }
-                    //Serial.printf("[DEBUG-EVENT] Chunk-Werte (ID: %d) erfolgreich in Cache uebertragen.\n", msgId);
-                }
-            }
-        }
-        
-        // Wenn wir in Phase 1 (Start) sind, schalten wir den naechsten Chunk frei.
-        // WICHTIG: Wir senden KEIN unsubscribe! Der Chunk bleibt als Live-Listener offen!
-        if (currentSyncState == SYNC_FETCHING_CHUNKS && msgId == templateSubId) {
-            currentVipIndex += currentChunkSize;
-            waitingForChunk = false; 
-            //Serial.printf("[DEBUG-BOOT] Chunk %d abgeschlossen. Gehe zu Index: %d\n", msgId, currentVipIndex);
-        }
-        return;
+    // 3. ACK für das Template ignorieren
+    if (msgId == getStatesReqId && type == "result") {
+       if(!success) {
+          Serial.println("[PROFILING] ERROR: HA hat das Template abgelehnt!");
+       }
+       return; 
     }
 
-    if (type == "result" && msgId == templateSubId) {
-        if (!success) {
-            Serial.println("[DEBUG-BOOT] HA hat Chunk abgelehnt! Ueberspringe...");
-            currentVipIndex += currentChunkSize;
-            waitingForChunk = false;
-        } else {
-            Serial.println("[DEBUG-BOOT] Chunk Request vom Server akzeptiert.");
-        }
-        return;
-    }
-
-    // ==============================================================
-    // RESULT-VERARBEITUNG (Media & Import)
-    // ==============================================================
+    // 4. Media Browser Antwort
     if (msgId == lastMediaBrowseReqId && lastMediaBrowseReqId > 0) {
         if (!success) { pendingMediaBrowserError = true; return; }
-        JsonDocument browseFilter; browseFilter["result"]["children"] = true; 
-        JsonDocument doc; deserializeJson(doc, payload, DeserializationOption::Filter(browseFilter));
+        JsonDocument browseFilter;
+        browseFilter["result"]["children"] = true; 
+        JsonDocument doc;
+        deserializeJson(doc, payload, DeserializationOption::Filter(browseFilter));
         currentMediaFolder.clear();
         JsonArray children = doc["result"]["children"];
         if (!children.isNull()) {
@@ -167,41 +186,64 @@ void onMessageCallback(WebsocketsMessage message) {
         return;
     }
 
+    // 5. Lovelace Import
     if (msgId == lastLovelaceReqId && lastLovelaceReqId > 0) {
         if (!success) {
             importErrorMessage = "Import fehlgeschlagen!\nHome Assistant hat die Anfrage verweigert.";
-            pendingImportError = true; return;
+            pendingImportError = true; 
+            return;
+        }
+        if (requestingViewsOnly) HaLovelaceParser::parseViewsList(payload);
+        else {
+            isImporting = true;
+            HaLovelaceParser::parseCards(payload, targetViewIndex, currentImportTab);
         }
         if (requestingViewsOnly) HaLovelaceParser::parseViewsList(payload);
         else { isImporting = true; HaLovelaceParser::parseCards(payload, targetViewIndex, currentImportTab); }
         return;
     }
 
+    // 6. Dashboard Liste laden
     if (msgId == lastLovelaceDashboardsReqId && lastLovelaceDashboardsReqId > 0) {
         if (success) HaLovelaceParser::parseDashboardList(payload);
         return;
     }
 
-    // ==============================================================
-    // AUTHENTIFIZIERUNG & ROUTING
-    // ==============================================================
+    // 7. Authentifizierung
     if (type == "auth_required") {
         JsonDocument authDoc;
         authDoc["type"] = "auth"; 
         authDoc["access_token"] = SECRET_HA_TOKEN;
-        String authPayload; serializeJson(authDoc, authPayload); 
+        String authPayload; 
+        serializeJson(authDoc, authPayload); 
         HaWebsocketLogic_SendPayload(authPayload);
     }
     else if (type == "auth_ok") {
         //Serial.println("[DEBUG-AUTH] Authentifizierung erfolgreich!");
         isHaAuthenticated = true;
+        prof_auth = millis();
+        Serial.printf("[PROFILING] 2. Auth_OK. Dauer seit Connect: %d ms\n", prof_auth - prof_connected);
         
-        // Sowohl beim Start als auch beim Reconnect feuern wir die Chunks neu ab.
-        // Das stellt sicher, dass wir auf dem aktuellsten Stand sind und die Abo-Listener stehen!
-        //Serial.println("[DEBUG-AUTH] Starte VIP-Batching (Gleichzeitig unser Live-Abo!)...");
+        JsonDocument subDoc;
+        subDoc["id"] = messageIdCounter++; 
+        subDoc["type"] = "subscribe_events"; 
+        subDoc["event_type"] = "state_changed";
+        String subPayload; 
+        serializeJson(subDoc, subPayload); 
+        HaWebsocketLogic_SendPayload(subPayload);
+        
         HaEntityCache::triggerRestStateFetch = true; 
     }
 }
+
+void onEventsCallback(WebsocketsEvent event, String data) {
+    if (event == WebsocketsEvent::ConnectionOpened) isHaConnected = true; 
+    else if (event == WebsocketsEvent::ConnectionClosed) { 
+        isHaConnected = false; 
+        isHaAuthenticated = false; 
+    }
+}
+
 void haWsTask(void *pvParameters) {
     static uint32_t chunkRequestTime = 0;
     
@@ -210,68 +252,27 @@ void haWsTask(void *pvParameters) {
             
             if (HaEntityCache::triggerRestStateFetch && isHaAuthenticated) {
                 HaEntityCache::triggerRestStateFetch = false;
-                currentSyncState = SYNC_FETCHING_CHUNKS;
-                currentVipIndex = 0;
-                waitingForChunk = false;
-                //Serial.println("[DEBUG-TASK] Initialisiere Chunk- & Abo-Sequenz.");
-            }
-
-            if (currentSyncState == SYNC_FETCHING_CHUNKS) {
                 
-                if (waitingForChunk && millis() - chunkRequestTime > 3000) {
-                    //Serial.printf("[DEBUG-TASK] TIMEOUT! Chunk %d lieferte keine Antwort. Ueberspringe...\n", currentVipIndex);
-                    currentVipIndex += currentChunkSize;
-                    waitingForChunk = false;
-                }
+                getStatesReqId = messageIdCounter++;
+                
+                // --- NEU: Wir senden das Template, statt 'get_states' ---
+                // Füge hier die JSON Liste deiner 99 Entitäten ein (kopiere sie aus dem Python Script)
+                String entityListJson = "[\"sensor.powerstream_4932_inverter_output_watts\", \"input_boolean.dobby_seg_kueche\", \"input_button.samsung_tv_info\", \"input_boolean.dobby_seg_schlafzimmer\", \"sensor.pc_daniel_power\", \"light.shelly_snowboard_rgb\", \"sensor.pixel_9_pro_next_alarm\", \"light.schlafzimmerlicht\", \"button.philips_2200_series_power_on_no_clean\", \"input_boolean.philips_alarm_daniel\", \"input_button.tv_ok\", \"switch.shelly_schlaf_arbeitszimmer\", \"input_button.samsung_tv_down\", \"sensor.bett_anne_power\", \"sensor.bett_daniel_power\", \"switch.kuche_kaffee_on\", \"switch.verdampfer_on\", \"input_button.bose_audio_voldown\", \"sensor.smart_plugs_leistungsaufnahme\", \"input_button.bose_audio_poweron\", \"button.philips_2200_series_power_off\", \"switch.pc_daniel_on\", \"light.switchbot_rgbicww_strip_light\", \"input_button.sony_audio_mute\", \"input_button.samsung_tv_left\", \"media_player.55pus655\", \"input_button.tv_up\", \"input_button.samsung_tv_voldown\", \"input_button.samsung_tv_exit\", \"sensor.router_power\", \"input_button.sony_audio_input\", \"input_button.samsung_tv_ok\", \"input_button.tv_back\", \"input_button.tv_home\", \"input_button.bose_audio_bt\", \"switch.tv_schlafzimmer_on\", \"light.sb_lampe_wohnzimmerlampe_rgb\", \"input_button.tv_on_off\", \"input_button.bose_audio_pc\", \"input_button.tv_down\", \"input_button.tv_source\", \"switch.plug_mini_eu_2\", \"light.55pus655_ambilight\", \"sensor.energie_einspeisung\", \"input_boolean.dobby_seg_flur\", \"input_button.tv_left\", \"sensor.temperatur\", \"input_boolean.dobby_seg_kinderzimmer\", \"binary_sensor.philips_2200_series_espresso_led\", \"input_boolean.dobby_seg_wohnzimmer\", \"input_button.amp_source_last\", \"vacuum.valetudo_acclaimedfancyviper\", \"sensor.kuche_kaffee_power\", \"binary_sensor.philips_2200_series_coffee_led\", \"script.dobby_segment_reinigung_starten\", \"sensor.wohnzimmer_lampe_power\", \"binary_sensor.philips_2200_series_play_pause_led\", \"binary_sensor.philips_2200_series_steam_led\", \"input_button.samsung_tv_menue\", \"input_button.samsung_tv_tools\", \"input_button.samsung_tv_power\", \"input_button.sony_audio_power\", \"sensor.feuchtigkeit_2\", \"input_button.samsung_tv_return\", \"switch.bad_on\", \"sensor.temperatur_2\", \"sensor.bad_power\", \"binary_sensor.philips_2200_series_hot_water_led\", \"sensor.ecoflow_energie_smartplugs\", \"sensor.powerstream_4932_battery_input_watts\", \"input_button.samsung_tv_smarthub\", \"input_button.samsung_tv_mute\", \"sensor.powerstream_4932_solar_1_watts\", \"input_button.bose_audio_volup\", \"light.shelly_snowboard_led_dimmer\", \"button.philips_2200_series_power_on\", \"switch.wohnzimmer_lampe_on\", \"input_button.amp_vol_down\", \"input_button.sony_audio_voldown\", \"input_button.amp_on_off\", \"switch.router_on\", \"input_button.tv_right\", \"input_button.samsung_tv_up\", \"light.sb_lampe_dimmerized_light\", \"input_button.sony_audio_volup\", \"sensor.feuchtigkeit\", \"sensor.powerstream_4932_solar_2_watts\", \"sensor.tv_schlafzimmer_power\", \"input_button.samsung_tv_volup\", \"switch.wohnzimmer_on\", \"sensor.wohnzimmer_power\", \"sensor.shelly2pmg3_8cbfea979848_switch_0_power\", \"light.stehlampe_gross_wohnzimmer_on\", \"input_button.amp_source_next\", \"input_button.amp_vol_up\", \"input_button.samsung_tv_right\", \"input_button.samsung_tv_source\", \"input_boolean.philips_alarm_fox\", \"switch.bett_daniel_on\"]";
+                
+                String templateStr = "{% set result = namespace(items=[]) %}{% for e in " + entityListJson + " %}{% set st = states(e) %}{% set result.items = result.items + [{'id': e, 'state': st}] %}{% endfor %}{{ result.items | tojson }}";
 
-                if (!waitingForChunk) {
-                    std::vector<String> vips = HaEntityCache::GetTrackedEntities();
-
-                    if (currentVipIndex >= vips.size()) {
-                        //Serial.println("[DEBUG-TASK] Alle VIPs geladen. System laeuft ab jetzt im lautlosen Sniper-Modus!");
-                        currentSyncState = SYNC_SUBSCRIBED;
-                        
-                        // ABSOLUTER GAMECHANGER: 
-                        // Wir senden hier ABSICHTLICH KEIN subscribe_events! 
-                        // Die offenen Templates übernehmen ab sofort die Live-Updates. 
-                        continue; 
-                    }
-
-                    templateSubId = messageIdCounter++;
-                    currentChunkSize = 0;
-                    
-                    String tmpl;
-                    tmpl.reserve(2048); 
-                    tmpl = "[";
-                    
-                    for (size_t i = currentVipIndex; i < vips.size() && currentChunkSize < 8; i++, currentChunkSize++) {
-                        tmpl += "{\"entity_id\":\"";
-                        tmpl += vips[i];
-                        tmpl += "\",\"state\":{{ states('";
-                        tmpl += vips[i];
-                        tmpl += "') | default('null') | to_json }} }";
-                        
-                        if (currentChunkSize < 7 && i < vips.size() - 1) tmpl += ",";
-                    }
-                    tmpl += "]";
-                    
-                    JsonDocument reqDoc;
-                    reqDoc["id"] = templateSubId; 
-                    reqDoc["type"] = "render_template"; 
-                    reqDoc["template"] = tmpl;
-                    
-                    String reqPayload; serializeJson(reqDoc, reqPayload); 
-                    
-                    //Serial.print("\n[DEBUG-TASK] Sende Chunk Abo: ");
-                    unsigned int pLen = (reqPayload.length() > 120) ? 120 : reqPayload.length();
-                    //Serial.write(reqPayload.c_str(), pLen);
-                    //Serial.println();
-                    
-                    HaWebsocketLogic_SendPayload(reqPayload); 
-                    
-                    waitingForChunk = true; 
-                    chunkRequestTime = millis();
-                }
+                JsonDocument reqDoc;
+                reqDoc["id"] = getStatesReqId;
+                reqDoc["type"] = "render_template";
+                reqDoc["template"] = templateStr;
+                
+                String reqPayload; 
+                serializeJson(reqDoc, reqPayload);
+                
+                prof_req_sent = millis();
+                Serial.printf("[PROFILING] 3. Sende Template an HA. Zeit seit Auth: %d ms\n", prof_req_sent - prof_auth);
+                
+                HaWebsocketLogic_SendPayload(reqPayload);
             }
 
             if (haClientMutex != NULL && xSemaphoreTakeRecursive(haClientMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -279,11 +280,18 @@ void haWsTask(void *pvParameters) {
                     isHaConnected = false; 
                     isHaAuthenticated = false;
                     
+                    prof_start_connect = millis();
+                    Serial.println("\n===============================================");
+                    Serial.println("[PROFILING] 1. Starte TCP/SSL Connect...");
+                    
                     if (!haClient.connect("ws://" + String(SECRET_HA_IP) + ":" + String(SECRET_HA_PORT) + "/api/websocket")) {
                         xSemaphoreGiveRecursive(haClientMutex);
                         vTaskDelay(pdMS_TO_TICKS(2000));
                         continue;
                     }
+                    prof_connected = millis();
+                    Serial.printf("[PROFILING] -> Connect erfolgreich! Dauer: %d ms\n", prof_connected - prof_start_connect);
+                    
                 } else {
                     haClient.poll();
                     
@@ -293,8 +301,8 @@ void haWsTask(void *pvParameters) {
                             JsonDocument pingDoc;
                             pingDoc["id"] = messageIdCounter++; 
                             pingDoc["type"] = "ping";
-                            
-                            String pingStr; serializeJson(pingDoc, pingStr); 
+                            String pingStr; 
+                            serializeJson(pingDoc, pingStr); 
                             haClient.send(pingStr); 
                         }
                         lastPingTime = now;
@@ -334,9 +342,7 @@ void onEventsCallback(WebsocketsEvent event, String data) {
 
 
 void HaWebsocketLogic_Start() {
-    if (haShouldRun && haTaskHandle != NULL) {
-        return; 
-    }
+    if (haShouldRun && haTaskHandle != NULL) return; 
     
     while (haTaskHandle != NULL) {
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -348,9 +354,7 @@ void HaWebsocketLogic_Start() {
     waitingForChunk = false;
     HaEntityCache::Init();
     
-    if (haClientMutex == NULL) {
-        haClientMutex = xSemaphoreCreateRecursiveMutex();
-    }
+    if (haClientMutex == NULL) haClientMutex = xSemaphoreCreateRecursiveMutex();
     
     haClient.onMessage(onMessageCallback); 
     haClient.onEvent(onEventsCallback);

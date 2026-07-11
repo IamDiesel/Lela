@@ -122,16 +122,36 @@ void HaEntityCache::UpdateTrackedEntities() {
 }
 // -----------------------------------------------------
 
+void HaEntityCache::ProcessBulkStates(JsonArray arr) {
+    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
+        for (JsonObject entity : arr) {
+            // Force a hard copy of the strings to ensure they aren't pointing
+            // to temporary memory within the JsonDocument.
+            String id = String(entity["id"].as<const char*>());
+            if (id.length() > 0) {
+                states[id] = String(entity["state"].as<const char*>());
+            }
+        }
+        cacheVersion++;
+        xSemaphoreGive(mutex);
+    }
+}
+
+
 void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
-    String entity_id = doc["entity_id"].as<String>();
+    // 1. Sichere Extraktion der ID als roher Zeiger und anschließende tiefe Kopie
+    const char* id_raw = doc["entity_id"].as<const char*>();
+    if (!id_raw) return;
+    String entity_id = String(id_raw);
 
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY)) {
         String f_name = "";
         JsonObject attr = doc["attributes"];
         if (!attr.isNull() && !attr["friendly_name"].isNull()) {
-            f_name = attr["friendly_name"].as<String>();
+            f_name = String(attr["friendly_name"].as<const char*>());
         }
         
+        // Globale Erkennung aller bekannten Domänen für die Such-Map
         if (entity_id.startsWith("light.") || entity_id.startsWith("switch.") || 
             entity_id.startsWith("select.") || entity_id.startsWith("input_select.") || 
             entity_id.startsWith("number.") || entity_id.startsWith("input_number.") ||
@@ -145,12 +165,14 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
             }
         }
 
+        // Globale Konfigurationseigenschaften (Auswahllisten, Min/Max/Schrittweiten)
         if (!attr.isNull()) {
             if (entity_id.startsWith("select.") || entity_id.startsWith("input_select.")) {
                 if (attr["options"].is<JsonArray>()) {
                     globalOptionsMap[entity_id].clear();
                     for (JsonVariant v : attr["options"].as<JsonArray>()) {
-                        globalOptionsMap[entity_id].push_back(v.as<String>());
+                        const char* opt_raw = v.as<const char*>();
+                        if (opt_raw) globalOptionsMap[entity_id].push_back(String(opt_raw));
                     }
                 }
             }
@@ -164,7 +186,8 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                 if (attr["hvac_modes"].is<JsonArray>()) {
                     globalOptionsMap[entity_id].clear();
                     for (JsonVariant v : attr["hvac_modes"].as<JsonArray>()) {
-                        globalOptionsMap[entity_id].push_back(v.as<String>());
+                        const char* mode_raw = v.as<const char*>();
+                        if (mode_raw) globalOptionsMap[entity_id].push_back(String(mode_raw));
                     }
                 }
                 if (!attr["min_temp"].isNull()) globalMinMap[entity_id] = attr["min_temp"].as<float>();
@@ -173,26 +196,32 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
             }
         }
 
+        // Verarbeitung der tatsächlich auf dem Dashboard getrackten Entitäten
         if (std::find(trackedEntities.begin(), trackedEntities.end(), entity_id) != trackedEntities.end()) {
-            states[entity_id] = doc["state"].as<String>();
+            const char* state_raw = doc["state"].as<const char*>();
+            if (state_raw) {
+                states[entity_id] = String(state_raw);
+            }
             
             if (!attr.isNull()) {
-                icons[entity_id] = attr["icon"] | "";
+                icons[entity_id] = attr["icon"].isNull() ? "" : String(attr["icon"].as<const char*>());
                 names[entity_id] = f_name;
-                units[entity_id] = attr["unit_of_measurement"] | "";
+                units[entity_id] = attr["unit_of_measurement"].isNull() ? "" : String(attr["unit_of_measurement"].as<const char*>());
                 battery[entity_id] = attr["battery_level"] | -1;
-                fanSpeed[entity_id] = attr["fan_speed"] | "";
+                fanSpeed[entity_id] = attr["fan_speed"].isNull() ? "" : String(attr["fan_speed"].as<const char*>());
                 
                 if (attr["options"].is<JsonArray>()) {
                     optionsMap[entity_id].clear();
                     for (JsonVariant v : attr["options"].as<JsonArray>()) {
-                        optionsMap[entity_id].push_back(v.as<String>());
+                        const char* opt_raw = v.as<const char*>();
+                        if (opt_raw) optionsMap[entity_id].push_back(String(opt_raw));
                     }
                 }
                 if (!attr["min"].isNull()) minMap[entity_id] = attr["min"].as<float>();
                 if (!attr["max"].isNull()) maxMap[entity_id] = attr["max"].as<float>();
                 if (!attr["step"].isNull()) stepMap[entity_id] = attr["step"].as<float>();
                 
+                // Lichtspezifische Attribute (Helligkeit, Farbmodi, RGBW)
                 if (entity_id.startsWith("light.")) {
                     brightness[entity_id] = attr["brightness"] | -1;
                     colorTemp[entity_id] = attr["color_temp"] | -1;
@@ -201,11 +230,14 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     JsonArray c_m_s = attr["supported_color_modes"];
                     if (!c_m_s.isNull()) {
                         for (JsonVariant v : c_m_s) {
-                            String mode = v.as<String>();
-                            if (mode == "brightness") s_bri = true;
-                            else if (mode == "color_temp") { s_bri = true; s_tmp = true; }
-                            else if (mode == "hs" || mode == "rgb" || mode == "xy") { s_bri = true; s_col = true; }
-                            else if (mode == "rgbw" || mode == "rgbww") { s_bri = true; s_col = true; isRGBW[entity_id] = true; }
+                            const char* mode_raw = v.as<const char*>();
+                            if (mode_raw) {
+                                String mode = String(mode_raw);
+                                if (mode == "brightness") s_bri = true;
+                                else if (mode == "color_temp") { s_bri = true; s_tmp = true; }
+                                else if (mode == "hs" || mode == "rgb" || mode == "xy") { s_bri = true; s_col = true; }
+                                else if (mode == "rgbw" || mode == "rgbww") { s_bri = true; s_col = true; isRGBW[entity_id] = true; }
+                            }
                         }
                     }
                     supportsBrightness[entity_id] = s_bri; supportsColor[entity_id] = s_col; supportsTemp[entity_id] = s_tmp;
@@ -221,20 +253,26 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     if (!rgbw_color.isNull() && rgbw_color.size() >= 4) white[entity_id] = rgbw_color[3];
                     else white[entity_id] = -1;
                 } 
+                // Mediaplayer (Titel, Künstler, Lautstärke, Quellen)
                 else if (entity_id.startsWith("media_player.")) {
-                    mediaTitle[entity_id] = attr["media_title"] | "";
-                    mediaArtist[entity_id] = attr["media_artist"] | "";
+                    mediaTitle[entity_id] = attr["media_title"].isNull() ? "" : String(attr["media_title"].as<const char*>());
+                    mediaArtist[entity_id] = attr["media_artist"].isNull() ? "" : String(attr["media_artist"].as<const char*>());
                     mediaVolume[entity_id] = attr["volume_level"] | -1.0f;
-                    source[entity_id] = attr["source"] | "";
+                    source[entity_id] = attr["source"].isNull() ? "" : String(attr["source"].as<const char*>());
                     JsonArray s_list = attr["source_list"]; sourceList[entity_id].clear();
                     if (!s_list.isNull()) {
-                        for (JsonVariant v : s_list) sourceList[entity_id].push_back(v.as<String>());
+                        for (JsonVariant v : s_list) {
+                            const char* src_raw = v.as<const char*>();
+                            if (src_raw) sourceList[entity_id].push_back(String(src_raw));
+                        }
                     }
                 }
+                // Rollos / Jalousien
                 else if (entity_id.startsWith("cover.")) {
                     if (!attr["current_position"].isNull()) positionMap[entity_id] = attr["current_position"].as<int>();
                     else positionMap[entity_id] = -1;
                 }
+                // Thermostate / Klimatisierung
                 else if (entity_id.startsWith("climate.")) {
                     if (!attr["current_temperature"].isNull()) currentTemperatureMap[entity_id] = attr["current_temperature"].as<float>();
                     else currentTemperatureMap[entity_id] = -99.0f; 
@@ -245,7 +283,8 @@ void HaEntityCache::ProcessParsedEntity(JsonObject doc) {
                     if (attr["hvac_modes"].is<JsonArray>()) {
                         optionsMap[entity_id].clear();
                         for (JsonVariant v : attr["hvac_modes"].as<JsonArray>()) {
-                            optionsMap[entity_id].push_back(v.as<String>());
+                            const char* mode_raw = v.as<const char*>();
+                            if (mode_raw) optionsMap[entity_id].push_back(String(mode_raw));
                         }
                     }
                     if (!attr["min_temp"].isNull()) minMap[entity_id] = attr["min_temp"].as<float>();
