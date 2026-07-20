@@ -290,9 +290,10 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
     lv_obj_set_style_text_color(lbl_artist, lv_color_hex(0xAAAAAA), 0);
     lv_obj_align(lbl_artist, LV_ALIGN_TOP_MID, 0, 110);
 
+    // 1. ZURUECK BUTTON
     lv_obj_t* btn_prev = lv_btn_create(panel);
-    lv_obj_set_size(btn_prev, 90, 70);
-    lv_obj_align(btn_prev, LV_ALIGN_TOP_MID, -165, 160);
+    lv_obj_set_size(btn_prev, 80, 70);
+    lv_obj_align(btn_prev, LV_ALIGN_TOP_MID, -210, 160);
     lv_obj_set_style_bg_color(btn_prev, lv_color_hex(0x333333), 0);
     lv_obj_t* lbl_prev = lv_label_create(btn_prev);
     lv_label_set_text(lbl_prev, LV_SYMBOL_PREV);
@@ -303,22 +304,38 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
         HaWebsocketLogic_CallMediaService(cur_media_entity, "media_previous_track");
     }, LV_EVENT_CLICKED, NULL);
 
+    // 2. PLAY BUTTON (Gruen)
     lv_obj_t* btn_play = lv_btn_create(panel);
-    lv_obj_set_size(btn_play, 100, 70);
-    lv_obj_align(btn_play, LV_ALIGN_TOP_MID, -55, 160);
+    lv_obj_set_size(btn_play, 80, 70);
+    lv_obj_align(btn_play, LV_ALIGN_TOP_MID, -105, 160);
     lv_obj_set_style_bg_color(btn_play, lv_color_hex(0x27AE60), 0);
     lv_obj_t* lbl_play = lv_label_create(btn_play);
-    lv_label_set_text(lbl_play, LV_SYMBOL_PLAY " / " LV_SYMBOL_PAUSE);
-    lv_obj_set_style_text_font(lbl_play, &lv_font_montserrat_20, 0);
+    lv_label_set_text(lbl_play, LV_SYMBOL_PLAY);
+    lv_obj_set_style_text_font(lbl_play, &lv_font_montserrat_24, 0);
     lv_obj_center(lbl_play);
     lv_obj_add_event_cb(btn_play, [](lv_event_t* e) {
         playToneI2S(1000, 50, true);
-        HaWebsocketLogic_CallMediaService(cur_media_entity, "media_play_pause");
+        HaWebsocketLogic_CallMediaService(cur_media_entity, "media_play");
     }, LV_EVENT_CLICKED, NULL);
 
+    // 3. PAUSE BUTTON (Blau)
+    lv_obj_t* btn_pause = lv_btn_create(panel);
+    lv_obj_set_size(btn_pause, 80, 70);
+    lv_obj_align(btn_pause, LV_ALIGN_TOP_MID, 0, 160);
+    lv_obj_set_style_bg_color(btn_pause, lv_color_hex(0x2980B9), 0);
+    lv_obj_t* lbl_pause = lv_label_create(btn_pause);
+    lv_label_set_text(lbl_pause, LV_SYMBOL_PAUSE);
+    lv_obj_set_style_text_font(lbl_pause, &lv_font_montserrat_24, 0);
+    lv_obj_center(lbl_pause);
+    lv_obj_add_event_cb(btn_pause, [](lv_event_t* e) {
+        playToneI2S(1000, 50, true);
+        HaWebsocketLogic_CallMediaService(cur_media_entity, "media_pause");
+    }, LV_EVENT_CLICKED, NULL);
+
+    // 4. STOPP BUTTON (Orange)
     lv_obj_t* btn_stop = lv_btn_create(panel);
-    lv_obj_set_size(btn_stop, 100, 70);
-    lv_obj_align(btn_stop, LV_ALIGN_TOP_MID, 55, 160);
+    lv_obj_set_size(btn_stop, 80, 70);
+    lv_obj_align(btn_stop, LV_ALIGN_TOP_MID, 105, 160);
     lv_obj_set_style_bg_color(btn_stop, lv_color_hex(0xE67E22), 0); 
     lv_obj_t* lbl_stop = lv_label_create(btn_stop);
     lv_label_set_text(lbl_stop, LV_SYMBOL_STOP);
@@ -329,9 +346,10 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
         HaWebsocketLogic_CallMediaService(cur_media_entity, "media_stop");
     }, LV_EVENT_CLICKED, NULL);
 
+    // 5. VOR WUERTS BUTTON
     lv_obj_t* btn_next = lv_btn_create(panel);
-    lv_obj_set_size(btn_next, 90, 70);
-    lv_obj_align(btn_next, LV_ALIGN_TOP_MID, 165, 160);
+    lv_obj_set_size(btn_next, 80, 70);
+    lv_obj_align(btn_next, LV_ALIGN_TOP_MID, 210, 160);
     lv_obj_set_style_bg_color(btn_next, lv_color_hex(0x333333), 0);
     lv_obj_t* lbl_next = lv_label_create(btn_next);
     lv_label_set_text(lbl_next, LV_SYMBOL_NEXT);

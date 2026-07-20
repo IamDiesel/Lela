@@ -4,7 +4,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <WiFi.h>
-#include <esp_wifi.h> // <--- DIESE ZEILE HINZUFÜGEN!
+
 
 // ==============================================================
 // FAIL-SAFE USB-HOST INTEGRATION (CDC-ACM VCP)
@@ -143,7 +143,7 @@ void setup() {
         Serial.println("[SYSTEM] Starte WLAN asynchron im Hintergrund...");
         WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
         WiFi.setTxPower(WIFI_POWER_19_5dBm);
-        esp_wifi_set_ps(WIFI_PS_NONE);
+        WiFi.setSleep(false);
         wifiStarted = true; // Verhindert, dass SystemLogic es doppelt startet
     }
 

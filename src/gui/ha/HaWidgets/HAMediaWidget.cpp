@@ -47,7 +47,7 @@ void HAMediaWidget::updateState(String state) {
 
 void HAMediaWidget::onClick() { 
     lv_obj_set_style_text_opa(icon_label, 127, 0); 
-    HaWebsocketLogic_CallService("media_player", "toggle", entity_id); 
+    HaWebsocketLogic_CallService("media_player", "media_play_pause", entity_id); 
 }
 
 // =========================================================
