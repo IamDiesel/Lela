@@ -9,6 +9,7 @@
 #include "EditTabLayout.h"
 #include "EditTabAction.h"
 #include "EditTabCondition.h"
+#include "EditTabSensor.h" 
 
 lv_obj_t* HaDialogEdit::overlay = nullptr; 
 lv_obj_t* HaDialogEdit::edit_panel = nullptr;          
@@ -141,6 +142,10 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     active_tabs.push_back(new EditTabSize());
     active_tabs.push_back(new EditTabDisplay());
     active_tabs.push_back(new EditTabLayout());
+    // Den neuen Sensor-Tab dynamisch hinzufügen
+    if (w->getType() == "sensor") {
+        active_tabs.push_back(new EditTabSensor());
+    }
     active_tabs.push_back(new EditTabAction());
     active_tabs.push_back(new EditTabCondition());
     
