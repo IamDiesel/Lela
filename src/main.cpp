@@ -4,6 +4,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <WiFi.h>
+#include <esp_wifi.h> // <--- DIESE ZEILE HINZUFÜGEN!
 
 // ==============================================================
 // FAIL-SAFE USB-HOST INTEGRATION (CDC-ACM VCP)
@@ -78,6 +79,39 @@ extern void ViewBaby_ExitFS();
 
 extern lv_obj_t * splash_status_label; 
 
+// ==============================================================
+// NON-BLOCKING AUDIO STATE MACHINE (Ersetzt den fehlerhaften Task)
+// ==============================================================
+static const uint16_t boot_melody_freqs[] = {262, 330, 392, 523, 659, 784};
+static const uint32_t boot_melody_durations[] = {100, 100, 100, 100, 100, 400};
+static int current_note = 0;
+static uint32_t note_start_time = 0;
+static bool melody_playing = false;
+
+void updateBootMelody() {
+    if (!melody_playing) return;
+
+    uint32_t now = millis();
+    if (current_note >= 6) {
+        melody_playing = false;
+        return;
+    }
+
+    if (note_start_time == 0) {
+        M5.Speaker.tone(boot_melody_freqs[current_note], boot_melody_durations[current_note], 1, true);
+        note_start_time = now;
+    } else {
+        // 10ms Pause zwischen den Toenen fuer saubere Trennung
+        if (now - note_start_time >= boot_melody_durations[current_note] + 10) {
+            current_note++;
+            if (current_note < 6) {
+                M5.Speaker.tone(boot_melody_freqs[current_note], boot_melody_durations[current_note], 1, true);
+                note_start_time = now;
+            }
+        }
+    }
+}
+
 void updateStaticStatus(const char* text) {
     M5.Display.fillRect(0, 675, 1280, 45, TFT_BLACK);
     M5.Display.setTextColor(m5gfx::color565(150, 150, 150));
@@ -86,33 +120,41 @@ void updateStaticStatus(const char* text) {
     M5.Display.drawString(text, 640, 695);
 }
 
+
+
 void setup() {
     Serial.begin(115200);
-    delay(1000); 
+    delay(10); // ANTI-BLOCK: Massiv gekuerzt von 1000ms
     Serial.println("\n--- SYSTEM BOOT ---");
     
     auto cfg = M5.config();
     M5.begin(cfg);
-    delay(500); 
+    delay(10); // ANTI-BLOCK: Massiv gekuerzt von 500ms
 
-    Data_Init();
+    Data_Init(); // Laedt sofort die wifiSsid aus dem Speicher
     
-    // Saubere Helligkeitsberechnung direkt beim Start
-    M5.Display.setBrightness((brightnessPercent * 255) / 100);
-
+    // ==============================================================
+    // EARLY-RADIO-INIT: WLAN sofort im Hintergrund starten!
+    // ==============================================================
     Serial.println("[SYSTEM] Konfiguriere WLAN-Pins fuer M5Tab5...");
     WiFi.setPins(12, 13, 11, 10, 9, 8, 15);
+    
+    if (wifiSsid != "") {
+        Serial.println("[SYSTEM] Starte WLAN asynchron im Hintergrund...");
+        WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        wifiStarted = true; // Verhindert, dass SystemLogic es doppelt startet
+    }
+
+    // Saubere Helligkeitsberechnung direkt beim Start
+    M5.Display.setBrightness((brightnessPercent * 255) / 100);
 
     BleLogic_Init();
 
     #if __has_include(<USBHostSerial.h>)
         Serial.println("[USB] Starte USBHostSerial Treiber...");
-        
-        // Logger einhaengen (wichtig fuer die Ueberwachung!)
         dongleUSB.setLogger(usbHostLogger);
-        
-        // BUGFIX: Die Parameter sind (baudrate, stopbits, parity, databits)
-        // 115200 Baud, 0 Stopbits (Bibliotheks-Logik fuer 1 Stop), 0 Parity, 8 Databits
         dongleUSB.begin(115200, 0, 0, 8); 
         BleLogic_SetDongleStream(&dongleStream);
     #else
@@ -121,9 +163,9 @@ void setup() {
         BleLogic_SetDongleStream(&dongleStream);
     #endif
 
-    Serial.println("[AUDIO-DIAG] Erzwinge I2S/I2C Hardware-Reset...");
+Serial.println("[AUDIO-DIAG] Erzwinge I2S/I2C Hardware-Reset...");
     M5.Speaker.end();
-    delay(100);
+    delay(100); // ANTI-CRASH FIX: Muss 100ms bleiben fuer echten Hardware-Reset!
     bool speaker_ok = M5.Speaker.begin();
     
     if (speaker_ok) {
@@ -132,12 +174,10 @@ void setup() {
         int uiVol = (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteUI ? 0 : volUI/100.0f) * 255.0f );
         M5.Speaker.setChannelVolume(1, uiVol);
         
-        M5.Speaker.tone(262, 100, 1, true); delay(100);
-        M5.Speaker.tone(330, 100, 1, true); delay(100); 
-        M5.Speaker.tone(392, 100, 1, true); delay(100); 
-        M5.Speaker.tone(523, 100, 1, true); delay(100); 
-        M5.Speaker.tone(659, 100, 1, true); delay(100);
-        M5.Speaker.tone(784, 400, 1, true); delay(200); 
+        // Starte die State-Machine anstelle des abstuerzenden FreeRTOS Tasks
+        melody_playing = true;
+        current_note = 0;
+        note_start_time = 0;
     }
 
     M5.Display.setRotation(1); 
@@ -191,42 +231,75 @@ void setup() {
     updateStaticStatus("Bereite Benutzeroberflaeche vor...");
     gui.init();
 
-    updateStaticStatus("Starte WLAN & Hintergrunddienste...");
+    updateStaticStatus("Starte Hintergrunddienste...");
     SystemLogic_Update(); 
     
-    while (millis() - startTime < 2500) {
-        delay(10);
-    }
+    // HIER STAND DAS 2,5s DELAY. Es wurde restlos entfernt! Das System springt SOFORT in die loop().
 }
 
 void loop() {
     M5.update(); 
+    updateBootMelody();
     
-    static uint32_t last_tick = 0;
-    if (last_tick == 0) last_tick = millis();
-    uint32_t now = millis();
-    uint32_t dt = now - last_tick;
-    last_tick = now;
-    if (dt > 50) dt = 50;
-    lv_tick_inc(dt); 
+    // BOOTSCREEN-DAUER: Auf 1,2 Sekunden verkuerzt (passend zur Startmelodie)
+    bool nativeSplashActive = (millis() - startTime < 1200);
+
+    // ANTI-SKIP FIX: LVGL darf keine Zeit berechnen, waehrend der Bootscreen sichtbar ist.
+    // So startet die Animation danach exakt bei Frame 0 und nicht in der Mitte!
+    if (!nativeSplashActive) {
+        static uint32_t last_tick = 0;
+        if (last_tick == 0) last_tick = millis(); // Setzt den Startpunkt exakt auf das Ende des Splashs
+        uint32_t now = millis();
+        uint32_t dt = now - last_tick;
+        last_tick = now;
+        if (dt > 50) dt = 50;
+        lv_tick_inc(dt); 
+    }
     
     if (lvgl_port_lock(0)) {
-        if (!vidFSMode) {
+        
+        // LVGL darf erst zeichnen, wenn der native Splash beendet ist!
+        if (!vidFSMode && !nativeSplashActive) {
             lv_timer_handler();
         }
         
-        if (gui.getCurrentScreen() == (ScreenID)99 && splash_status_label != nullptr) {
-            static uint32_t last_splash_upd = 0;
-            if (millis() - last_splash_upd > 150) {
-                last_splash_upd = millis();
-                if (HaWebsocketLogic_IsConnected()) {
-                    lv_label_set_text(splash_status_label, "Home Assistant verbunden! Starte Dashboard...");
-                } else if (WiFi.status() == WL_CONNECTED) {
-                    lv_label_set_text(splash_status_label, "WLAN verbunden. Verbinde Home Assistant...");
+// ==============================================================
+        // DIE NEUE STATE-MACHINE FUER DIE BOOT-ANIMATION
+        // ==============================================================
+        if (!nativeSplashActive && gui.getCurrentScreen() == (ScreenID)99) {
+            static BootState current_boot_state = BOOT_STATE_INIT;
+            static uint32_t lvgl_anim_start_time = 0;
+            static uint32_t wifi_ready_time = 0; // NEU: Timer fuer die Toleranzzeit
+            
+            if (lvgl_anim_start_time == 0) lvgl_anim_start_time = millis();
+            
+            BootState new_state = current_boot_state;
+
+            // Logik-Kaskade: Smartes Warten (verhindert den 15s Timeout-Trap!)
+            if (WiFi.status() == WL_CONNECTED) {
+                if (wifi_ready_time == 0) wifi_ready_time = millis();
+                
+                // Wir beenden die Animation, sobald HA verbunden ist,
+                // ODER spaetestens 2,5 Sekunden nachdem das WLAN steht!
+                // So friert das Tablet niemals ein, wenn ein Server nicht antwortet.
+                if (HaWebsocketLogic_IsConnected() || (millis() - wifi_ready_time > 2500)) {
+                    new_state = BOOT_STATE_DONE;
                 } else {
-                    String s = String("Verbinde mit WLAN '") + wifiSsid + "'...";
-                    lv_label_set_text(splash_status_label, s.c_str());
+                    new_state = BOOT_STATE_HA;
                 }
+            } else {
+                new_state = BOOT_STATE_WIFI;
+            }
+
+            // Hard-Timeout-Schutz (Greift nur noch, wenn der Router gar nicht antwortet)
+            if (new_state != BOOT_STATE_DONE && millis() - lvgl_anim_start_time > 15000) {
+                new_state = BOOT_STATE_TIMEOUT;
+            }
+
+            // Bei Zustandswechsel: Gib das Kommando an den Bildschirm!
+            if (new_state != current_boot_state) {
+                current_boot_state = new_state;
+                ViewBootScreen::setBootState(new_state, wifiSsid.c_str());
             }
         }
         
@@ -234,12 +307,7 @@ void loop() {
         if (vidFSMode) {
             if (fs_start_time == 0) fs_start_time = millis();
             if (millis() - fs_start_time > 500 && M5.Touch.getCount() > 0) {
-                // ==========================================================
-                // BUGFIX: HARDWARE SYNC BEIM BEENDEN DES VOLLBILDS
-                // ==========================================================
-                M5.Display.waitDisplay(); // Warten bis das Video-Frame 100% gezeichnet ist
-                // ==========================================================
-                
+                M5.Display.waitDisplay(); 
                 vidFSMode = false;
                 fs_start_time = 0;
                 ViewBaby_ExitFS(); 
@@ -253,6 +321,11 @@ void loop() {
     
     BleLogic_SetDongleReady(dongleIsPhysicallyConnected);
 
+    // ==========================================================
+    // PARALLELER BOOT:
+    // Diese Updates rennen ungebremst WAEHREND der Boot-Animation
+    // im Hintergrund und verbinden WLAN, MQTT und Bluetooth!
+    // ==========================================================
     SystemLogic_Update(); 
     WebSetupLogic_Update();
 
