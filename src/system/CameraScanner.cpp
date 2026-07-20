@@ -105,27 +105,26 @@ void CameraScanner::startScan() {
 void CameraScanner::scanTask(void *pvParameters) {
     foundCameras.clear();
     IPAddress localIP = WiFi.localIP();
-    IPAddress gatewayIP = WiFi.gatewayIP(); // Hier fragen wir den Router nach dem DNS-Namen!
+    IPAddress gatewayIP = WiFi.gatewayIP(); 
     String baseIP = String(localIP[0]) + "." + String(localIP[1]) + "." + String(localIP[2]) + ".";
 
-    // ABSOLUT KRITISCH: Batch Size auf 6 limitiert, da ESP32 max ~16 parallele Sockets kann!
-    const int BATCH_SIZE = 6; 
+    // OPTIMIERUNG 1: Groessere Batches, da wir den ESP-Speicher besser ausnutzen
+    const int BATCH_SIZE = 12; 
+    
     for (int batch_start = 1; batch_start < 255; batch_start += BATCH_SIZE) {
         int socks[BATCH_SIZE];
         String ips[BATCH_SIZE];
-        int max_fd = -1;
-        fd_set writefds;
-        FD_ZERO(&writefds);
+        int pending_sockets = 0;
 
         for (int i = 0; i < BATCH_SIZE; i++) {
             socks[i] = -1;
             int host = batch_start + i;
-            if (host >= 255 || host == localIP[3]) continue; // Eigene IP ueberspringen
+            if (host >= 255 || host == localIP[3]) continue; 
 
             String targetIP = baseIP + String(host);
             int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             if (s >= 0) {
-                fcntl(s, F_SETFL, O_NONBLOCK); // Non-Blocking fuer ultra schnellen Scan
+                fcntl(s, F_SETFL, O_NONBLOCK); 
                 struct sockaddr_in addr;
                 memset(&addr, 0, sizeof(addr));
                 addr.sin_family = AF_INET;
@@ -134,19 +133,40 @@ void CameraScanner::scanTask(void *pvParameters) {
 
                 connect(s, (struct sockaddr*)&addr, sizeof(addr));
                 
-                FD_SET(s, &writefds);
-                if (s > max_fd) max_fd = s;
                 socks[i] = s;
                 ips[i] = targetIP;
+                pending_sockets++;
             }
         }
 
-        if (max_fd >= 0) {
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 300000; // 300ms Timeout per 6 IPs
+        // OPTIMIERUNG 2: Intelligente Time-Loop mit 800ms
+        uint32_t start_time = millis();
+        uint32_t timeout_ms = 800; 
 
-            if (select(max_fd + 1, NULL, &writefds, NULL, &tv) > 0) {
+        // Schleife laeuft, bis alle Sockets beantwortet wurden ODER die 800ms um sind
+        while (pending_sockets > 0 && (millis() - start_time) < timeout_ms) {
+            fd_set writefds;
+            FD_ZERO(&writefds);
+            int max_fd = -1;
+            
+            for (int i = 0; i < BATCH_SIZE; i++) {
+                if (socks[i] >= 0) {
+                    FD_SET(socks[i], &writefds);
+                    if (socks[i] > max_fd) max_fd = socks[i];
+                }
+            }
+
+            if (max_fd < 0) break;
+
+            struct timeval tv;
+            uint32_t elapsed = millis() - start_time;
+            uint32_t remaining = (elapsed < timeout_ms) ? (timeout_ms - elapsed) : 1;
+            tv.tv_sec = 0;
+            tv.tv_usec = remaining * 1000; // Berechnet dynamisch die restliche Wartezeit
+
+            int res = select(max_fd + 1, NULL, &writefds, NULL, &tv);
+            
+            if (res > 0) {
                 for (int i = 0; i < BATCH_SIZE; i++) {
                     if (socks[i] >= 0 && FD_ISSET(socks[i], &writefds)) {
                         int error = 0;
@@ -156,7 +176,6 @@ void CameraScanner::scanTask(void *pvParameters) {
                         if (error == 0) {
                             CamDevice dev;
                             dev.ip = ips[i];
-                            // Löst Reverse DNS via UDP beim Router auf!
                             String hostname = getReverseDNS(ips[i], gatewayIP);
                             if (hostname.length() > 0) {
                                 dev.name = hostname;
@@ -165,16 +184,27 @@ void CameraScanner::scanTask(void *pvParameters) {
                             }
                             foundCameras.push_back(dev);
                         }
+                        
+                        // ANTI-FRUSTRATION-FIX: Nur der FERTIGE Socket wird geschlossen.
+                        // Die restlichen duerfen in der naechsten Schleife weiter verbinden!
+                        close(socks[i]);
+                        socks[i] = -1;
+                        pending_sockets--;
                     }
                 }
+            } else {
+                // Timeout des gesamten Blocks erreicht oder Fehler -> Schleife abbrechen
+                break;
             }
         }
 
+        // Rest-Aufraeumen der Sockets, die es in 800ms nicht geschafft haben
         for (int i = 0; i < BATCH_SIZE; i++) {
-            if (socks[i] >= 0) close(socks[i]);
+            if (socks[i] >= 0) {
+                close(socks[i]);
+            }
         }
         
-        // Ganz wichtig: Dem Betriebssystem Luft lassen, sonst greift der Watchdog!
         vTaskDelay(pdMS_TO_TICKS(10)); 
     }
 
