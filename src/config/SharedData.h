@@ -28,6 +28,11 @@ extern void addAudioLog(String msg);
 
 extern bool babyAlarmActive;
 
+// --- Network Management ---
+extern String directSsid;
+extern String directPass;
+extern bool requestDirectMode; // Flag zum Triggern des Wechsels
+
 extern String wifiSsid;
 extern String wifiPass;
 extern String mqttBroker;

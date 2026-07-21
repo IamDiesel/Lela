@@ -9,6 +9,10 @@
 SemaphoreHandle_t bleMutex = NULL;
 volatile bool isStreamActive = false; 
 
+String directSsid = "";
+String directPass = "";
+bool requestDirectMode = false;
+
 Preferences preferences;
 QueueHandle_t audioQueue = NULL; 
 
@@ -177,6 +181,9 @@ void Data_Init() {
     preferences.begin("catmat", false);
     wifiSsid = preferences.getString("wifiSsid", "");
     wifiPass = preferences.getString("wifiPass", "");
+    // Neue Direct-Credentials aus dem NVS laden
+    directSsid = preferences.getString("directSsid", "");
+    directPass = preferences.getString("directPass", "");
     
     mqttBroker = preferences.getString("mqIP", SECRET_HA_IP); 
     mqttBroker.trim();

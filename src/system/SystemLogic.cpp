@@ -1,7 +1,8 @@
 #pragma GCC optimize ("O3") 
 #include "SystemLogic.h"
 #include "SharedData.h"
-#include "VideoLogic.h"      
+#include "VideoLogic.h" 
+#include "WifiStateLogic.h"  
 #include "MqttLogic.h"       
 #include "WebSetupLogic.h"   
 #include "BleLogic.h"        
@@ -34,6 +35,7 @@ void SystemLogic_Init() {
     BleLogic_Init();     
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
+    WifiStateLogic::init();
     
     if (wifiSsid == "") { pendingWebSetupMode = 1; } 
     preferences.begin("catmat", true); 
@@ -77,27 +79,26 @@ void SystemLogic_Update() {
     calcMultiplex(); 
     if (webSetupMode > 0 || pendingWebSetupMode > 0) return; 
 
-    if (!wifiEnabled && wifiStarted) { WiFi.disconnect(true, false); wifiStarted = false; timeSynced = false; }
+    // Zentrale Netzwerk-State-Machine triggern
+    WifiStateLogic::update();
     
-    if (wifiEnabled && !wifiStarted && !isTrackerMode && effPrioWifi > 0) { 
-        WiFi.begin(wifiSsid.c_str(), wifiPass.c_str()); 
-        WiFi.setTxPower(WIFI_POWER_19_5dBm); 
-        esp_wifi_set_ps(WIFI_PS_NONE);
-        wifiStarted = true; 
-    }
+    // Sync Flags anpassen (für Statusanzeigen in der Topbar)
+    wifiStarted = (WifiStateLogic::getMode() == NET_MODE_HOME);
 
     static bool ntpConfigured = false;
-    if (WiFi.status() == WL_CONNECTED && !ntpConfigured) {
-        configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", "pool.ntp.org", "time.google.com");
-        ntpConfigured = true;
-        timeSynced = true; 
-    } else if (WiFi.status() != WL_CONNECTED) {
-        ntpConfigured = false;
-        timeSynced = false;
-    }
+    if (WifiStateLogic::getMode() == NET_MODE_HOME) {
+        if (WiFi.status() == WL_CONNECTED && !ntpConfigured) {
+            configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", "pool.ntp.org", "time.google.com");
+            ntpConfigured = true;
+            timeSynced = true; 
+        } else if (WiFi.status() != WL_CONNECTED) {
+            ntpConfigured = false;
+            timeSynced = false;
+        }
 
-    if (BleLogic_Update()) return;
-    MqttLogic_Update(); 
+        if (BleLogic_Update()) return;
+        MqttLogic_Update(); 
+    }
     
     static uint32_t lastMathUpdate = 0;
     if (millis() - lastMathUpdate > 100) { 
