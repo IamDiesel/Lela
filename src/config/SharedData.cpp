@@ -338,7 +338,6 @@ void playBingI2S(uint8_t volChannel) {
 void playBabyAlarmI2S() { if(audioQueue != NULL && !muteAlarm) { AudioMsg msg; msg.soundType = 1; msg.volumeChannel = 1; msg.duration=200; xQueueSend(audioQueue, &msg, 0); } }
 void playCatAlarmI2S() { if(audioQueue != NULL && !muteAlarm) { AudioMsg msg; msg.soundType = 2; msg.volumeChannel = 1; msg.duration=100; xQueueSend(audioQueue, &msg, 0); } }
 
-// --- FIX: Ersetzt die veralteten muted und babyMuted ---
 void fullReset() { alarmActive = false; disconnectAlarmActive = false; muteAlarm = false; isArmed = false; cooldownUntil = millis() + 5000; topbarStatusMsg = ""; }
 void wakeDisplay() { requestWake = true; M5.Display.wakeup(); }
 void sleepDisplay() { requestSleep = true; M5.Display.sleep(); }
@@ -355,6 +354,15 @@ namespace SharedData {
         preferences.putBool("mutU", muteUI);
         preferences.putBool("mutA", muteAlarm);
         preferences.putBool("mutB", muteBaby);
+        
+        // --- WLAN- UND KAMERA-DATEN MITSICHERN ---
+        preferences.putString("wifiSsid", wifiSsid);
+        preferences.putString("wifiPass", wifiPass);
+        preferences.putString("strIp", streamIp);
+        preferences.putBool("useCstUrl", useCustomUrls);
+        preferences.putString("camEntity", camEntity);
+        preferences.putString("babyUrl", babyStreamUrl);
+        
         preferences.end();
     }
 }

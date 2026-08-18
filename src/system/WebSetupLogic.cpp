@@ -236,7 +236,7 @@ void WebSetupLogic_Update() {
         WiFi.setSleep(false); 
 
         if (webSetupMode == 1) {
-            WiFi.disconnect(true, true);
+            WiFi.disconnect(false, false);
             delay(100);
             
             WiFi.mode(WIFI_AP);
