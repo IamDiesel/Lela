@@ -165,6 +165,12 @@ int btPacketCount = 0;
 
 bool dongleAlarmEnabled = false;
 
+// --- NEU: Kamera API Daten ---
+int camBatteryLevel = -1;
+bool camIsCharging = false;
+int camAudioRecorderPort = 50001; 
+String uuidClient = "14751c6b-b3c0-4769-ad50-f436fd2de026";
+
 void addAudioLog(String msg) {
     if(!audioDebugEnabled) return;
     msg.trim();

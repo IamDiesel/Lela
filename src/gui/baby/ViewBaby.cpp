@@ -3,6 +3,7 @@
 #include "SharedData.h"
 #include "SystemLogic.h" 
 #include "AudioStreamLogic.h"
+#include "CamApiLogic.h" // <--- NEU: API Modul eingebunden
 #include "ViewTopbar.h"
 #include <WiFi.h>
 
@@ -18,6 +19,8 @@ static lv_obj_t * btn_fs = nullptr;
 static lv_obj_t * lbl_fs = nullptr;
 
 static lv_obj_t * lbl_fps = nullptr; 
+static lv_obj_t * lbl_cam_battery = nullptr; // <--- NEU: Batterie Label
+
 static lv_obj_t * debug_panel = nullptr; 
 static lv_obj_t * debug_label = nullptr;
 static lv_obj_t * fs_black_overlay = nullptr; 
@@ -38,6 +41,7 @@ static void view_baby_del_cb(lv_event_t * e) {
     btn_fs = nullptr;
     lbl_fs = nullptr;
     lbl_fps = nullptr;
+    lbl_cam_battery = nullptr; // <--- NEU: Cleanup
     debug_panel = nullptr;
     debug_label = nullptr;
     fs_black_overlay = nullptr;
@@ -112,17 +116,21 @@ static void cam_image_event_cb(lv_event_t * e) {
     }
 }
 
-// FIX: PTT Button und Mute Button Callbacks wiederhergestellt
+// FIX: PTT Button nutzt nun die CamApiLogic!
 static void btn_ptt_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
     if(code == LV_EVENT_PRESSED) {
         playToneI2S(800, 100, true); 
         lv_obj_set_style_bg_color(btn_ptt, lv_color_hex(0x00FF00), 0);
         lv_label_set_text(lv_obj_get_child(btn_ptt, 0), LV_SYMBOL_AUDIO " TALK");
+        
+        CamApi_SetPtt(true); // <--- NEU: Startet das Audio-Uplink
     }
     else if(code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         lv_obj_set_style_bg_color(btn_ptt, lv_color_hex(0x4FA5D6), 0);
         lv_label_set_text(lv_obj_get_child(btn_ptt, 0), LV_SYMBOL_MUTE " PTT");
+        
+        CamApi_SetPtt(false); // <--- NEU: Stoppt das Audio-Uplink
     }
 }
 
@@ -336,6 +344,13 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_clear_flag(fs_black_overlay, LV_OBJ_FLAG_CLICKABLE); 
     lv_obj_add_flag(fs_black_overlay, LV_OBJ_FLAG_HIDDEN); 
 
+    // --- NEU: Batterie-Anzeige für die Kamera ---
+    lbl_cam_battery = lv_label_create(scr);
+    lv_obj_set_style_text_font(lbl_cam_battery, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(lbl_cam_battery, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align_to(lbl_cam_battery, cam_image_obj, LV_ALIGN_TOP_RIGHT, -15, 15);
+    lv_obj_add_flag(lbl_cam_battery, LV_OBJ_FLAG_HIDDEN);
+
     return scr;
 }
 
@@ -356,6 +371,25 @@ void ViewBaby::update() {
         lv_label_set_text_fmt(lbl_fps, "FPS: %d", currentFps);
     } else if (lbl_fps != nullptr) {
         lv_obj_add_flag(lbl_fps, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // --- NEU: Batterie-Level der Kamera live anzeigen ---
+    if (isStreamActive && camBatteryLevel >= 0 && lbl_cam_battery != nullptr) {
+        lv_obj_clear_flag(lbl_cam_battery, LV_OBJ_FLAG_HIDDEN);
+        
+        const char* batIcon = LV_SYMBOL_BATTERY_FULL;
+        if (camBatteryLevel <= 20) batIcon = LV_SYMBOL_BATTERY_EMPTY;
+        else if (camBatteryLevel <= 50) batIcon = LV_SYMBOL_BATTERY_2;
+        else if (camBatteryLevel <= 80) batIcon = LV_SYMBOL_BATTERY_3;
+
+        if (camIsCharging) batIcon = LV_SYMBOL_CHARGE;
+
+        lv_color_t batColor = (camBatteryLevel <= 20 && !camIsCharging) ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00);
+        lv_obj_set_style_text_color(lbl_cam_battery, batColor, 0);
+
+        lv_label_set_text_fmt(lbl_cam_battery, "%s %d%%", batIcon, camBatteryLevel);
+    } else if (lbl_cam_battery != nullptr) {
+        lv_obj_add_flag(lbl_cam_battery, LV_OBJ_FLAG_HIDDEN);
     }
 
     if (btn_audio != nullptr && lbl_audio != nullptr) {

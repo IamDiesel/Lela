@@ -186,6 +186,12 @@ extern uint8_t lastBtPackets[MAX_BT_MSGS][10];
 extern int btPacketIdx;
 extern int btPacketCount;
 
+// --- NEU: Kamera API Daten ---
+extern int camBatteryLevel;
+extern bool camIsCharging;
+extern int camAudioRecorderPort;
+extern String uuidClient;
+
 void Data_Init();
 void Audio_Init();
 void calcMultiplex();

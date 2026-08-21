@@ -6,6 +6,7 @@
 #include "WebSetupLogic.h"   
 #include "BleLogic.h"        
 #include "AudioStreamLogic.h" 
+#include "CamApiLogic.h"     // <--- NEU: API Modul eingebunden
 #include <WiFi.h>
 #include <esp_wifi.h> 
 #include "secrets.h"         
@@ -27,6 +28,7 @@ int cameraRefreshMs = 300;
 void SystemLogic_Init() {
     Audio_Init(); 
     VideoLogic_Init(); 
+    CamApiLogic_Init(); // <--- NEU: Startet den Batterie-Poller
     
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
