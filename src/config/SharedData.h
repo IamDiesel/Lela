@@ -177,6 +177,7 @@ extern volatile int currentFps;
 extern int mjpegDropThreshold; 
 extern int camHackMode; 
 extern volatile bool isStreamActive;
+extern uint8_t* download_buf; //Globaler Video-Puffer
 
 extern int audioFormat; 
 extern volatile bool audioStandaloneMode;

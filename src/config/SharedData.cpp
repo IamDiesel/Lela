@@ -8,6 +8,7 @@
 
 SemaphoreHandle_t bleMutex = NULL;
 volatile bool isStreamActive = false; 
+uint8_t* download_buf = nullptr;
 
 Preferences preferences;
 QueueHandle_t audioQueue = NULL; 

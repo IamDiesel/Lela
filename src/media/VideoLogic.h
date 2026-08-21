@@ -5,3 +5,5 @@ void VideoLogic_Init(); // <--- Die sichere Speicher-Reservierung beim Boot
 void VideoLogic_Start();
 void VideoLogic_Stop();
 void VideoLogic_TriggerImageLoad();
+
+extern uint8_t* download_buf;

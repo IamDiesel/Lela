@@ -24,7 +24,7 @@ extern void lvgl_port_unlock(void);
 
 static lv_img_dsc_t cam_img_dsc[3] = {{0}, {0}, {0}};
 static uint8_t* jpg_bufs[3] = {nullptr, nullptr, nullptr}; 
-static uint8_t* download_buf = nullptr; 
+//uint8_t* download_buf = nullptr;
 static uint8_t write_idx = 0;
 static uint8_t read_idx = 1;
 
@@ -49,18 +49,23 @@ static void reset_jpeg_engine() {
 }
 
 void VideoLogic_Init() {
-    if (download_buf == nullptr) {
-        download_buf = (uint8_t*)heap_caps_aligned_alloc(64, MAX_JPEG_DOWNLOAD_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    // ACHTUNG: download_buf wurde jetzt bereits beim Boot in der main.cpp reserviert!
+    
+    // Wir reservieren hier nur noch die restlichen drei Puffer im externen PSRAM:
+    if (jpg_bufs[0] == nullptr) {
         for(int i=0; i<3; i++) {
             jpg_bufs[i] = (uint8_t*)heap_caps_aligned_alloc(64, MAX_PIXEL_BUF_SIZE, MALLOC_CAP_SPIRAM);
         }
-        if (download_buf) {
+        
+        // Prüfen ob beides erfolgreich war
+        if (download_buf && jpg_bufs[0]) {
             Serial.println("[VideoLogic] RAM erfolgreich vorab reserviert.");
         } else {
             Serial.println("[VideoLogic] KRITISCHER FEHLER beim Reservieren des RAMs!");
         }
     }
 }
+
 
 template <bool FAST_MODE>
 void processStream(WiFiClient* stream, uint8_t* d_buf) {
@@ -76,8 +81,6 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
         
         // ==========================================================
         // TURBO-FIX 1: Schneller Block-Download fuer den Header
-        // Wir setzen Timeout auf 1s, damit readBytesUntil nicht bei 
-        // Latenzen mitten im Wort abbricht, lesen aber schnell!
         // ==========================================================
         stream->setTimeout(1000); 
         
@@ -94,12 +97,14 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                     }
                     return; 
                 }
+                
+                // WATCHDOG-FIX 1: Gibt der CPU bei Netzwerk-Latenz Luft zum Atmen!
+                vTaskDelay(pdMS_TO_TICKS(1)); 
                 continue; 
             }
             
             header_buf[len] = '\0';
             
-            // Eine leere Zeile (nur \r) bedeutet, der HTTP-Header ist zu Ende
             if (len <= 2 && frameSize > 0) break; 
             
             if (strncasecmp(header_buf, "Content-Length:", 15) == 0) {
@@ -192,22 +197,16 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                     float zoom_y = 720.0f / pic_info.height;
                     float zoom = (zoom_x < zoom_y) ? zoom_x : zoom_y; 
                     
-                    // Warten, falls der alte DMA Transfer noch laeuft
-                    M5.Display.waitDisplay(); 
                     M5.Display.startWrite();  
                     
+                    // 1. BILD ZEICHNEN (Hardware PPA)
                     ppa_srm->pushImageSRM((1280 - (int)(pic_info.width*zoom)) / 2, 
                                          (720 - (int)(pic_info.height*zoom)) / 2, 
                                          0, 0, 0, zoom, zoom, pic_info.width, pic_info.height, (uint16_t*)out_buf);
                     
-                    // ==========================================================
-                    // FIX 2: CPU Parallelisierung
-                    // Kein waitDisplay() mehr hier! Die Hardware malt asynchron, 
-                    // die CPU ist SOFORT wieder frei, um das naechste Bild zu holen!
-                    // (Ausnahme: Wir muessen Text zeichnen)
-                    // ==========================================================
+                    // 2. TEXT DARUEBER ZEICHNEN
                     if (showFps) {
-                        M5.Display.waitDisplay(); 
+                        M5.Display.waitDisplay(); // Warten bis das Bild wirklich auf dem Screen liegt
                         M5.Display.setCursor(20, 80); 
                         M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
                         M5.Display.setFont(&fonts::FreeSansBold18pt7b);
@@ -215,6 +214,9 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                     }
                     
                     M5.Display.endWrite();
+                    
+                    // 3. ATEMPAUSE FUER WATCHDOG UND PPA-PUFFER
+                    vTaskDelay(pdMS_TO_TICKS(5));
                     
                 } else {
                     if (lvgl_port_lock(15)) { 
@@ -225,7 +227,6 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                         ViewBaby_SetImage(&cam_img_dsc[read_idx]); 
                         lvgl_port_unlock();
                     }
-                    // Kurze Atempause (von 10ms auf 5ms reduziert fuer flüssigere FPS)
                     vTaskDelay(pdMS_TO_TICKS(5));
                 }
                 
@@ -243,6 +244,8 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
         vTaskDelay(1); 
     }
 }
+
+
 
 static void videoTask(void * pvParameters) {
     if (download_buf && jpg_bufs[0] && jpg_bufs[1] && jpg_bufs[2]) {

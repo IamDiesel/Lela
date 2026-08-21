@@ -121,11 +121,16 @@ void updateStaticStatus(const char* text) {
 }
 
 
-
 void setup() {
     Serial.begin(115200);
     delay(10); // ANTI-BLOCK: Massiv gekuerzt von 1000ms
     Serial.println("\n--- SYSTEM BOOT ---");
+    // =========================================================
+    // 1. ALLERERSTER BEFEHL IM SYSTEM!
+    // Sichert sofort 150KB perfekt zusammenhaengendes internes RAM 
+    // fuer maximales Video-DMA, bevor das WLAN fragmentieren kann!
+    // =========================================================
+    download_buf = (uint8_t*)heap_caps_aligned_alloc(64, 150000, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     
     auto cfg = M5.config();
     M5.begin(cfg);
@@ -163,7 +168,7 @@ void setup() {
         BleLogic_SetDongleStream(&dongleStream);
     #endif
 
-Serial.println("[AUDIO-DIAG] Erzwinge I2S/I2C Hardware-Reset...");
+    Serial.println("[AUDIO-DIAG] Erzwinge I2S/I2C Hardware-Reset...");
     M5.Speaker.end();
     delay(100); // ANTI-CRASH FIX: Muss 100ms bleiben fuer echten Hardware-Reset!
     bool speaker_ok = M5.Speaker.begin();
@@ -229,13 +234,18 @@ Serial.println("[AUDIO-DIAG] Erzwinge I2S/I2C Hardware-Reset...");
     SystemLogic_Init(); 
 
     updateStaticStatus("Bereite Benutzeroberflaeche vor...");
-    gui.init();
+    
+    // ZENTRALER FIX: Grafik-Operationen (gui.init) muessen gelockt werden,
+    // um Deadlocks mit dem Hintergrund-Task zu verhindern!
+    if (lvgl_port_lock(portMAX_DELAY)) {
+        gui.init();
+        lvgl_port_unlock();
+    }
 
     updateStaticStatus("Starte Hintergrunddienste...");
     SystemLogic_Update(); 
-    
-    // HIER STAND DAS 2,5s DELAY. Es wurde restlos entfernt! Das System springt SOFORT in die loop().
 }
+
 
 void loop() {
     M5.update(); 

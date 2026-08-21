@@ -25,13 +25,9 @@
 int cameraRefreshMs = 300; 
 
 void SystemLogic_Init() {
-    HaConfigLogic::Init();
-    
     Audio_Init(); 
     VideoLogic_Init(); 
-    AudioStreamLogic_Init(); 
     
-    BleLogic_Init();     
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
     
@@ -45,8 +41,6 @@ void SystemLogic_Init() {
     cameraRefreshMs = preferences.getInt("camRef", 300); 
     showFps = preferences.getBool("showFps", false);
     preferences.end();
-    
-    gui.init();
 }
 
 void SystemLogic_Update() {
