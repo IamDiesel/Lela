@@ -49,6 +49,20 @@ volatile bool vidFSMode = false;
 volatile bool showFps = false; 
 volatile int currentFps = 0;
 
+int camBatteryPercent = 0;
+String camResolutions[10];
+int camResCount = 0;
+String currentCamRes = "1280x720";
+bool camFlash = false;
+bool camScrFlash = false;
+int camZoom = 0;
+int camQuality = 50;
+int camSpeed = 0;
+String camStatus = "PLAY";
+bool camScreenOn = true;
+const String camUuid = SECRET_CAM_UUID;
+volatile bool pttSwipeLock = false;
+
 bool mqttEnabled = true;
 
 bool useMqttForMat = true;
@@ -212,15 +226,15 @@ void Data_Init() {
     camEntity = preferences.getString("camEntity", SECRET_CAM_ENTITY);
     babyStreamUrl = preferences.getString("babyUrl", SECRET_BABY_STREAM_URL);
 
+    // --- NEUES FORMAT BEIM BOOT ---
     if (!useCustomUrls) {
-        camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?random=0";
+        camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?id=lela-os-stream&uuid=" + camUuid + "&quality=" + String(camQuality);
         babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio";
     }
     
     audioFormat = preferences.getInt("audioFmt", 0); 
     camHackMode = preferences.getInt("camHackM", 0); 
 
-    // --- NEU: Volume Laden ---
     volMaster = preferences.getInt("volM", 80);
     volUI = preferences.getInt("volU", 100);
     volAlarm = preferences.getInt("volA", 100);
@@ -250,6 +264,7 @@ void Data_Init() {
     dongleAlarmEnabled = preferences.getBool("dongleAl", false);
     preferences.end();
 }
+
 
 void calcMultiplex() {
     if (isStreamActive && !isArmed) { effPrioMat = 0; effPrioKippy = 0; effPrioWifi = 100.0; return; }

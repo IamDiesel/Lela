@@ -1,214 +1,140 @@
 #pragma GCC optimize ("O3")
-
 #include "AudioStreamLogic.h"
 #include "SharedData.h"
+#include "BabyCamApi.h"
 #include <M5Unified.hpp>
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <freertos/stream_buffer.h>
-
-#include "AudioFileSourceHTTPStream.h"
-#include "AudioGeneratorAAC.h"
-#include "AudioOutput.h"
+#include <WiFiUdp.h>
 
 volatile bool isAudioStreaming = false;
+volatile bool isPTTActive = false;
+static bool resumeBabyAudioAfterPTT = false;
+
 static TaskHandle_t audioProducerTaskHandle = NULL;
 static TaskHandle_t audioConsumerTaskHandle = NULL;
 
-static StreamBufferHandle_t audioStreamBuffer = NULL;
-const size_t STREAM_BUFFER_SIZE = 24576; 
-const size_t WATERMARK_SIZE     = 12288; 
-const uint32_t SAMPLE_RATE = 44100; 
-
-class AudioOutputM5Speaker : public AudioOutput {
-protected:
-    uint32_t m_rate = 44100;
-    int16_t pcm_buffer[512]; 
-    uint16_t buf_idx = 0;
-
-public:
-    AudioOutputM5Speaker() { m_rate = 44100; buf_idx = 0; }
-    virtual ~AudioOutputM5Speaker() { stop(); }
-    virtual bool begin() override { return true; }
-    virtual bool SetRate(int hz) override { m_rate = hz; return true; }
-    
-    virtual bool ConsumeSample(int16_t sample[2]) override {
-        pcm_buffer[buf_idx++] = sample[0]; 
-        
-        if (buf_idx >= 512) {
-            bool played = false;
-            while (!played && isAudioStreaming) {
-                played = M5.Speaker.playRaw(pcm_buffer, 512, m_rate, false, 1, 0);
-                if (!played) vTaskDelay(pdMS_TO_TICKS(1)); 
-            }
-            buf_idx = 0;
-        }
-        return true;
-    }
-    
-    virtual bool stop() override { 
-        if (buf_idx > 0) {
-            bool played = false;
-            while (!played && isAudioStreaming) {
-                played = M5.Speaker.playRaw(pcm_buffer, buf_idx, m_rate, false, 1, 0);
-                if (!played) vTaskDelay(pdMS_TO_TICKS(1));
-            }
-            buf_idx = 0;
-        }
-        return true; 
-    }
-};
-
 static void audioConsumerTask(void * pvParameters) {
-    uint8_t play_chunk[1024]; 
+    WiFiUDP udpIn;
+    uint8_t buffer[1024];
 
-    // Die Schleife läuft ab sofort für immer!
     while (true) {
-        if (!isAudioStreaming) {
-            vTaskDelay(pdMS_TO_TICKS(50)); // Schlafe ohne CPU-Last
+        if (!isAudioStreaming || isPTTActive) {
+            vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
-
-        bool prebuffering = true;
-        xStreamBufferReset(audioStreamBuffer); // Puffer saeubern bevor es losgeht
-
-        while (isAudioStreaming) {
-            size_t avail = xStreamBufferBytesAvailable(audioStreamBuffer);
-            
-            if (prebuffering) {
-                if (avail >= WATERMARK_SIZE) {
-                    prebuffering = false; 
-                } else {
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    continue;
-                }
-            }
-
-            if (avail == 0) {
-                prebuffering = true; 
-                continue;
-            }
-
-            size_t toRead = (avail > sizeof(play_chunk)) ? sizeof(play_chunk) : avail;
-            toRead = toRead & ~3; 
-            
-            if (toRead > 0) {
-                size_t bytesRead = xStreamBufferReceive(audioStreamBuffer, play_chunk, toRead, pdMS_TO_TICKS(10));
+        udpIn.begin(50001);
+        while (isAudioStreaming && !isPTTActive) {
+            int packetSize = udpIn.parsePacket();
+            if (packetSize > 0) {
+                int bytesRead = udpIn.read(buffer, sizeof(buffer));
                 if (bytesRead > 0) {
-                    bool played = false;
-                    while (!played && isAudioStreaming) {
-                        played = M5.Speaker.playRaw((const int16_t*)play_chunk, bytesRead / 2, SAMPLE_RATE, false, 1, 0);
-                        if (!played) vTaskDelay(pdMS_TO_TICKS(1)); 
-                    }
+                    M5.Speaker.setChannelVolume(0, (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f ));
+                    M5.Speaker.playRaw((const int16_t*)buffer, bytesRead / 2, 44100, false, 1, 0);
                 }
-            } else {
+                // --- UDP WDT FIX ---
                 vTaskDelay(pdMS_TO_TICKS(1));
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(2));
             }
         }
-        
-        M5.Speaker.stop(0); // Hardware stummschalten
+        udpIn.stop();
+        M5.Speaker.stop(0);
     }
 }
 
 static void audioProducerTask(void * pvParameters) {
+    WiFiUDP udpOut;
+    int16_t micData[256];
+
     while (true) {
-        if (!isAudioStreaming) {
+        if (!isPTTActive) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
-
-        if (WiFi.status() != WL_CONNECTED) { 
-            vTaskDelay(pdMS_TO_TICKS(1000)); 
-            continue; 
-        }
-        
-        M5.Speaker.setChannelVolume(0, (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f ));
-
-        if (audioFormat == 1) {
-            AudioFileSourceHTTPStream *in = new AudioFileSourceHTTPStream(babyStreamUrl.c_str());
-            AudioGeneratorAAC *aac = new AudioGeneratorAAC();
-            AudioOutputM5Speaker *out = new AudioOutputM5Speaker();
-
-            if (in && aac && out && aac->begin(in, out)) {
-                while (isAudioStreaming && aac->isRunning()) {
-                    M5.Speaker.setChannelVolume(0, (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f ));
-                    if (!aac->loop()) aac->stop();
-                    vTaskDelay(1); 
-                }
+        while (isPTTActive) {
+            if (M5.Mic.record(micData, 256, 44100)) {
+                udpOut.beginPacket(streamIp.c_str(), 50003);
+                udpOut.write((const uint8_t*)micData, 256 * sizeof(int16_t));
+                udpOut.endPacket();
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(2));
             }
-            if (aac && aac->isRunning()) aac->stop();
-            if (aac) delete aac; if (out) delete out; if (in) delete in;
-            
-        } else {
-            HTTPClient http;
-            http.setReuse(false);
-            http.setTimeout(3000);
-            http.begin(babyStreamUrl);
-            
-            if (http.GET() == HTTP_CODE_OK) {
-                WiFiClient* stream = http.getStreamPtr();
-                if (stream) {
-                    stream->setNoDelay(true);
-                    stream->setTimeout(100); 
-                    
-                    uint8_t read_chunk[4096]; 
-                    uint32_t lastDataMs = millis();
-                    
-                    while (isAudioStreaming && http.connected() && stream->connected()) {
-                        M5.Speaker.setChannelVolume(0, (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f ));
-                        
-                        int available = stream->available();
-                        if (available > 1) {
-                            lastDataMs = millis(); 
-                            int toRead = available > sizeof(read_chunk) ? sizeof(read_chunk) : (available & ~1);
-                            int bytesRead = stream->read(read_chunk, toRead);
-                            if (bytesRead > 0) {
-                                xStreamBufferSend(audioStreamBuffer, read_chunk, bytesRead, pdMS_TO_TICKS(50));
-                            }
-                        } else {
-                            if (millis() - lastDataMs > 3000) break;
-                            vTaskDelay(pdMS_TO_TICKS(2)); 
-                        }
-                    }
-                }
-            }
-            http.end();
         }
-        
-        if (isAudioStreaming) vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
-// =========================================================================
-// NEU: Diese Funktion sichert den Audio-Speicher direkt beim Booten!
-// =========================================================================
 void AudioStreamLogic_Init() {
     isAudioStreaming = false;
-    
-    if (audioStreamBuffer == NULL) {
-        audioStreamBuffer = xStreamBufferCreate(STREAM_BUFFER_SIZE, 1);
-    }
-    
-    if (audioStreamBuffer != NULL) {
-        if (audioConsumerTaskHandle == NULL) {
-            xTaskCreatePinnedToCore(audioConsumerTask, "Aud_Cons", 8192, NULL, 4, &audioConsumerTaskHandle, 1); 
-        }
-        if (audioProducerTaskHandle == NULL) {
-            xTaskCreatePinnedToCore(audioProducerTask, "Aud_Prod", 16384, NULL, 5, &audioProducerTaskHandle, 0); 
-        }
-        Serial.println("[Audio] 48KB RAM erfolgreich vorab reserviert.");
-    } else {
-        Serial.println("[Audio] KRITISCHER FEHLER beim Reservieren des RAMs!");
-    }
+    isPTTActive = false;
+    xTaskCreatePinnedToCore(audioConsumerTask, "Aud_Cons", 8192, NULL, 4, &audioConsumerTaskHandle, 1); 
+    xTaskCreatePinnedToCore(audioProducerTask, "Aud_Prod", 8192, NULL, 5, &audioProducerTaskHandle, 0); 
 }
 
-void AudioStreamLogic_Start() {
-    if (isAudioStreaming) return; 
-    if (audioStreamBuffer == NULL) return; // Schutz gegen Abstuerze, falls RAM beim Booten voll war
+void AudioStreamLogic_StartBaby() {
+    if (isAudioStreaming || isPTTActive) return; 
     
-    isAudioStreaming = true; // Weckt die schlafenden Tasks sofort auf
+    // Hardware sicher umschalten
+    M5.Mic.end(); 
+    delay(50);
+    M5.Speaker.begin();
+    M5.Speaker.setVolume(255);
+    
+    BabyCamApi_SetBabyAudio(true);
+    isAudioStreaming = true;
+}
+
+void AudioStreamLogic_StopBaby() {
+    if (!isAudioStreaming) return;
+    
+    // WICHTIG: ERST das Flag setzen, damit der Consumer-Task stoppt!
+    isAudioStreaming = false;
+    delay(50); // Warten, bis der Task sicher aus playRaw() raus ist
+    
+    M5.Speaker.end();
+    BabyCamApi_SetBabyAudio(false);
+}
+
+void AudioStreamLogic_StartPTT() {
+    if (isPTTActive) return;
+    
+    // Pausiere Baby-Audio sicher, falls es an ist
+    resumeBabyAudioAfterPTT = isAudioStreaming;
+    if (resumeBabyAudioAfterPTT) {
+        AudioStreamLogic_StopBaby(); 
+    } else {
+        M5.Speaker.end();
+    }
+    
+    delay(50);
+    auto mic_cfg = M5.Mic.config();
+    mic_cfg.sample_rate = 44100;
+    mic_cfg.stereo = false;
+    M5.Mic.config(mic_cfg);
+    M5.Mic.begin();
+
+    BabyCamApi_SetParentAudio(true);
+    isPTTActive = true;
+}
+
+void AudioStreamLogic_StopPTT() {
+    if (!isPTTActive) return;
+    
+    // WICHTIG: ERST das Flag setzen, damit der Producer-Task stoppt!
+    isPTTActive = false; 
+    delay(50); // Warten, bis der Task sicher aus record() raus ist
+    
+    M5.Mic.end(); 
+    BabyCamApi_SetParentAudio(false);
+    
+    // Reaktiviere Baby-Audio, falls es vor PTT an war
+    if (resumeBabyAudioAfterPTT) {
+        AudioStreamLogic_StartBaby();
+    } else {
+        M5.Speaker.begin();
+    }
 }
 
 void AudioStreamLogic_Stop() {
-    isAudioStreaming = false; // Schickt die Tasks wieder sicher schlafen
+    AudioStreamLogic_StopBaby();
+    if(isPTTActive) AudioStreamLogic_StopPTT();
 }

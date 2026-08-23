@@ -10,3 +10,4 @@ public:
 void ViewBaby_SetImage(const void* src);
 void ViewBaby_SetStatus(const char* text);
 void ViewBaby_StopStreamOnError();
+void ViewBaby_ExitFS();
