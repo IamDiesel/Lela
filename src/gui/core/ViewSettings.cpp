@@ -94,7 +94,9 @@ static void dd_cam_results_cb(lv_event_t* e) {
     if (camIdx >= 0 && camIdx < CameraScanner::foundCameras.size()) {
         String ip = CameraScanner::foundCameras[camIdx].ip;
         lv_textarea_set_text(ta_ip, ip.c_str());
-        lv_textarea_set_text(ta_vid, ("http://" + ip + ":8080/api-stream/v1/video?random=0").c_str());
+        
+        // --- NEUES FORMAT ---
+        lv_textarea_set_text(ta_vid, ("http://" + ip + ":8080/api-stream/v1/video?id=lela-os-stream&uuid=" + camUuid + "&quality=" + String(camQuality)).c_str());
         lv_textarea_set_text(ta_aud, ("http://" + ip + ":8080/api-stream/v1/audio").c_str());
     }
     
@@ -124,7 +126,6 @@ static void showStreamSettingsPopup() {
     lv_obj_t* lbl_exp = create_white_label(panel, "Expertenmodus (Ganze URL bearbeiten)"); 
     lv_obj_align(lbl_exp, LV_ALIGN_TOP_LEFT, 20, 70);
 
-    // FIX: Slider fuer den Expertenmodus weiter nach rechts (700px), Text komplett frei!
     sw_expert = lv_switch_create(panel); 
     lv_obj_align(sw_expert, LV_ALIGN_TOP_LEFT, 650, 65);
     if (useCustomUrls) lv_obj_add_state(sw_expert, LV_STATE_CHECKED);
@@ -155,7 +156,6 @@ static void showStreamSettingsPopup() {
     lv_obj_t* btn_cancel = lv_btn_create(panel); lv_obj_set_size(btn_cancel, 200, 60); lv_obj_align(btn_cancel, LV_ALIGN_BOTTOM_LEFT, 20, -20); lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0xAA0000), 0);
     lv_obj_t* l_c = create_white_label(btn_cancel, "Abbrechen"); lv_obj_center(l_c);
 
-    // FIX: BabyCam Finde Button (Breiter auf 300px, mittig unten!)
     btn_scan_cam = lv_btn_create(panel);
     lv_obj_set_size(btn_scan_cam, 300, 60);
     lv_obj_align(btn_scan_cam, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -164,7 +164,6 @@ static void showStreamSettingsPopup() {
     lv_obj_center(lbl_scan_cam);
     lv_obj_add_event_cb(btn_scan_cam, btn_scan_cam_cb, LV_EVENT_CLICKED, NULL);
 
-    // FIX: Dropdown exakt an der gleichen Stelle wie der Scan-Button
     dd_cam_results = lv_dropdown_create(panel);
     lv_obj_set_size(dd_cam_results, 300, 60); 
     lv_obj_align(dd_cam_results, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -175,9 +174,25 @@ static void showStreamSettingsPopup() {
     lv_obj_add_event_cb(btn_save, [](lv_event_t* e) {
         playToneI2S(800, 100, true);
         useCustomUrls = lv_obj_has_state(sw_expert, LV_STATE_CHECKED);
-        if (!useCustomUrls) { streamIp = lv_textarea_get_text(ta_ip); streamIp.trim(); camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?random=0"; babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio"; } 
-        else { camEntity = lv_textarea_get_text(ta_vid); camEntity.trim(); babyStreamUrl = lv_textarea_get_text(ta_aud); babyStreamUrl.trim(); }
-        preferences.begin("catmat", false); preferences.putBool("useCstUrl", useCustomUrls); preferences.putString("strIp", streamIp); preferences.putString("camEntity", camEntity); preferences.putString("babyUrl", babyStreamUrl); preferences.end();
+        if (!useCustomUrls) { 
+            streamIp = lv_textarea_get_text(ta_ip); 
+            streamIp.trim(); 
+            // --- NEUES FORMAT ---
+            camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?id=lela-os-stream&uuid=" + camUuid + "&quality=" + String(camQuality); 
+            babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio"; 
+        } 
+        else { 
+            camEntity = lv_textarea_get_text(ta_vid); 
+            camEntity.trim(); 
+            babyStreamUrl = lv_textarea_get_text(ta_aud); 
+            babyStreamUrl.trim(); 
+        }
+        preferences.begin("catmat", false); 
+        preferences.putBool("useCstUrl", useCustomUrls); 
+        preferences.putString("strIp", streamIp); 
+        preferences.putString("camEntity", camEntity); 
+        preferences.putString("babyUrl", babyStreamUrl); 
+        preferences.end();
         
         lv_obj_del_async(stream_overlay); stream_overlay = nullptr;
         btn_scan_cam = nullptr; lbl_scan_cam = nullptr; dd_cam_results = nullptr;
@@ -189,6 +204,7 @@ static void showStreamSettingsPopup() {
         btn_scan_cam = nullptr; lbl_scan_cam = nullptr; dd_cam_results = nullptr;
     }, LV_EVENT_CLICKED, NULL);
 }
+
 
 // Handler fuer die interaktiven Zeilen in der Bluetooth-Liste
 static void scan_list_btn_cb(lv_event_t * e) {

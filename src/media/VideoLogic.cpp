@@ -49,16 +49,20 @@ static void reset_jpeg_engine() {
 }
 
 void VideoLogic_Init() {
-    // ACHTUNG: download_buf wurde jetzt bereits beim Boot in der main.cpp reserviert!
+    Serial.printf("[VideoLogic] Initialisiere RAM...\n");
+    Serial.printf("[VideoLogic] Freies RAM vorab: %d KB | Freies PSRAM: %d KB\n", ESP.getFreeHeap() / 1024, ESP.getFreePsram() / 1024);
     
-    // Wir reservieren hier nur noch die restlichen drei Puffer im externen PSRAM:
     if (jpg_bufs[0] == nullptr) {
         for(int i=0; i<3; i++) {
             jpg_bufs[i] = (uint8_t*)heap_caps_aligned_alloc(64, MAX_PIXEL_BUF_SIZE, MALLOC_CAP_SPIRAM);
+            if (jpg_bufs[i]) {
+                Serial.printf("[VideoLogic] Buffer %d im PSRAM angelegt: %p\n", i, jpg_bufs[i]);
+            } else {
+                Serial.printf("[VideoLogic] FEHLER: Konnte Buffer %d nicht im PSRAM anlegen!\n", i);
+            }
         }
         
-        // Prüfen ob beides erfolgreich war
-        if (download_buf && jpg_bufs[0]) {
+        if (download_buf && jpg_bufs[0] && jpg_bufs[1] && jpg_bufs[2]) {
             Serial.println("[VideoLogic] RAM erfolgreich vorab reserviert.");
         } else {
             Serial.println("[VideoLogic] KRITISCHER FEHLER beim Reservieren des RAMs!");
@@ -78,13 +82,15 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
     while (isStreamActive && stream->connected()) {
         int frameSize = 0;
         uint32_t headerStartMs = millis();
+        int garbage_lines = 0; 
         
-        // ==========================================================
-        // TURBO-FIX 1: Schneller Block-Download fuer den Header
-        // ==========================================================
-        stream->setTimeout(1000); 
+        stream->setTimeout(10); 
         
         while (isStreamActive && stream->connected()) {
+            
+            // --- DER ULTIMATIVE WDT FIX ---
+            vTaskDelay(pdMS_TO_TICKS(1)); 
+            
             size_t len = stream->readBytesUntil('\n', header_buf, sizeof(header_buf) - 1);
             
             if (len == 0) {
@@ -97,9 +103,6 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                     }
                     return; 
                 }
-                
-                // WATCHDOG-FIX 1: Gibt der CPU bei Netzwerk-Latenz Luft zum Atmen!
-                vTaskDelay(pdMS_TO_TICKS(1)); 
                 continue; 
             }
             
@@ -109,6 +112,13 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
             
             if (strncasecmp(header_buf, "Content-Length:", 15) == 0) {
                 frameSize = atoi(header_buf + 15);
+                garbage_lines = 0; 
+            } else {
+                garbage_lines++;
+                if (garbage_lines > 25) {
+                    Serial.println("[Video-Diag] Zu viele unbekannte Header! Sync verloren. Reconnect...");
+                    return; 
+                }
             }
         }
 
@@ -121,18 +131,23 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
 
         size_t bytesRead = 0;
         uint32_t startMs = millis();
+        uint32_t lastYieldMs = millis(); 
         
         while (bytesRead < frameSize && isStreamActive && stream->connected()) {
             int avail = stream->available();
             if (avail > 0) {
                 size_t toRead = (frameSize - bytesRead > avail) ? avail : (frameSize - bytesRead);
                 int readNow = stream->read(d_buf + bytesRead, toRead);
+                
                 if (readNow > 0) {
                     bytesRead += readNow;
                     startMs = millis(); 
+                } else {
+                    Serial.printf("[Video-Diag] Stream-Read Abbruch! readNow=%d, avail=%d\n", readNow, avail);
+                    break; 
                 }
             } else {
-                vTaskDelay(1); 
+                vTaskDelay(pdMS_TO_TICKS(1)); 
                 if (millis() - startMs > 3000) {
                     if (isStreamActive) {
                         Serial.println("[Video-Diag] TCP Timeout beim Bild-Download!");
@@ -142,6 +157,12 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                     }
                     return; 
                 }
+            }
+            
+            // --- SMART YIELD ---
+            if (millis() - lastYieldMs > 5) {
+                vTaskDelay(pdMS_TO_TICKS(1));
+                lastYieldMs = millis();
             }
         }
 
@@ -199,23 +220,22 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                     
                     M5.Display.startWrite();  
                     
-                    // 1. BILD ZEICHNEN (Hardware PPA)
                     ppa_srm->pushImageSRM((1280 - (int)(pic_info.width*zoom)) / 2, 
                                          (720 - (int)(pic_info.height*zoom)) / 2, 
                                          0, 0, 0, zoom, zoom, pic_info.width, pic_info.height, (uint16_t*)out_buf);
                     
-                    // 2. TEXT DARUEBER ZEICHNEN
+                    M5.Display.waitDisplay(); 
+                    M5.Display.setCursor(20, 80); 
+                    M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
+                    M5.Display.setFont(&fonts::FreeSansBold18pt7b);
+                    
                     if (showFps) {
-                        M5.Display.waitDisplay(); // Warten bis das Bild wirklich auf dem Screen liegt
-                        M5.Display.setCursor(20, 80); 
-                        M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-                        M5.Display.setFont(&fonts::FreeSansBold18pt7b);
-                        M5.Display.printf("FPS: %d ", currentFps);
+                        M5.Display.printf("FPS: %d  |  Akku: %d%%", currentFps, camBatteryPercent);
+                    } else {
+                        M5.Display.printf("Akku: %d%%", camBatteryPercent);
                     }
                     
                     M5.Display.endWrite();
-                    
-                    // 3. ATEMPAUSE FUER WATCHDOG UND PPA-PUFFER
                     vTaskDelay(pdMS_TO_TICKS(5));
                     
                 } else {
@@ -232,7 +252,11 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                 
                 static uint32_t fCount = 0; static uint32_t lFps = 0;
                 fCount++;
-                if (unlikely(millis() - lFps >= 1000)) { currentFps = fCount; fCount = 0; lFps = millis(); }
+                if (unlikely(millis() - lFps >= 1000)) { 
+                    currentFps = fCount; 
+                    fCount = 0; 
+                    lFps = millis(); 
+                }
             } else {
                 Serial.println("[Video-Diag] Hardware JPEG Decoder Fehler! Auto-Reset...");
                 reset_jpeg_engine();
@@ -241,10 +265,9 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
             Serial.println("[Video-Diag] jpeg_decoder_get_info() fehlgeschlagen. Verwerfe Frame.");
         }
         
-        vTaskDelay(1); 
+        vTaskDelay(pdMS_TO_TICKS(1)); 
     }
 }
-
 
 
 static void videoTask(void * pvParameters) {
@@ -254,7 +277,7 @@ static void videoTask(void * pvParameters) {
 
         while(isStreamActive) {
             if (WiFi.status() != WL_CONNECTED) { 
-                vTaskDelay(1000); 
+                vTaskDelay(pdMS_TO_TICKS(1000)); 
                 continue; 
             }
             
@@ -359,7 +382,10 @@ static void videoTask(void * pvParameters) {
 
             HTTPClient http;
             http.setReuse(false);
-            http.setTimeout(2000); 
+            
+            // --- DIE LOESUNG AUS DEM TESTBED ---
+            // 5 Sekunden Toleranz fuer den Kamera-Wakeup
+            http.setTimeout(5000); 
             
             String connMsg = "Verbinde: " + url;
             setUiStatus(connMsg.c_str());
@@ -371,8 +397,8 @@ static void videoTask(void * pvParameters) {
                 WiFiClient* stream = http.getStreamPtr();
                 if (stream) {
                     stream->setNoDelay(true);
-                    // Den Stream-Timeout wieder auf winzige 10ms setzen,
-                    // das eigentliche Warten übernimmt ja jetzt unsere Parsing-Logik
+                    
+                    // Nach erfolgreichem Start wieder runter auf 10ms
                     stream->setTimeout(10); 
                     
                     processStream<true>(stream, download_buf);
@@ -392,12 +418,12 @@ static void videoTask(void * pvParameters) {
             if (isStreamActive) {
                 Serial.println("[VideoLogic] Stream unerwartet beendet. Reconnect in 2s...");
                 setUiStatus("Verbindung weg. Reconnect in 2s...");
-                vTaskDelay(2000); 
+                vTaskDelay(pdMS_TO_TICKS(2000)); 
             }
         }
     } else {
         setUiStatus("Fehler: RAM voll!");
-        vTaskDelay(3000);
+        vTaskDelay(pdMS_TO_TICKS(3000));
     }
 
     if (jpeg_engine) {

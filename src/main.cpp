@@ -135,6 +135,11 @@ void setup() {
     auto cfg = M5.config();
     M5.begin(cfg);
     delay(10); // ANTI-BLOCK: Massiv gekuerzt von 500ms
+    Serial.println("[AUDIO] Erzwinge I2S Hardware-Reset...");
+    M5.Speaker.end();
+    M5.Mic.end();
+    delay(100);
+
 
     Data_Init(); // Laedt sofort die wifiSsid aus dem Speicher
     

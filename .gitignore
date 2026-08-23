@@ -12,3 +12,4 @@
 src/config/secrets.h
 AGENTS.md
 Lela_TMP.code-workspace
+src/main_test.cpp

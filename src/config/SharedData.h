@@ -186,6 +186,21 @@ extern uint8_t lastBtPackets[MAX_BT_MSGS][10];
 extern int btPacketIdx;
 extern int btPacketCount;
 
+// --- NEUE BABYCAM API VARIABLEN ---
+extern int camBatteryPercent;
+extern String camResolutions[10];
+extern int camResCount;
+extern String currentCamRes;
+extern bool camFlash;
+extern bool camScrFlash;
+extern int camZoom;
+extern int camQuality;
+extern int camSpeed;
+extern String camStatus; 
+extern bool camScreenOn;
+extern const String camUuid;
+extern volatile bool pttSwipeLock;
+
 void Data_Init();
 void Audio_Init();
 void calcMultiplex();

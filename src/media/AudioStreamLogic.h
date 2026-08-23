@@ -1,12 +1,12 @@
-#ifndef AUDIO_STREAM_LOGIC_H
-#define AUDIO_STREAM_LOGIC_H
-
+#pragma once
 #include <Arduino.h>
 
 extern volatile bool isAudioStreaming;
+extern volatile bool isPTTActive;
 
 void AudioStreamLogic_Init();
-void AudioStreamLogic_Start(); // Kein Parameter mehr noetig!
+void AudioStreamLogic_StartBaby();
+void AudioStreamLogic_StopBaby();
+void AudioStreamLogic_StartPTT();
+void AudioStreamLogic_StopPTT();
 void AudioStreamLogic_Stop();
-
-#endif

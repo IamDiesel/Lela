@@ -19,6 +19,7 @@
 #include "ViewCatMat.h"
 #include "ViewHomeAssistant.h" 
 #include "ViewSettings.h"      
+#include "BabyCamApi.h"
 
 #include <time.h> 
 
@@ -27,6 +28,7 @@ int cameraRefreshMs = 300;
 void SystemLogic_Init() {
     Audio_Init(); 
     VideoLogic_Init(); 
+    BabyCamApi_Init();
     
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
@@ -58,7 +60,7 @@ void SystemLogic_Update() {
     static bool lastStreamState = false;
     if (isStreamActive && !lastStreamState) {
         VideoLogic_Start();
-        AudioStreamLogic_Start(); 
+        AudioStreamLogic_StartBaby(); 
         lastStreamState = true;
     } else if (!isStreamActive && lastStreamState) {
         VideoLogic_Stop();
