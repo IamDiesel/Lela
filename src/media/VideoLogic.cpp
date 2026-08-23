@@ -24,6 +24,7 @@ extern void lvgl_port_unlock(void);
 
 static lv_img_dsc_t cam_img_dsc[3] = {{0}, {0}, {0}};
 static uint8_t* jpg_bufs[3] = {nullptr, nullptr, nullptr}; 
+//uint8_t* download_buf = nullptr;
 static uint8_t write_idx = 0;
 static uint8_t read_idx = 1;
 
@@ -69,6 +70,7 @@ void VideoLogic_Init() {
     }
 }
 
+
 template <bool FAST_MODE>
 void processStream(WiFiClient* stream, uint8_t* d_buf) {
     static jpeg_decode_cfg_t dec_cfg = { .output_format = JPEG_DECODE_OUT_FORMAT_RGB565 };
@@ -76,10 +78,6 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
     uint32_t out_size_actual = 0;
 
     char header_buf[256]; 
-
-    // Lokale Variablen fuer sauberen Reset bei jedem Stream-Start
-    uint32_t fCount = 0; 
-    uint32_t lFps = millis();
 
     while (isStreamActive && stream->connected()) {
         int frameSize = 0;
@@ -252,6 +250,7 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                     vTaskDelay(pdMS_TO_TICKS(5));
                 }
                 
+                static uint32_t fCount = 0; static uint32_t lFps = 0;
                 fCount++;
                 if (unlikely(millis() - lFps >= 1000)) { 
                     currentFps = fCount; 
@@ -269,6 +268,7 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
         vTaskDelay(pdMS_TO_TICKS(1)); 
     }
 }
+
 
 static void videoTask(void * pvParameters) {
     if (download_buf && jpg_bufs[0] && jpg_bufs[1] && jpg_bufs[2]) {

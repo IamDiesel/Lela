@@ -6,7 +6,6 @@
 #include "WebSetupLogic.h"   
 #include "BleLogic.h"        
 #include "AudioStreamLogic.h" 
-#include "CamApiLogic.h"     // <--- NEU: API Modul eingebunden
 #include <WiFi.h>
 #include <esp_wifi.h> 
 #include "secrets.h"         

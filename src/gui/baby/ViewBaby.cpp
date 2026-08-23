@@ -411,13 +411,6 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_t* lbl_close = lv_label_create(btn_close); lv_label_set_text(lbl_close, "Schliessen"); lv_obj_center(lbl_close);
     lv_obj_add_event_cb(btn_close, [](lv_event_t* e){ lv_obj_add_flag(settings_modal, LV_OBJ_FLAG_HIDDEN); }, LV_EVENT_CLICKED, NULL);
 
-    // --- NEU: Batterie-Anzeige für die Kamera ---
-    lbl_cam_battery = lv_label_create(scr);
-    lv_obj_set_style_text_font(lbl_cam_battery, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_cam_battery, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align_to(lbl_cam_battery, cam_image_obj, LV_ALIGN_TOP_RIGHT, -15, 15);
-    lv_obj_add_flag(lbl_cam_battery, LV_OBJ_FLAG_HIDDEN);
-
     return scr;
 }
 
