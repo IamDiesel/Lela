@@ -5,8 +5,8 @@
 #include "AudioStreamLogic.h"
 #include "BabyCamApi.h"
 #include "ViewTopbar.h"
+#include "ViewBabySettings.h"
 #include <WiFi.h>
-#include <math.h>
 
 static lv_obj_t * cam_image_obj = nullptr; 
 static lv_obj_t * cam_touch_overlay = nullptr; 
@@ -26,17 +26,6 @@ static lv_obj_t * btn_settings = nullptr;
 static lv_obj_t * lbl_cam_bat_main = nullptr;
 static lv_obj_t * lbl_cam_bat_fs = nullptr;
 
-// Settings Modal
-static lv_obj_t * settings_modal = nullptr;
-static lv_obj_t * sw_flash = nullptr;
-static lv_obj_t * sw_scrflash = nullptr;
-static lv_obj_t * sw_camscreen = nullptr;
-static lv_obj_t * sw_camstream = nullptr;
-static lv_obj_t * slider_zoom = nullptr;
-static lv_obj_t * slider_qual = nullptr;
-static lv_obj_t * slider_speed = nullptr;
-static lv_obj_t * dd_res = nullptr;
-
 static uint32_t s_lastBtnColor = 0; 
 static int s_lastBtnStateForText = -1;
 
@@ -44,7 +33,7 @@ static void view_baby_del_cb(lv_event_t * e) {
     cam_image_obj = nullptr; cam_touch_overlay = nullptr; lbl_cam_status = nullptr;
     lbl_play_icon = nullptr; btn_audio = nullptr; lbl_audio = nullptr; btn_fs = nullptr;
     lbl_fs = nullptr; lbl_fps = nullptr; fs_black_overlay = nullptr; btn_ptt = nullptr;
-    btn_mute = nullptr; lbl_mute = nullptr; btn_settings = nullptr; settings_modal = nullptr;
+    btn_mute = nullptr; lbl_mute = nullptr; btn_settings = nullptr;
     lbl_cam_bat_main = nullptr; lbl_cam_bat_fs = nullptr;
 }
 
@@ -88,15 +77,13 @@ static void cam_image_event_cb(lv_event_t * e) {
         
         if (isStreamActive) {
             lv_obj_add_flag(lbl_play_icon, LV_OBJ_FLAG_HIDDEN); 
-            lv_obj_clear_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
-            lv_label_set_text(lbl_cam_status, LV_SYMBOL_WIFI " Verbinde...");
+            ViewBaby_SetStatus("Verbinde...");
             if (btn_audio) lv_obj_add_state(btn_audio, LV_STATE_CHECKED);
             if (lbl_audio) lv_label_set_text(lbl_audio, LV_SYMBOL_VOLUME_MAX);
             AudioStreamLogic_StartBaby();
         } else {
             lv_obj_clear_flag(lbl_play_icon, LV_OBJ_FLAG_HIDDEN); 
-            lv_obj_clear_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
-            lv_label_set_text(lbl_cam_status, LV_SYMBOL_PAUSE " Pausiert");
+            ViewBaby_SetStatus("Pausiert");
             if (btn_audio) lv_obj_clear_state(btn_audio, LV_STATE_CHECKED);
             if (lbl_audio) lv_label_set_text(lbl_audio, LV_SYMBOL_MUTE);
             AudioStreamLogic_StopBaby();
@@ -131,92 +118,6 @@ static void btn_mute_event_cb(lv_event_t * e) {
     }
 }
 
-// --- SETTINGS MODAL LOGIK ---
-static void slider_step5_cb(lv_event_t * e) {
-    lv_obj_t * slider = lv_event_get_target(e);
-    int val = lv_slider_get_value(slider);
-    val = round(val / 5.0) * 5;
-    lv_slider_set_value(slider, val, LV_ANIM_OFF);
-    
-    if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
-        if (slider == slider_zoom) BabyCamApi_SetZoom(val);
-        else if (slider == slider_qual) BabyCamApi_SetQuality(val);
-        else if (slider == slider_speed) BabyCamApi_SetSpeed(val);
-    }
-}
-
-static void settings_action_cb(lv_event_t * e) {
-    lv_obj_t * obj = lv_event_get_target(e);
-    if (obj == sw_flash) BabyCamApi_ToggleFlash();
-    else if (obj == sw_scrflash) BabyCamApi_ToggleScrFlash();
-    else if (obj == sw_camscreen) BabyCamApi_ToggleScreen();
-    else if (obj == sw_camstream) BabyCamApi_ToggleCamera();
-}
-
-static void btn_lense_cb(lv_event_t * e) { BabyCamApi_ToggleLense(); }
-static void btn_power_cb(lv_event_t * e) { BabyCamApi_PowerOff(); }
-static void dd_res_cb(lv_event_t * e) {
-    char buf[32];
-    lv_dropdown_get_selected_str(dd_res, buf, sizeof(buf));
-    String res = String(buf);
-    int xIdx = res.indexOf('x');
-    if(xIdx != -1) {
-        int w = res.substring(0, xIdx).toInt();
-        int h = res.substring(xIdx+1).toInt();
-        BabyCamApi_SetResolution(w, h);
-    }
-}
-
-static lv_obj_t* create_setting_slider(lv_obj_t* parent, const char* name, lv_obj_t** slider_ptr) {
-    lv_obj_t* cont = lv_obj_create(parent);
-    lv_obj_set_size(cont, 380, 70);
-    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* lbl = lv_label_create(cont);
-    lv_label_set_text(lbl, name);
-    lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 0);
-    *slider_ptr = lv_slider_create(cont);
-    lv_obj_set_size(*slider_ptr, 340, 20);
-    lv_slider_set_range(*slider_ptr, 0, 100);
-    lv_obj_align(*slider_ptr, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_event_cb(*slider_ptr, slider_step5_cb, LV_EVENT_ALL, NULL);
-    return cont;
-}
-
-static lv_obj_t* create_setting_switch(lv_obj_t* parent, const char* name, lv_obj_t** sw_ptr) {
-    lv_obj_t* cont = lv_obj_create(parent);
-    lv_obj_set_size(cont, 180, 70);
-    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* lbl = lv_label_create(cont);
-    lv_label_set_text(lbl, name);
-    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 0);
-    *sw_ptr = lv_switch_create(cont);
-    lv_obj_align(*sw_ptr, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_event_cb(*sw_ptr, settings_action_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    return cont;
-}
-
-static void btn_open_settings_cb(lv_event_t * e) {
-    lv_slider_set_value(slider_zoom, camZoom, LV_ANIM_OFF);
-    lv_slider_set_value(slider_qual, camQuality, LV_ANIM_OFF);
-    lv_slider_set_value(slider_speed, camSpeed, LV_ANIM_OFF);
-    if(camFlash) lv_obj_add_state(sw_flash, LV_STATE_CHECKED); else lv_obj_clear_state(sw_flash, LV_STATE_CHECKED);
-    if(camScrFlash) lv_obj_add_state(sw_scrflash, LV_STATE_CHECKED); else lv_obj_clear_state(sw_scrflash, LV_STATE_CHECKED);
-    if(camScreenOn) lv_obj_add_state(sw_camscreen, LV_STATE_CHECKED); else lv_obj_clear_state(sw_camscreen, LV_STATE_CHECKED);
-    if(camStatus == "PLAY") lv_obj_add_state(sw_camstream, LV_STATE_CHECKED); else lv_obj_clear_state(sw_camstream, LV_STATE_CHECKED);
-    
-    String opts = "";
-    int selIdx = 0;
-    for(int i=0; i<camResCount; i++) {
-        opts += camResolutions[i];
-        if(i < camResCount-1) opts += "\n";
-        if(camResolutions[i] == currentCamRes) selIdx = i;
-    }
-    lv_dropdown_set_options(dd_res, opts.c_str());
-    lv_dropdown_set_selected(dd_res, selIdx);
-    
-    lv_obj_clear_flag(settings_modal, LV_OBJ_FLAG_HIDDEN);
-}
-
 void ViewBaby_ClearImage() { if (cam_image_obj) lv_img_set_src(cam_image_obj, NULL); }
 
 void ViewBaby_SetImage(const void* src) {
@@ -239,8 +140,10 @@ void ViewBaby_SetImage(const void* src) {
             }
             lv_obj_invalidate(cam_image_obj); 
             if (lbl_cam_status) lv_obj_add_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
+            
+            ViewBabySettings_Update();
         } else {
-            if (lbl_cam_status) { lv_obj_clear_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); lv_label_set_text(lbl_cam_status, "Fehler: Bildmasse 0x0"); }
+            ViewBaby_SetStatus("Fehler: Bildmasse 0x0");
             ViewBaby_StopStreamOnError();
         }
     }
@@ -248,7 +151,11 @@ void ViewBaby_SetImage(const void* src) {
 
 void ViewBaby_SetStatus(const char* text) {
     if (gui.getCurrentScreen() != SCREEN_BABY) return; 
-    if (lbl_cam_status) { lv_obj_clear_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); lv_label_set_text(lbl_cam_status, text); }
+    if (lbl_cam_status) { 
+        lv_obj_clear_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
+        String padded = String("                                                                                ") + LV_SYMBOL_IMAGE + " " + text;
+        lv_label_set_text(lbl_cam_status, padded.c_str()); 
+    }
 }
 
 void ViewBaby_StopStreamOnError() {
@@ -269,6 +176,7 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_add_event_cb(scr, view_baby_del_cb, LV_EVENT_DELETE, NULL);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x111111), 0);
     lv_obj_add_event_cb(scr, GuiManager::gestureEventWrapper, LV_EVENT_GESTURE, &gui);
+    lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 
     ViewTopbar_Create(scr);
 
@@ -295,11 +203,14 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_set_style_radius(lbl_play_icon, 80, 0); 
     lv_obj_align(lbl_play_icon, LV_ALIGN_CENTER, 0, 0); 
 
+    // --- MARQUEE LAUFSCHRIFT ---
     lbl_cam_status = lv_label_create(scr);
-    lv_label_set_text(lbl_cam_status, LV_SYMBOL_IMAGE " Klick fuer Stream");
+    lv_obj_set_width(lbl_cam_status, 1280); 
+    lv_label_set_long_mode(lbl_cam_status, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_text_font(lbl_cam_status, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_cam_status, lv_color_hex(0xAAAAAA), 0);
-    lv_obj_align_to(lbl_cam_status, cam_image_obj, LV_ALIGN_OUT_TOP_MID, 0, -10); 
+    lv_obj_align(lbl_cam_status, LV_ALIGN_TOP_MID, 0, 85); 
+    lv_label_set_text(lbl_cam_status, ""); // <--- FIX: Startet komplett leer!
 
     cam_touch_overlay = lv_obj_create(scr);
     lv_obj_set_size(cam_touch_overlay, 1024, 576);
@@ -314,6 +225,7 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_set_size(btn_audio, 100, 100); 
     lv_obj_align_to(btn_audio, cam_touch_overlay, LV_ALIGN_BOTTOM_LEFT, 15, -15);
     lv_obj_add_flag(btn_audio, LV_OBJ_FLAG_CHECKABLE);
+    lv_obj_clear_flag(btn_audio, LV_OBJ_FLAG_GESTURE_BUBBLE); 
     lv_obj_set_style_radius(btn_audio, 50, 0); 
     lv_obj_set_style_bg_color(btn_audio, lv_color_hex(0x555555), LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(btn_audio, lv_color_hex(0x00FF00), LV_STATE_CHECKED);
@@ -325,6 +237,7 @@ lv_obj_t* ViewBaby::build() {
     btn_fs = lv_btn_create(scr);
     lv_obj_set_size(btn_fs, 100, 100); 
     lv_obj_align_to(btn_fs, cam_touch_overlay, LV_ALIGN_BOTTOM_RIGHT, -15, -15);
+    lv_obj_clear_flag(btn_fs, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_style_bg_color(btn_fs, lv_color_hex(0x555555), 0);
     lv_obj_set_style_radius(btn_fs, 50, 0); 
     lv_obj_add_event_cb(btn_fs, btn_fs_event_cb, LV_EVENT_CLICKED, NULL);
@@ -337,16 +250,17 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_align(btn_settings, LV_ALIGN_TOP_RIGHT, -20, 90);
     lv_obj_set_style_bg_color(btn_settings, lv_color_hex(0x444444), 0);
     lv_obj_set_style_radius(btn_settings, 40, 0); 
-    lv_obj_add_event_cb(btn_settings, btn_open_settings_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_settings, [](lv_event_t* e){ playToneI2S(800, 100, true); ViewBabySettings_Show(); }, LV_EVENT_CLICKED, NULL);
     lv_obj_t* lbl_set = lv_label_create(btn_settings);
     lv_label_set_text(lbl_set, LV_SYMBOL_SETTINGS); 
     lv_obj_center(lbl_set);
 
     btn_ptt = lv_btn_create(scr);
-    lv_obj_set_size(btn_ptt, 180, 80); // Groesser!
+    lv_obj_set_size(btn_ptt, 180, 80); 
     lv_obj_align(btn_ptt, LV_ALIGN_BOTTOM_MID, -100, -20); 
     lv_obj_set_style_radius(btn_ptt, 20, 0); 
     lv_obj_set_style_bg_color(btn_ptt, lv_color_hex(0x4FA5D6), 0);
+    lv_obj_clear_flag(btn_ptt, LV_OBJ_FLAG_GESTURE_BUBBLE); 
     lv_obj_add_event_cb(btn_ptt, btn_ptt_event_cb, LV_EVENT_ALL, NULL);
     lv_obj_t * lbl_ptt = lv_label_create(btn_ptt);
     lv_label_set_text(lbl_ptt, LV_SYMBOL_MUTE " PTT");
@@ -357,6 +271,7 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_set_size(btn_mute, 180, 80);
     lv_obj_align(btn_mute, LV_ALIGN_BOTTOM_MID, 100, -20); 
     lv_obj_set_style_radius(btn_mute, 20, 0); 
+    lv_obj_clear_flag(btn_mute, LV_OBJ_FLAG_GESTURE_BUBBLE); 
     lv_obj_add_event_cb(btn_mute, btn_mute_event_cb, LV_EVENT_CLICKED, NULL);
     lbl_mute = lv_label_create(btn_mute);
     lv_label_set_text(lbl_mute, "LADE...");
@@ -374,42 +289,7 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_set_style_text_font(lbl_cam_bat_fs, &lv_font_montserrat_24, 0);
     lv_obj_align(lbl_cam_bat_fs, LV_ALIGN_TOP_RIGHT, -20, 20);
 
-    // --- Settings Modal ---
-    settings_modal = lv_obj_create(scr);
-    lv_obj_set_size(settings_modal, 900, 600);
-    lv_obj_center(settings_modal);
-    lv_obj_set_flex_flow(settings_modal, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(settings_modal, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_add_flag(settings_modal, LV_OBJ_FLAG_HIDDEN);
-
-    create_setting_switch(settings_modal, "Blitz", &sw_flash);
-    create_setting_switch(settings_modal, "SCR-Blitz", &sw_scrflash);
-    create_setting_switch(settings_modal, "Screen On/Off", &sw_camscreen);
-    create_setting_switch(settings_modal, "Cam On/Off", &sw_camstream);
-    
-    lv_obj_t* btn_lense = lv_btn_create(settings_modal);
-    lv_obj_set_size(btn_lense, 180, 70);
-    lv_obj_t* lbl_lense = lv_label_create(btn_lense); lv_label_set_text(lbl_lense, "Linse Wechseln"); lv_obj_center(lbl_lense);
-    lv_obj_add_event_cb(btn_lense, btn_lense_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t* btn_pwr = lv_btn_create(settings_modal);
-    lv_obj_set_size(btn_pwr, 180, 70);
-    lv_obj_set_style_bg_color(btn_pwr, lv_color_hex(0xFF0000), 0);
-    lv_obj_t* lbl_pwr = lv_label_create(btn_pwr); lv_label_set_text(lbl_pwr, "App Beenden"); lv_obj_center(lbl_pwr);
-    lv_obj_add_event_cb(btn_pwr, btn_power_cb, LV_EVENT_CLICKED, NULL);
-
-    create_setting_slider(settings_modal, "Zoom (0-100%)", &slider_zoom);
-    create_setting_slider(settings_modal, "Quality (0-100%)", &slider_qual);
-    create_setting_slider(settings_modal, "Speed (0-100%)", &slider_speed);
-
-    dd_res = lv_dropdown_create(settings_modal);
-    lv_obj_set_width(dd_res, 380);
-    lv_obj_add_event_cb(dd_res, dd_res_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    
-    lv_obj_t* btn_close = lv_btn_create(settings_modal);
-    lv_obj_set_size(btn_close, 800, 60);
-    lv_obj_t* lbl_close = lv_label_create(btn_close); lv_label_set_text(lbl_close, "Schliessen"); lv_obj_center(lbl_close);
-    lv_obj_add_event_cb(btn_close, [](lv_event_t* e){ lv_obj_add_flag(settings_modal, LV_OBJ_FLAG_HIDDEN); }, LV_EVENT_CLICKED, NULL);
+    ViewBabySettings_Create(scr);
 
     return scr;
 }
@@ -466,4 +346,6 @@ void ViewBaby::update() {
         lv_obj_set_style_bg_color(btn_mute, lv_color_hex(targetBtnColor), 0);
         s_lastBtnColor = targetBtnColor;
     }
+    
+    ViewBabySettings_Update();
 }

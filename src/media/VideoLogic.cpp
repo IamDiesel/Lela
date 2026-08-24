@@ -8,7 +8,8 @@
 #include <WiFi.h>
 #include <HTTPClient.h>      
 #include <ArduinoJson.h>
-#include "ViewBaby.h"        
+#include "ViewBaby.h"   
+#include "BabyCamApi.h"     
 #include <driver/jpeg_decode.h>
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
@@ -24,7 +25,6 @@ extern void lvgl_port_unlock(void);
 
 static lv_img_dsc_t cam_img_dsc[3] = {{0}, {0}, {0}};
 static uint8_t* jpg_bufs[3] = {nullptr, nullptr, nullptr}; 
-//uint8_t* download_buf = nullptr;
 static uint8_t write_idx = 0;
 static uint8_t read_idx = 1;
 
@@ -78,6 +78,7 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
     uint32_t out_size_actual = 0;
 
     char header_buf[256]; 
+    static bool lastFSMode = false;
 
     while (isStreamActive && stream->connected()) {
         int frameSize = 0;
@@ -87,8 +88,6 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
         stream->setTimeout(10); 
         
         while (isStreamActive && stream->connected()) {
-            
-            // --- DER ULTIMATIVE WDT FIX ---
             vTaskDelay(pdMS_TO_TICKS(1)); 
             
             size_t len = stream->readBytesUntil('\n', header_buf, sizeof(header_buf) - 1);
@@ -159,7 +158,6 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                 }
             }
             
-            // --- SMART YIELD ---
             if (millis() - lastYieldMs > 5) {
                 vTaskDelay(pdMS_TO_TICKS(1));
                 lastYieldMs = millis();
@@ -213,6 +211,11 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                 read_idx = next_write; 
 
                 if (vidFSMode) {
+                    if (!lastFSMode) {
+                        M5.Display.clear(TFT_BLACK);
+                        lastFSMode = true;
+                    }
+                    
                     if (unlikely(!ppa_srm)) ppa_srm = new lgfx::PPASrm(&M5.Display, false); 
                     float zoom_x = 1280.0f / pic_info.width;
                     float zoom_y = 720.0f / pic_info.height;
@@ -239,6 +242,14 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                     vTaskDelay(pdMS_TO_TICKS(5));
                     
                 } else {
+                    if (lastFSMode) {
+                        lastFSMode = false;
+                        if (lvgl_port_lock(50)) {
+                            lv_obj_invalidate(lv_scr_act()); 
+                            lvgl_port_unlock();
+                        }
+                    }
+
                     if (lvgl_port_lock(15)) { 
                         cam_img_dsc[read_idx].header.w = pic_info.width; 
                         cam_img_dsc[read_idx].header.h = pic_info.height; 
@@ -284,108 +295,62 @@ static void videoTask(void * pvParameters) {
             String url = camEntity;
             if (!url.startsWith("http")) url = "http://" + haIP + ":" + String(haPort) + url;
 
-            if (camHackMode > 0) {
-                setUiStatus("Sende Aufloesung...");
-                int protoEnd = url.indexOf("://");
-                if (protoEnd != -1) {
-                    int ipStart = protoEnd + 3;
-                    int ipEnd = url.indexOf(':', ipStart);
-                    if (ipEnd == -1) ipEnd = url.indexOf('/', ipStart);
-                    if (ipEnd != -1) {
-                        String ipStr = url.substring(ipStart, ipEnd);
-                        
-                        int reqW = 0, reqH = 0;
-                        if (camHackMode == 1) { reqW = 320; reqH = 240; }
-                        else if (camHackMode == 2) { reqW = 480; reqH = 360; }
-                        else if (camHackMode == 3) { reqW = 640; reqH = 360; }
-                        else if (camHackMode == 4) { reqW = 640; reqH = 480; }
-                        else if (camHackMode == 5) { reqW = 800; reqH = 450; }
-                        else if (camHackMode == 6) { reqW = 800; reqH = 600; }
-                        else if (camHackMode == 7) { reqW = 1024; reqH = 768; }
-                        else if (camHackMode == 8) { reqW = 1280; reqH = 720; }
-                        else if (camHackMode == 9) { reqW = 1280; reqH = 960; }
-                        
-                        int finalW = reqW;
-                        int finalH = reqH;
+            // ==============================================================
+            // SCHRITT 1 & 2: BOOT-SEQUENZ (HEALTH CHECK & SESSION START)
+            // ==============================================================
+            setUiStatus("Ping Kamera...");
+            HTTPClient httpInit;
+            httpInit.setTimeout(2000);
+            httpInit.begin("http://" + streamIp + ":8080/cgi/version");
+            int pingCode = httpInit.GET();
+            httpInit.end();
 
-                        HTTPClient httpRes;
-                        httpRes.setTimeout(2000);
-                        httpRes.begin("http://" + ipStr + ":8080/api/v1/camera/resolutions?_=0");
-                        httpRes.addHeader("accept", "application/json");
-                        int resCode = httpRes.GET();
-                        
-                        if (resCode == HTTP_CODE_OK) {
-                            String resPayload = httpRes.getString();
-                            JsonDocument doc; 
-                            DeserializationError err = deserializeJson(doc, resPayload);
-                            
-                            if (!err && doc.containsKey("resolutions")) {
-                                JsonArray resArray = doc["resolutions"];
-                                bool exactMatch = false;
-                                int bestArea = 0;
-                                int fallbackW = 0, fallbackH = 0;
-                                int reqArea = reqW * reqH;
-                                
-                                int minArea = 99999999;
-                                int minW = 0, minH = 0;
-
-                                for (JsonVariant v : resArray) {
-                                    String rStr = v.as<String>();
-                                    int xIdx = rStr.indexOf('x');
-                                    if (xIdx != -1) {
-                                        int w = rStr.substring(0, xIdx).toInt();
-                                        int h = rStr.substring(xIdx + 1).toInt();
-                                        int area = w * h;
-
-                                        if (area < minArea && area > 0) { 
-                                            minArea = area; minW = w; minH = h; 
-                                        }
-
-                                        if (w == reqW && h == reqH) {
-                                            exactMatch = true;
-                                            break;
-                                        }
-
-                                        if (area <= reqArea && area > bestArea) {
-                                            bestArea = area;
-                                            fallbackW = w;
-                                            fallbackH = h;
-                                        }
-                                    }
-                                }
-
-                                if (!exactMatch) {
-                                    if (bestArea > 0) {
-                                        finalW = fallbackW; finalH = fallbackH;
-                                    } else if (minW > 0) {
-                                        finalW = minW; finalH = minH; 
-                                    }
-                                }
-                            }
-                        }
-                        httpRes.end();
-
-                        HTTPClient httpHack;
-                        httpHack.setTimeout(2000);
-                        httpHack.begin("http://" + ipStr + ":8080/api/v1/camera/change-resolution");
-                        httpHack.addHeader("accept", "application/json");
-                        httpHack.addHeader("content-type", "application/x-www-form-urlencoded");
-
-                        String payload = "{width:" + String(finalW) + ",height:" + String(finalH) + "}";
-
-                        httpHack.POST(payload);
-                        httpHack.end();
-                        vTaskDelay(pdMS_TO_TICKS(500));
-                    }
-                }
+            if (pingCode != HTTP_CODE_OK) {
+                Serial.printf("[VideoLogic] Ping fehlgeschlagen: %d\n", pingCode);
+                setUiStatus("Kamera nicht erreichbar");
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
             }
 
+            setUiStatus("Client Login...");
+            httpInit.begin("http://" + streamIp + ":8080/api/v1/client/online");
+            httpInit.addHeader("Content-Type", "application/json");
+            httpInit.addHeader("uuid", camUuid);
+            httpInit.addHeader("versionApp", "2.48");
+            String loginPayload = "{\"deviceName\":\"Lela OS Monitor\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"uuidClient\":\"" + camUuid + "\"}";
+            int loginCode = httpInit.POST(loginPayload);
+            httpInit.end();
+
+            if (loginCode != HTTP_CODE_OK) {
+                Serial.printf("[VideoLogic] Login fehlgeschlagen: %d\n", loginCode);
+                setUiStatus("Login fehlgeschlagen");
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            }
+
+            // ==============================================================
+            // SCHRITT 3 & 4: WUNSCH-AUFLOESUNG SENDEN & WARTEN
+            // ==============================================================
+            setUiStatus("Sende Aufloesung...");
+            int reqW = 1280, reqH = 720;
+            int xIdx = currentCamRes.indexOf('x');
+            if(xIdx != -1) {
+                reqW = currentCamRes.substring(0, xIdx).toInt();
+                reqH = currentCamRes.substring(xIdx+1).toInt();
+            }
+            
+            // Setzt die Aufloesung via REST API auf der Kamera
+            BabyCamApi_SetResolution(reqW, reqH);
+            
+            // ATEMPAUSE: Der Kamera 1,5 Sekunden geben, um den Encoder mit der neuen Auflösung neuzustarten!
+            vTaskDelay(pdMS_TO_TICKS(1500)); 
+
+            // ==============================================================
+            // SCHRITT 5: VIDEO STREAM ABGREIFEN
+            // ==============================================================
             HTTPClient http;
             http.setReuse(false);
-            
-            // --- DIE LOESUNG AUS DEM TESTBED ---
-            // 5 Sekunden Toleranz fuer den Kamera-Wakeup
-            http.setTimeout(5000); 
+            http.setTimeout(5000); // Dem Stream beim Start bis zu 5 Sekunden Wakeup-Zeit geben
             
             String connMsg = "Verbinde: " + url;
             setUiStatus(connMsg.c_str());
@@ -397,12 +362,10 @@ static void videoTask(void * pvParameters) {
                 WiFiClient* stream = http.getStreamPtr();
                 if (stream) {
                     stream->setNoDelay(true);
-                    
-                    // Nach erfolgreichem Start wieder runter auf 10ms
                     stream->setTimeout(10); 
                     
+                    // Startet den Download und das Zeichnen der Frames
                     processStream<true>(stream, download_buf);
-                    
                 } else {
                     if (isStreamActive) setUiStatus("Stream nicht verfuegbar");
                 }

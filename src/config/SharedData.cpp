@@ -132,7 +132,6 @@ int32_t pressWindow[WINDOW_SIZE];
 int pWinIdx = 0;
 int pWinCount = 0;
 
-// --- NEU: Standardwerte Volumes ---
 int volMaster = 80;
 int volUI = 100;
 int volAlarm = 100;
@@ -165,7 +164,7 @@ bool displayIsOff = false;
 int brightnessPercent = 80;
 
 int mjpegDropThreshold = 0; 
-int camHackMode = 0; 
+int camHackMode = 0; // <--- WIEDER DA!
 bool audioDebugEnabled = false;
 String audioLogs[10];
 int audioLogIdx = 0;
@@ -220,14 +219,14 @@ void Data_Init() {
     camEntity = preferences.getString("camEntity", SECRET_CAM_ENTITY);
     babyStreamUrl = preferences.getString("babyUrl", SECRET_BABY_STREAM_URL);
 
-    // --- NEUES FORMAT BEIM BOOT ---
     if (!useCustomUrls) {
         camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?id=lela-os-stream&uuid=" + camUuid + "&quality=" + String(camQuality);
         babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio";
     }
     
     audioFormat = preferences.getInt("audioFmt", 0); 
-    camHackMode = preferences.getInt("camHackM", 0); 
+    camHackMode = preferences.getInt("camHackM", 0); // <--- LÄDT DEN HACKMODE
+    currentCamRes = preferences.getString("camRes", "1280x720");
 
     volMaster = preferences.getInt("volM", 80);
     volUI = preferences.getInt("volU", 100);
@@ -278,7 +277,6 @@ void calcMultiplex() {
     }
 }
 
-// --- NEU: Master/Slave Audio Engine ---
 void audioTask(void *pvParameters) {
     AudioMsg msg;
     while(1) {
@@ -294,12 +292,12 @@ void audioTask(void *pvParameters) {
             else if (msg.volumeChannel == 1) volFactor = effMaster * effAlarm;
             else if (msg.volumeChannel == 2) volFactor = effMaster * effBaby;
 
-            if (volFactor <= 0.01f) continue; // Muted -> Direkt abbrechen, spielt keinen Ton
+            if (volFactor <= 0.01f) continue; 
 
             if (isAudioStreaming) {
                 int streamVol = (int)(effMaster * effBaby * 255.0f);
                 if (streamVol > 255) streamVol = 255;
-                M5.Speaker.setChannelVolume(0, streamVol / 3); // Ducking waehrend Ton spielt
+                M5.Speaker.setChannelVolume(0, streamVol / 3); 
             }
 
             int toneVol = (int)(volFactor * 255.0f);
@@ -307,10 +305,10 @@ void audioTask(void *pvParameters) {
             M5.Speaker.setChannelVolume(1, toneVol);
 
             if (msg.soundType == 0) M5.Speaker.tone(msg.freq, msg.duration, 1, true); 
-            else if (msg.soundType == 1) M5.Speaker.tone(600, 200, 1, true); // Baby Alarm
-            else if (msg.soundType == 2) M5.Speaker.tone(1100, 100, 1, true); // Cat Alarm
-            else if (msg.soundType == 3) M5.Speaker.tone(800, 100, 1, true); // Slider Bing
-            else if (msg.soundType == 4) M5.Speaker.tone(150, 15, 1, true); // Moderner Klick!
+            else if (msg.soundType == 1) M5.Speaker.tone(600, 200, 1, true); 
+            else if (msg.soundType == 2) M5.Speaker.tone(1100, 100, 1, true); 
+            else if (msg.soundType == 3) M5.Speaker.tone(800, 100, 1, true); 
+            else if (msg.soundType == 4) M5.Speaker.tone(150, 15, 1, true); 
             
             vTaskDelay(pdMS_TO_TICKS(msg.duration + 50));
             
@@ -337,7 +335,7 @@ void playToneI2S(uint16_t freq, uint32_t duration_ms, bool isUiSound) {
         AudioMsg msg; 
         msg.freq = freq; 
         msg.duration = isUiSound ? 15 : duration_ms; 
-        msg.soundType = isUiSound ? 4 : 0; // 4 = Moderner Klick
+        msg.soundType = isUiSound ? 4 : 0; 
         msg.volumeChannel = isUiSound ? 0 : 1; 
         xQueueSend(audioQueue, &msg, 0); 
     }
@@ -371,13 +369,14 @@ namespace SharedData {
         preferences.putBool("mutA", muteAlarm);
         preferences.putBool("mutB", muteBaby);
         
-        // --- WLAN- UND KAMERA-DATEN MITSICHERN ---
         preferences.putString("wifiSsid", wifiSsid);
         preferences.putString("wifiPass", wifiPass);
         preferences.putString("strIp", streamIp);
         preferences.putBool("useCstUrl", useCustomUrls);
         preferences.putString("camEntity", camEntity);
         preferences.putString("babyUrl", babyStreamUrl);
+        preferences.putString("camRes", currentCamRes); 
+        preferences.putInt("camHackM", camHackMode); // <--- SPEICHERT DEN HACKMODE
         
         preferences.end();
     }

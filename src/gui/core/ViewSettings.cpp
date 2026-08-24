@@ -5,7 +5,9 @@
 #include "BleLogic.h"
 #include "LVGL_Driver.h"
 #include "CameraScanner.h" 
+#include "BabyCamApi.h" // <--- WICHTIG: Für den API Call
 #include <WiFi.h>
+#include <Preferences.h> // <--- WICHTIG: Zum Speichern der Auflösung
 
 #define TEXT_COLOR (isDarkMode ? lv_color_white() : lv_color_black())
 
@@ -95,13 +97,32 @@ static void dd_cam_results_cb(lv_event_t* e) {
         String ip = CameraScanner::foundCameras[camIdx].ip;
         lv_textarea_set_text(ta_ip, ip.c_str());
         
-        // --- NEUES FORMAT ---
         lv_textarea_set_text(ta_vid, ("http://" + ip + ":8080/api-stream/v1/video?id=lela-os-stream&uuid=" + camUuid + "&quality=" + String(camQuality)).c_str());
         lv_textarea_set_text(ta_aud, ("http://" + ip + ":8080/api-stream/v1/audio").c_str());
     }
     
     lv_obj_add_flag(dd_cam_results, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(btn_scan_cam, LV_OBJ_FLAG_HIDDEN);
+}
+
+// --- NEU: Globaler Dropdown-Callback für die Kameraauflösung ---
+static void dd_res_global_cb(lv_event_t * e) {
+    playToneI2S(800, 100, true);
+    char buf[32];
+    lv_dropdown_get_selected_str((lv_obj_t*)lv_event_get_target(e), buf, sizeof(buf));
+    currentCamRes = String(buf);
+    
+    Preferences prefs;
+    prefs.begin("catmat", false);
+    prefs.putString("camRes", currentCamRes);
+    prefs.end();
+
+    int xIdx = currentCamRes.indexOf('x');
+    if(xIdx != -1) {
+        int w = currentCamRes.substring(0, xIdx).toInt();
+        int h = currentCamRes.substring(xIdx+1).toInt();
+        BabyCamApi_SetResolution(w, h);
+    }
 }
 
 static void showStreamSettingsPopup() {
@@ -177,7 +198,6 @@ static void showStreamSettingsPopup() {
         if (!useCustomUrls) { 
             streamIp = lv_textarea_get_text(ta_ip); 
             streamIp.trim(); 
-            // --- NEUES FORMAT ---
             camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?id=lela-os-stream&uuid=" + camUuid + "&quality=" + String(camQuality); 
             babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio"; 
         } 
@@ -187,12 +207,13 @@ static void showStreamSettingsPopup() {
             babyStreamUrl = lv_textarea_get_text(ta_aud); 
             babyStreamUrl.trim(); 
         }
-        preferences.begin("catmat", false); 
-        preferences.putBool("useCstUrl", useCustomUrls); 
-        preferences.putString("strIp", streamIp); 
-        preferences.putString("camEntity", camEntity); 
-        preferences.putString("babyUrl", babyStreamUrl); 
-        preferences.end();
+        Preferences prefs;
+        prefs.begin("catmat", false); 
+        prefs.putBool("useCstUrl", useCustomUrls); 
+        prefs.putString("strIp", streamIp); 
+        prefs.putString("camEntity", camEntity); 
+        prefs.putString("babyUrl", babyStreamUrl); 
+        prefs.end();
         
         lv_obj_del_async(stream_overlay); stream_overlay = nullptr;
         btn_scan_cam = nullptr; lbl_scan_cam = nullptr; dd_cam_results = nullptr;
@@ -244,22 +265,22 @@ static void buildSensorSection(lv_obj_t* parent) {
     
     label_thr_val = create_text_label(parent, ""); lv_label_set_text_fmt(label_thr_val, "Limit: %d Digits", thresholdVal);
     lv_obj_t * slider_thr = lv_slider_create(parent); lv_obj_set_size(slider_thr, 600, 20); lv_slider_set_range(slider_thr, 50, 600); lv_slider_set_value(slider_thr, thresholdVal, LV_ANIM_OFF); 
-    lv_obj_add_event_cb(slider_thr, [](lv_event_t* e){ playToneI2S(1000, 50, true); int val = (lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)) / 10) * 10; lv_slider_set_value((lv_obj_t*)lv_event_get_target(e), val, LV_ANIM_OFF); thresholdVal = val; lv_label_set_text_fmt(label_thr_val, "Limit: %d Digits", thresholdVal); preferences.begin("catmat", false); preferences.putInt("thr", thresholdVal); preferences.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(slider_thr, [](lv_event_t* e){ playToneI2S(1000, 50, true); int val = (lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)) / 10) * 10; lv_slider_set_value((lv_obj_t*)lv_event_get_target(e), val, LV_ANIM_OFF); thresholdVal = val; lv_label_set_text_fmt(label_thr_val, "Limit: %d Digits", thresholdVal); Preferences prefs; prefs.begin("catmat", false); prefs.putInt("thr", thresholdVal); prefs.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
 
     label_time_val = create_text_label(parent, ""); lv_label_set_text_fmt(label_time_val, "Graph Dauer: %d s", graphTimeSeconds);
     lv_obj_t * slider_time = lv_slider_create(parent); lv_obj_set_size(slider_time, 600, 20); lv_slider_set_range(slider_time, 10, 900); lv_slider_set_value(slider_time, graphTimeSeconds, LV_ANIM_OFF); 
-    lv_obj_add_event_cb(slider_time, [](lv_event_t* e){ playToneI2S(1000, 50, true); int val = (lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)) / 5) * 5; lv_slider_set_value((lv_obj_t*)lv_event_get_target(e), val, LV_ANIM_OFF); graphTimeSeconds = val; lv_label_set_text_fmt(label_time_val, "Graph Dauer: %d s", graphTimeSeconds); requestChartUpdate = true; preferences.begin("catmat", false); preferences.putInt("gtime", graphTimeSeconds); preferences.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(slider_time, [](lv_event_t* e){ playToneI2S(1000, 50, true); int val = (lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)) / 5) * 5; lv_slider_set_value((lv_obj_t*)lv_event_get_target(e), val, LV_ANIM_OFF); graphTimeSeconds = val; lv_label_set_text_fmt(label_time_val, "Graph Dauer: %d s", graphTimeSeconds); requestChartUpdate = true; Preferences prefs; prefs.begin("catmat", false); prefs.putInt("gtime", graphTimeSeconds); prefs.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lv_obj_t * cont_tx = create_helper_cont(parent, 60); lv_obj_t * label_time_x = create_text_label(cont_tx, "X-Achse: Uhrzeit"); lv_obj_align(label_time_x, LV_ALIGN_LEFT_MID, 20, 0); 
     lv_obj_t * switch_time_x = lv_switch_create(cont_tx); lv_obj_align(switch_time_x, LV_ALIGN_RIGHT_MID, -20, 0); if(showTimeOnX) lv_obj_add_state(switch_time_x, LV_STATE_CHECKED); 
-    lv_obj_add_event_cb(switch_time_x, [](lv_event_t* e){ playToneI2S(800, 100, true); showTimeOnX = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("timeX", showTimeOnX); preferences.end(); requestChartUpdate = true; }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(switch_time_x, [](lv_event_t* e){ playToneI2S(800, 100, true); showTimeOnX = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("timeX", showTimeOnX); prefs.end(); requestChartUpdate = true; }, LV_EVENT_VALUE_CHANGED, NULL);
     
     create_text_label(parent, "Graph Datenquelle:"); 
     lv_obj_t * dd_graph_mode = lv_dropdown_create(parent); lv_obj_set_width(dd_graph_mode, 600); lv_obj_set_style_text_font(dd_graph_mode, &lv_font_montserrat_24, 0); lv_dropdown_set_options(dd_graph_mode, "Druckwert\nBLE RSSI\nWLAN RSSI\nBLE Intervall\nKippy RSSI"); lv_dropdown_set_selected(dd_graph_mode, currentGraphMode); 
-    lv_obj_add_event_cb(dd_graph_mode, [](lv_event_t* e){ playToneI2S(800, 100, true); currentGraphMode = lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e)); historyIdx = 0; historyCount = 0; for(int i=0; i<HISTORY_SIZE; i++) pressureHistory[i] = -32000; requestChartUpdate = true; preferences.begin("catmat", false); preferences.putInt("gMode", currentGraphMode); preferences.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(dd_graph_mode, [](lv_event_t* e){ playToneI2S(800, 100, true); currentGraphMode = lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e)); historyIdx = 0; historyCount = 0; for(int i=0; i<HISTORY_SIZE; i++) pressureHistory[i] = -32000; requestChartUpdate = true; Preferences prefs; prefs.begin("catmat", false); prefs.putInt("gMode", currentGraphMode); prefs.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lv_obj_t * btn_tara = lv_btn_create(parent); lv_obj_set_size(btn_tara, 400, 60); lv_obj_set_style_bg_color(btn_tara, lv_color_hex(0x333333), 0); 
-    lv_obj_add_event_cb(btn_tara, [](lv_event_t* e){ playToneI2S(800, 100, true); taraOffset = rawPressure; preferences.begin("catmat", false); preferences.putUInt("off", taraOffset); preferences.end(); }, LV_EVENT_CLICKED, NULL); 
+    lv_obj_add_event_cb(btn_tara, [](lv_event_t* e){ playToneI2S(800, 100, true); taraOffset = rawPressure; Preferences prefs; prefs.begin("catmat", false); prefs.putUInt("off", taraOffset); prefs.end(); }, LV_EVENT_CLICKED, NULL); 
     lv_obj_t * label_tara = create_white_label(btn_tara, "TARA KALIBRIEREN"); lv_obj_center(label_tara);
 }
 
@@ -274,58 +295,73 @@ static void buildVideoSection(lv_obj_t* parent) {
     int start_idx = 10; for (int i=0; i<20; i++) { if (cameraRefreshMs <= cam_intervals[i]) { start_idx = i; break; } }
     lv_obj_t * slider_cam_ref = lv_slider_create(parent); lv_obj_set_size(slider_cam_ref, 600, 20); lv_slider_set_range(slider_cam_ref, 0, 19); lv_slider_set_value(slider_cam_ref, start_idx, LV_ANIM_OFF); 
     lv_obj_add_event_cb(slider_cam_ref, [](lv_event_t* e){ playToneI2S(1000, 50, true); int idx = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)); cameraRefreshMs = cam_intervals[idx]; if (cameraRefreshMs < 1000) lv_label_set_text_fmt(label_cam_ref_val, "Update Intervall: %d ms", cameraRefreshMs); else lv_label_set_text_fmt(label_cam_ref_val, "Update Intervall: %d Sek", cameraRefreshMs / 1000); }, LV_EVENT_VALUE_CHANGED, NULL); 
-    lv_obj_add_event_cb(slider_cam_ref, [](lv_event_t* e){ preferences.begin("catmat", false); preferences.putInt("camRef", cameraRefreshMs); preferences.end(); }, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(slider_cam_ref, [](lv_event_t* e){ Preferences prefs; prefs.begin("catmat", false); prefs.putInt("camRef", cameraRefreshMs); prefs.end(); }, LV_EVENT_RELEASED, NULL);
 
     label_mjpeg_drop_val = create_text_label(parent, ""); if (mjpegDropThreshold == 0) lv_label_set_text(label_mjpeg_drop_val, "Latenz-Drop: Aggressiv (0 KB)"); else lv_label_set_text_fmt(label_mjpeg_drop_val, "Latenz-Drop: %d KB", mjpegDropThreshold / 1024);
     lv_obj_t * slider_mjpeg_drop = lv_slider_create(parent); lv_obj_set_size(slider_mjpeg_drop, 600, 20); lv_slider_set_range(slider_mjpeg_drop, 0, 16); lv_slider_set_value(slider_mjpeg_drop, mjpegDropThreshold / 1024, LV_ANIM_OFF); 
     lv_obj_add_event_cb(slider_mjpeg_drop, [](lv_event_t* e){ playToneI2S(1000, 50, true); int val = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)); mjpegDropThreshold = val * 1024; if (val == 0) lv_label_set_text(label_mjpeg_drop_val, "Latenz-Drop: Aggressiv (0 KB)"); else lv_label_set_text_fmt(label_mjpeg_drop_val, "Latenz-Drop: %d KB", val); }, LV_EVENT_VALUE_CHANGED, NULL); 
-    lv_obj_add_event_cb(slider_mjpeg_drop, [](lv_event_t* e){ preferences.begin("catmat", false); preferences.putInt("mjDrop", mjpegDropThreshold); preferences.end(); }, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(slider_mjpeg_drop, [](lv_event_t* e){ Preferences prefs; prefs.begin("catmat", false); prefs.putInt("mjDrop", mjpegDropThreshold); prefs.end(); }, LV_EVENT_RELEASED, NULL);
 
     create_text_label(parent, "Audio-Format (Qualitaet):"); 
     lv_obj_t * dd_audio_fmt = lv_dropdown_create(parent); lv_obj_set_width(dd_audio_fmt, 600); lv_obj_set_style_text_font(dd_audio_fmt, &lv_font_montserrat_24, 0); lv_dropdown_set_options(dd_audio_fmt, "0: Unkomprimiert (PCM/WAV)\n1: Komprimiert (AAC)"); lv_dropdown_set_selected(dd_audio_fmt, audioFormat); 
     lv_obj_add_event_cb(dd_audio_fmt, [](lv_event_t* e){ playToneI2S(800, 100, true); audioFormat = lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e)); Preferences prefs; prefs.begin("catmat", false); prefs.putInt("audioFmt", audioFormat); prefs.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
 
-    create_text_label(parent, "Kamera Aufloesung (Hack):"); 
-    lv_obj_t * dd_cam_hack = lv_dropdown_create(parent); lv_obj_set_width(dd_cam_hack, 600); lv_obj_set_style_text_font(dd_cam_hack, &lv_font_montserrat_24, 0); lv_dropdown_set_options(dd_cam_hack, "0: Deaktiviert\n1: 320x240\n2: 480x360 (16:9)\n3: 640x360\n4: 640x480\n5: 800x450\n6: 800x600\n7: 1024x768\n8: 1280x720 (HD)\n9: 1280x960"); lv_dropdown_set_selected(dd_cam_hack, camHackMode); 
-    lv_obj_add_event_cb(dd_cam_hack, [](lv_event_t* e){ playToneI2S(800, 100, true); camHackMode = lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e)); Preferences prefs; prefs.begin("catmat", false); prefs.putInt("camHackM", camHackMode); prefs.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    // --- NEU: Globale Kamera Auflösung synchron mit dem Popup ---
+    create_text_label(parent, "Kamera Aufloesung:"); 
+    lv_obj_t * dd_res_global = lv_dropdown_create(parent); 
+    lv_obj_set_width(dd_res_global, 600); 
+    lv_obj_set_style_text_font(dd_res_global, &lv_font_montserrat_24, 0); 
+    
+    String opts = "";
+    int selIdx = 0;
+    for(int i = 0; i < camResCount; i++) {
+        opts += camResolutions[i];
+        if(i < camResCount - 1) opts += "\n";
+        if(camResolutions[i] == currentCamRes) selIdx = i;
+    }
+    if (opts == "") opts = currentCamRes; // Fallback, solange die Kamera offline ist
+    
+    lv_dropdown_set_options(dd_res_global, opts.c_str()); 
+    lv_dropdown_set_selected(dd_res_global, selIdx); 
+    lv_obj_add_event_cb(dd_res_global, dd_res_global_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 static void buildSystemSection(lv_obj_t* parent) {
     create_header(parent, LV_SYMBOL_LIST " SYSTEM & OPTIK");
     
     lv_obj_t * cont_ad = create_helper_cont(parent, 60); lv_obj_t * label_ad = create_text_label(cont_ad, "Audio Debug Overlay"); lv_obj_align(label_ad, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * switch_ad = lv_switch_create(cont_ad); lv_obj_align(switch_ad, LV_ALIGN_RIGHT_MID, -20, 0); if(audioDebugEnabled) lv_obj_add_state(switch_ad, LV_STATE_CHECKED); 
-    lv_obj_add_event_cb(switch_ad, [](lv_event_t* e){ playToneI2S(800, 100, true); audioDebugEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("audDbg", audioDebugEnabled); preferences.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(switch_ad, [](lv_event_t* e){ playToneI2S(800, 100, true); audioDebugEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("audDbg", audioDebugEnabled); prefs.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lv_obj_t * cont_fps = create_helper_cont(parent, 60); lv_obj_t * lbl_fps_title = create_text_label(cont_fps, "Video FPS Anzeige"); lv_obj_align(lbl_fps_title, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * sw_fps = lv_switch_create(cont_fps); lv_obj_align(sw_fps, LV_ALIGN_RIGHT_MID, -20, 0); if(showFps) lv_obj_add_state(sw_fps, LV_STATE_CHECKED); 
     lv_obj_add_event_cb(sw_fps, [](lv_event_t* e) { showFps = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("showFps", showFps); prefs.end(); playToneI2S(800, 100, true); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lv_obj_t * cont_dm = create_helper_cont(parent, 60); lv_obj_t * label_dark = create_text_label(cont_dm, "Dark Mode"); lv_obj_align(label_dark, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * switch_dark = lv_switch_create(cont_dm); lv_obj_align(switch_dark, LV_ALIGN_RIGHT_MID, -20, 0); if(isDarkMode) lv_obj_add_state(switch_dark, LV_STATE_CHECKED); 
-    lv_obj_add_event_cb(switch_dark, [](lv_event_t* e){ playToneI2S(800, 100, true); isDarkMode = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("dark", isDarkMode); preferences.end(); gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_MOVE_BOTTOM); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(switch_dark, [](lv_event_t* e){ playToneI2S(800, 100, true); isDarkMode = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("dark", isDarkMode); prefs.end(); gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_MOVE_BOTTOM); }, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 static void buildNetworkSection(lv_obj_t* parent) {
     create_header(parent, LV_SYMBOL_WIFI " FUNKVERBINDUNGEN");
     
     lv_obj_t * cont_wlan = create_helper_cont(parent, 60); lbl_sw_wifi = create_text_label(cont_wlan, LV_SYMBOL_WIFI " WLAN"); lv_obj_align(lbl_sw_wifi, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * sw_wifi = lv_switch_create(cont_wlan); lv_obj_align(sw_wifi, LV_ALIGN_RIGHT_MID, -20, 0); if(wifiEnabled) lv_obj_add_state(sw_wifi, LV_STATE_CHECKED); 
-    lv_obj_add_event_cb(sw_wifi, [](lv_event_t* e){ playToneI2S(800, 100, true); wifiEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("wifiEn", wifiEnabled); preferences.end(); calcMultiplex(); update_sliders_ui(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(sw_wifi, [](lv_event_t* e){ playToneI2S(800, 100, true); wifiEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("wifiEn", wifiEnabled); prefs.end(); calcMultiplex(); update_sliders_ui(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lv_obj_t * cont_mqtt = create_helper_cont(parent, 60); lv_obj_t * lbl_sw_mqtt = create_text_label(cont_mqtt, LV_SYMBOL_LIST " MQTT"); lv_obj_align(lbl_sw_mqtt, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * sw_mqtt = lv_switch_create(cont_mqtt); lv_obj_align(sw_mqtt, LV_ALIGN_RIGHT_MID, -20, 0); if(mqttEnabled) lv_obj_add_state(sw_mqtt, LV_STATE_CHECKED); 
-    lv_obj_add_event_cb(sw_mqtt, [](lv_event_t* e){ playToneI2S(800, 100, true); mqttEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("mqttEn", mqttEnabled); preferences.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(sw_mqtt, [](lv_event_t* e){ playToneI2S(800, 100, true); mqttEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("mqttEn", mqttEnabled); prefs.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lv_obj_t * cont_mat = create_helper_cont(parent, 60); lbl_sw_mat = create_text_label(cont_mat, LV_SYMBOL_BLUETOOTH " BT Matte"); lv_obj_align(lbl_sw_mat, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * sw_mat = lv_switch_create(cont_mat); lv_obj_align(sw_mat, LV_ALIGN_RIGHT_MID, -20, 0); if(matEnabled) lv_obj_add_state(sw_mat, LV_STATE_CHECKED); 
-    lv_obj_add_event_cb(sw_mat, [](lv_event_t* e){ playToneI2S(800, 100, true); matEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("matEn", matEnabled); preferences.end(); calcMultiplex(); update_sliders_ui(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(sw_mat, [](lv_event_t* e){ playToneI2S(800, 100, true); matEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("matEn", matEnabled); prefs.end(); calcMultiplex(); update_sliders_ui(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lv_obj_t * cont_kip = create_helper_cont(parent, 60); lbl_sw_kippy = create_text_label(cont_kip, LV_SYMBOL_BLUETOOTH " BT Kippy"); lv_obj_align(lbl_sw_kippy, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * sw_kippy = lv_switch_create(cont_kip); lv_obj_align(sw_kippy, LV_ALIGN_RIGHT_MID, -20, 0); if(kippyEnabled) lv_obj_add_state(sw_kippy, LV_STATE_CHECKED); 
-    lv_obj_add_event_cb(sw_kippy, [](lv_event_t* e){ playToneI2S(800, 100, true); kippyEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("kipEn", kippyEnabled); preferences.end(); calcMultiplex(); update_sliders_ui(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(sw_kippy, [](lv_event_t* e){ playToneI2S(800, 100, true); kippyEnabled = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("kipEn", kippyEnabled); prefs.end(); calcMultiplex(); update_sliders_ui(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lv_obj_t * cont_mqtt_mat = create_helper_cont(parent, 60); lv_obj_t * lbl_sw_mqtt_mat = create_text_label(cont_mqtt_mat, LV_SYMBOL_BLUETOOTH " Daten via Proxy"); lv_obj_align(lbl_sw_mqtt_mat, LV_ALIGN_LEFT_MID, 20, 0); lv_obj_t * sw_mqtt_mat = lv_switch_create(cont_mqtt_mat); lv_obj_align(sw_mqtt_mat, LV_ALIGN_RIGHT_MID, -20, 0); if(useMqttForMat) lv_obj_add_state(sw_mqtt_mat, LV_STATE_CHECKED); 
-    lv_obj_add_event_cb(sw_mqtt_mat, [](lv_event_t* e){ playToneI2S(800, 100, true); useMqttForMat = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); preferences.begin("catmat", false); preferences.putBool("useMqtt", useMqttForMat); preferences.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(sw_mqtt_mat, [](lv_event_t* e){ playToneI2S(800, 100, true); useMqttForMat = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED); Preferences prefs; prefs.begin("catmat", false); prefs.putBool("useMqtt", useMqttForMat); prefs.end(); }, LV_EVENT_VALUE_CHANGED, NULL);
 
     lbl_master = create_text_label(parent, ""); lv_label_set_text_fmt(lbl_master, "Prio Matte: %d%%", prioMaster); sl_master = lv_slider_create(parent); lv_obj_set_size(sl_master, 600, 20); lv_slider_set_range(sl_master, 0, 100); lv_slider_set_value(sl_master, prioMaster, LV_ANIM_OFF); 
-    lv_obj_add_event_cb(sl_master, [](lv_event_t* e){ playToneI2S(1000, 50, true); prioMaster = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)); lv_label_set_text_fmt(lbl_master, "Prio Matte: %d%%", prioMaster); preferences.begin("catmat", false); preferences.putInt("prioM", prioMaster); preferences.end(); calcMultiplex(); }, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(sl_master, [](lv_event_t* e){ playToneI2S(1000, 50, true); prioMaster = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)); lv_label_set_text_fmt(lbl_master, "Prio Matte: %d%%", prioMaster); Preferences prefs; prefs.begin("catmat", false); prefs.putInt("prioM", prioMaster); prefs.end(); calcMultiplex(); }, LV_EVENT_VALUE_CHANGED, NULL);
     
     lbl_slave = create_text_label(parent, ""); lv_label_set_text_fmt(lbl_slave, "Split Kippy/WLAN: %d%%", prioSlave); sl_slave = lv_slider_create(parent); lv_obj_set_size(sl_slave, 600, 20); lv_slider_set_range(sl_slave, 0, 100); lv_slider_set_value(sl_slave, prioSlave, LV_ANIM_OFF); 
-    lv_obj_add_event_cb(sl_slave, [](lv_event_t* e){ playToneI2S(1000, 50, true); prioSlave = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)); lv_label_set_text_fmt(lbl_slave, "Split Kippy/WLAN: %d%%", prioSlave); preferences.begin("catmat", false); preferences.putInt("prioS", prioSlave); preferences.end(); calcMultiplex(); }, LV_EVENT_VALUE_CHANGED, NULL); 
+    lv_obj_add_event_cb(sl_slave, [](lv_event_t* e){ playToneI2S(1000, 50, true); prioSlave = lv_slider_get_value((lv_obj_t*)lv_event_get_target(e)); lv_label_set_text_fmt(lbl_slave, "Split Kippy/WLAN: %d%%", prioSlave); Preferences prefs; prefs.begin("catmat", false); prefs.putInt("prioS", prioSlave); prefs.end(); calcMultiplex(); }, LV_EVENT_VALUE_CHANGED, NULL); 
     
     update_sliders_ui();
 

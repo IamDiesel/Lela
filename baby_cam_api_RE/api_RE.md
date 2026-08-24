@@ -1,4 +1,4 @@
-# 📚 Babycam API – Offizielle Spezifikation & Client-Guidelines
+# 📚 Babycam API – Inoffizielle Spezifikation & Client-Guidelines
 
 **Fokus:** Rein lokaler Betrieb (WLAN / WiFi Direct) ohne Cloud-Zwang.
 **Basis-URL:** `http://<Kamera-IP>:8080` (Die IP stammt typischerweise aus einem mDNS-Broadcast oder dem QR-Code-Scan).

@@ -58,7 +58,9 @@ static void apiTask(void* pv) {
                         camScreenOn = doc["screenOn"] | camScreenOn;
                         camFlash = doc["flash"] | camFlash;
                         camZoom = doc["zoom"] | camZoom;
-                        currentCamRes = doc["resolution"] | currentCamRes;
+                        
+                        // --- FIX: WIR UEBERSCHREIBEN UNSEREN WUNSCHWERT NICHT MEHR! ---
+                        // currentCamRes = doc["resolution"] | currentCamRes; 
                         
                         if (doc.containsKey("resolutions")) {
                             JsonArray arr = doc["resolutions"];
