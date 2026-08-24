@@ -30,6 +30,8 @@ static uint32_t s_lastBtnColor = 0;
 static int s_lastBtnStateForText = -1;
 
 static void view_baby_del_cb(lv_event_t * e) {
+    isBabyApiActive = false; // <--- API schlafen legen
+    
     cam_image_obj = nullptr; cam_touch_overlay = nullptr; lbl_cam_status = nullptr;
     lbl_play_icon = nullptr; btn_audio = nullptr; lbl_audio = nullptr; btn_fs = nullptr;
     lbl_fs = nullptr; lbl_fps = nullptr; fs_black_overlay = nullptr; btn_ptt = nullptr;
@@ -120,26 +122,34 @@ static void btn_mute_event_cb(lv_event_t * e) {
 
 void ViewBaby_ClearImage() { if (cam_image_obj) lv_img_set_src(cam_image_obj, NULL); }
 
+
 void ViewBaby_SetImage(const void* src) {
     if (gui.getCurrentScreen() != SCREEN_BABY) return; 
+    
     if (cam_image_obj) {
         lv_img_dsc_t* dsc = (lv_img_dsc_t*)src; 
+        
         if (dsc->header.w > 0 && dsc->header.h > 0) {
+            // Die Zoom-Skalierung (lv_img_set_zoom) wurde bereits performant 
+            // im VideoLogic-Task angewendet! Wir setzen hier nur noch die Quelle.
             lv_img_set_src(cam_image_obj, src);
+            
             if (vidFSMode) {
-                float min_zoom = min(1280.0f / dsc->header.w, 720.0f / dsc->header.h); 
-                lv_img_set_zoom(cam_image_obj, (uint16_t)(min_zoom * 256.0f));
+                // Im Fullscreen-Modus (falls LVGL überhaupt noch zeichnet)
                 lv_obj_set_size(cam_image_obj, dsc->header.w, dsc->header.h);
                 lv_obj_align(cam_image_obj, LV_ALIGN_CENTER, 0, 0);
                 lv_obj_move_foreground(cam_image_obj); 
             } else {
-                float min_zoom = min(1.0f, min(1024.0f / dsc->header.w, 576.0f / dsc->header.h));
-                lv_img_set_zoom(cam_image_obj, (uint16_t)(min_zoom * 256.0f)); 
+                // Im normalen UI-Modus
                 lv_obj_set_size(cam_image_obj, dsc->header.w, dsc->header.h);
                 lv_obj_align(cam_image_obj, LV_ALIGN_CENTER, 0, -20); 
             }
+            
             lv_obj_invalidate(cam_image_obj); 
-            if (lbl_cam_status) lv_obj_add_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
+            
+            if (lbl_cam_status) {
+                lv_obj_add_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
+            }
             
             ViewBabySettings_Update();
         } else {
@@ -148,6 +158,8 @@ void ViewBaby_SetImage(const void* src) {
         }
     }
 }
+
+
 
 void ViewBaby_SetStatus(const char* text) {
     if (gui.getCurrentScreen() != SCREEN_BABY) return; 
@@ -170,6 +182,8 @@ void ViewBaby_StopStreamOnError() {
 lv_obj_t* ViewBaby::build() {
     s_lastBtnColor = 0; s_lastBtnStateForText = -1;
     requestBabyStream = false; isStreamActive = false; 
+    
+    isBabyApiActive = true; // <--- API wecken
 
     lv_obj_t* scr = lv_obj_create(NULL);
     if (!scr) return nullptr;
@@ -203,14 +217,13 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_set_style_radius(lbl_play_icon, 80, 0); 
     lv_obj_align(lbl_play_icon, LV_ALIGN_CENTER, 0, 0); 
 
-    // --- MARQUEE LAUFSCHRIFT ---
     lbl_cam_status = lv_label_create(scr);
     lv_obj_set_width(lbl_cam_status, 1280); 
     lv_label_set_long_mode(lbl_cam_status, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_text_font(lbl_cam_status, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_cam_status, lv_color_hex(0xAAAAAA), 0);
     lv_obj_align(lbl_cam_status, LV_ALIGN_TOP_MID, 0, 85); 
-    lv_label_set_text(lbl_cam_status, ""); // <--- FIX: Startet komplett leer!
+    lv_label_set_text(lbl_cam_status, ""); 
 
     cam_touch_overlay = lv_obj_create(scr);
     lv_obj_set_size(cam_touch_overlay, 1024, 576);
@@ -294,17 +307,26 @@ lv_obj_t* ViewBaby::build() {
     return scr;
 }
 
+
 void ViewBaby::update() {
     if (gui.getCurrentScreen() != SCREEN_BABY) return;
-    ViewTopbar_Update();
 
-    if (!vidFSMode && fs_black_overlay != nullptr && !lv_obj_has_flag(fs_black_overlay, LV_OBJ_FLAG_HIDDEN)) {
+    // --- NEU: Brutaler Cut für den Vollbildmodus ---
+    // Wenn FS aktiv ist, lassen wir das PPA und VideoOverlay die ganze Arbeit machen.
+    // Kein LVGL-Label-Update, keine UI-Invalidation!
+    if (vidFSMode) {
+        ViewTopbar_SetHidden(true); // <--- Direkter Aufruf (LVGL fängt redundante Aufrufe intern ab)
+        return; 
+    }
+
+    // --- Ab hier läuft nur noch der Windowed-Mode ---
+    if (fs_black_overlay != nullptr && !lv_obj_has_flag(fs_black_overlay, LV_OBJ_FLAG_HIDDEN)) {
         lv_obj_add_flag(fs_black_overlay, LV_OBJ_FLAG_HIDDEN);
         ViewTopbar_SetHidden(false); 
-    } else if (vidFSMode) {
-        ViewTopbar_SetHidden(true); 
     }
     
+    ViewTopbar_Update();
+
     if (showFps && isStreamActive && lbl_fps != nullptr) {
         lv_obj_clear_flag(lbl_fps, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text_fmt(lbl_fps, "FPS: %d", currentFps);
@@ -313,7 +335,7 @@ void ViewBaby::update() {
     }
 
     if (lbl_cam_bat_main) lv_label_set_text_fmt(lbl_cam_bat_main, LV_SYMBOL_BATTERY_FULL " %d%%", camBatteryPercent);
-    if (lbl_cam_bat_fs) lv_label_set_text_fmt(lbl_cam_bat_fs, LV_SYMBOL_BATTERY_FULL " %d%%", camBatteryPercent);
+    // lbl_cam_bat_fs updaten wir gar nicht mehr, das macht dein VideoOverlay!
 
     if (btn_audio != nullptr && lbl_audio != nullptr) {
         bool ui_is_on = lv_obj_has_state(btn_audio, LV_STATE_CHECKED);

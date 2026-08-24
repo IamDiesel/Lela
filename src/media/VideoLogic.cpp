@@ -12,6 +12,9 @@
 #include "BabyCamApi.h"     
 #include <driver/jpeg_decode.h>
 
+// Einbinden der Inline-Komponente
+#include "VideoOverlay.h"
+
 extern bool lvgl_port_lock(uint32_t timeout_ms);
 extern void lvgl_port_unlock(void);
 
@@ -22,6 +25,15 @@ extern void lvgl_port_unlock(void);
 #ifndef unlikely
 #define unlikely(x) __builtin_expect(!!(x), 0)
 #endif
+
+// ==============================================================================
+// PARAMETER FUER DEN VIDEO-STREAM
+// ==============================================================================
+// 0 = Kein Drop (Maximale Fluessigkeit, moegliches Delay)
+// 1 = Jedes 2. Bild verwerfen (Gute Balance)
+// 2 = Zwei Bilder verwerfen, eins zeigen (Echtzeit garantiert, Slideshow-Effekt)
+int camDropFrames = 0; 
+// ==============================================================================
 
 static lv_img_dsc_t cam_img_dsc[3] = {{0}, {0}, {0}};
 static uint8_t* jpg_bufs[3] = {nullptr, nullptr, nullptr}; 
@@ -80,6 +92,38 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
     char header_buf[256]; 
     static bool lastFSMode = false;
 
+    // Cache-Variablen für Float-Berechnungen
+    static int last_pic_w = 0;
+    static int last_pic_h = 0;
+    static float cached_zoom_fs = 1.0f;
+    static float cached_zoom_win = 1.0f;
+
+    uint32_t fCount = 0;
+    uint32_t lastFpsTime = millis();
+    uint32_t lastFrameTime = millis(); 
+
+
+    auto draw_and_push_fullscreen = [&](uint8_t buf_idx) {
+        if (!lastFSMode) { 
+            M5.Display.clear(TFT_BLACK); 
+            lastFSMode = true; 
+        }
+        
+        VideoOverlay::applyOverlay((uint16_t*)jpg_bufs[buf_idx], pic_info.width, pic_info.height, currentFps, camBatteryPercent, showFps);
+        
+        if (unlikely(!ppa_srm)) ppa_srm = new lgfx::PPASrm(&M5.Display, false); 
+        float zoom_x = 1280.0f / pic_info.width;
+        float zoom_y = 720.0f / pic_info.height;
+        float zoom = (zoom_x < zoom_y) ? zoom_x : zoom_y; 
+        
+        M5.Display.startWrite();  
+        ppa_srm->pushImageSRM((1280 - (int)(pic_info.width*zoom)) / 2, 
+                             (720 - (int)(pic_info.height*zoom)) / 2, 
+                             0, 0, 0, zoom, zoom, pic_info.width, pic_info.height, (uint16_t*)jpg_bufs[buf_idx]);
+        M5.Display.endWrite();
+    };
+
+
     while (isStreamActive && stream->connected()) {
         int frameSize = 0;
         uint32_t headerStartMs = millis();
@@ -88,25 +132,20 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
         stream->setTimeout(10); 
         
         while (isStreamActive && stream->connected()) {
-            vTaskDelay(pdMS_TO_TICKS(1)); 
-            
             size_t len = stream->readBytesUntil('\n', header_buf, sizeof(header_buf) - 1);
             
             if (len == 0) {
-                if (millis() - headerStartMs > 5000) { 
+                if (millis() - headerStartMs > 15000) { 
                     if (isStreamActive) {
-                        Serial.println("[Video-Diag] Timeout beim Warten auf Header!");
                         setUiStatus("Stream stockt (Header Timeout)...");
-                        playToneI2S(800, 100, false);
-                        playToneI2S(600, 150, false);
                     }
                     return; 
                 }
+                vTaskDelay(pdMS_TO_TICKS(1)); // Hier ist ein Delay okay, da wir auf den Header warten
                 continue; 
             }
             
             header_buf[len] = '\0';
-            
             if (len <= 2 && frameSize > 0) break; 
             
             if (strncasecmp(header_buf, "Content-Length:", 15) == 0) {
@@ -114,57 +153,51 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                 garbage_lines = 0; 
             } else {
                 garbage_lines++;
-                if (garbage_lines > 25) {
-                    Serial.println("[Video-Diag] Zu viele unbekannte Header! Sync verloren. Reconnect...");
-                    return; 
-                }
+                if (garbage_lines > 25) return; 
             }
         }
 
         if (!isStreamActive || !stream->connected()) return;
-
-        if (unlikely(frameSize <= 0 || frameSize > MAX_JPEG_DOWNLOAD_SIZE)) {
-            Serial.printf("[Video-Diag] Ungueltige Framegroesse: %d Bytes. Abbruch.\n", frameSize);
-            return; 
-        }
+        if (unlikely(frameSize <= 0 || frameSize > MAX_JPEG_DOWNLOAD_SIZE)) return; 
 
         size_t bytesRead = 0;
         uint32_t startMs = millis();
-        uint32_t lastYieldMs = millis(); 
         
+        // Optimierte Lese-Schleife ohne 1ms Delay-Bremse
         while (bytesRead < frameSize && isStreamActive && stream->connected()) {
-            int avail = stream->available();
-            if (avail > 0) {
-                size_t toRead = (frameSize - bytesRead > avail) ? avail : (frameSize - bytesRead);
-                int readNow = stream->read(d_buf + bytesRead, toRead);
-                
-                if (readNow > 0) {
-                    bytesRead += readNow;
-                    startMs = millis(); 
-                } else {
-                    Serial.printf("[Video-Diag] Stream-Read Abbruch! readNow=%d, avail=%d\n", readNow, avail);
-                    break; 
-                }
+            size_t toRead = frameSize - bytesRead;
+            // read() blockiert automatisch bis zu stream->setTimeout(), das lastet das Netzwerk ideal aus
+            int readNow = stream->read(d_buf + bytesRead, toRead);
+            
+            if (readNow > 0) {
+                bytesRead += readNow;
+                startMs = millis(); 
             } else {
+                // Nur aufgeben/schlafen, wenn das Timeout des Sockets gegriffen hat und nichts kam
                 vTaskDelay(pdMS_TO_TICKS(1)); 
                 if (millis() - startMs > 3000) {
-                    if (isStreamActive) {
-                        Serial.println("[Video-Diag] TCP Timeout beim Bild-Download!");
-                        setUiStatus("Download blockiert! (Timeout)...");
-                        playToneI2S(800, 100, false);
-                        playToneI2S(600, 150, false);
-                    }
+                    if (isStreamActive) setUiStatus("Download blockiert! (Timeout)...");
                     return; 
                 }
-            }
-            
-            if (millis() - lastYieldMs > 5) {
-                vTaskDelay(pdMS_TO_TICKS(1));
-                lastYieldMs = millis();
             }
         }
 
         if (!isStreamActive || !stream->connected()) return;
+
+        // Optimierung: Dynamisches (Intelligentes) Frame Dropping
+        // Berechne die reale Zeit seit dem letzten Frame
+        uint32_t frameProcessTime = millis() - headerStartMs;
+        
+        if (camDropFrames > 0) {
+            // Modus 1: Sanftes Droppen (nur wenn der ESP hinterherhinkt, z.B. Download > 150ms)
+            // Modus 2: Hartes Droppen wie vorher gewünscht, wenn der Wert extrem hoch gesetzt ist.
+            if ((camDropFrames == 1 && frameProcessTime > 120) || camDropFrames >= 2) {
+                // Wir tun so als hätten wir den Frame verarbeitet, decodieren ihn aber nicht.
+                if (camDropFrames >= 2) camDropFrames--; // Zähler abbauen falls hartes Dropping
+                lastFrameTime = millis();
+                continue; 
+            }
+        }
 
         bool is_valid_jpeg = false;
         int actual_jpeg_size = 0;
@@ -180,22 +213,21 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
         }
 
         if (unlikely(!is_valid_jpeg)) {
-            Serial.println("==================================================");
-            Serial.printf("[Video-Diag] SYNC LOST ODER BILD KORRUPT!\n");
-            Serial.printf("[Video-Diag] Erwartet: %d Bytes | Empfangen: %d Bytes\n", frameSize, (int)bytesRead);
-            Serial.println("==================================================");
-            
             setUiStatus("Bild-Sync verloren! (Reset)...");
-            playToneI2S(800, 100, false);
-            playToneI2S(600, 150, false);
             return; 
         }
 
         if (likely(jpeg_decoder_get_info(d_buf, actual_jpeg_size, &pic_info) == ESP_OK)) {
             
-            if (pic_info.width * pic_info.height * 2 > MAX_PIXEL_BUF_SIZE) {
-                setUiStatus("Fehler: Bildaufloesung zu gross!");
-                return; 
+            // Optimierung: Float-Werte nur bei Auflösungsänderung neu berechnen
+            if (pic_info.width != last_pic_w || pic_info.height != last_pic_h) {
+                last_pic_w = pic_info.width;
+                last_pic_h = pic_info.height;
+                
+                float zx = 1280.0f / pic_info.width;
+                float zy = 720.0f / pic_info.height;
+                cached_zoom_fs = (zx < zy) ? zx : zy;
+                cached_zoom_win = min(1.0f, min(1024.0f / pic_info.width, 576.0f / pic_info.height));
             }
 
             uint8_t next_write = (write_idx + 1) % 3;
@@ -210,37 +242,16 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                 write_idx = next_write;
                 read_idx = next_write; 
 
+                lastFrameTime = millis();
+                fCount++;
+                if (unlikely(millis() - lastFpsTime >= 1000)) { 
+                    currentFps = fCount; 
+                    fCount = 0; 
+                    lastFpsTime = millis(); 
+                }
+
                 if (vidFSMode) {
-                    if (!lastFSMode) {
-                        M5.Display.clear(TFT_BLACK);
-                        lastFSMode = true;
-                    }
-                    
-                    if (unlikely(!ppa_srm)) ppa_srm = new lgfx::PPASrm(&M5.Display, false); 
-                    float zoom_x = 1280.0f / pic_info.width;
-                    float zoom_y = 720.0f / pic_info.height;
-                    float zoom = (zoom_x < zoom_y) ? zoom_x : zoom_y; 
-                    
-                    M5.Display.startWrite();  
-                    
-                    ppa_srm->pushImageSRM((1280 - (int)(pic_info.width*zoom)) / 2, 
-                                         (720 - (int)(pic_info.height*zoom)) / 2, 
-                                         0, 0, 0, zoom, zoom, pic_info.width, pic_info.height, (uint16_t*)out_buf);
-                    
-                    M5.Display.waitDisplay(); 
-                    M5.Display.setCursor(20, 80); 
-                    M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-                    M5.Display.setFont(&fonts::FreeSansBold18pt7b);
-                    
-                    if (showFps) {
-                        M5.Display.printf("FPS: %d  |  Akku: %d%%", currentFps, camBatteryPercent);
-                    } else {
-                        M5.Display.printf("Akku: %d%%", camBatteryPercent);
-                    }
-                    
-                    M5.Display.endWrite();
-                    vTaskDelay(pdMS_TO_TICKS(5));
-                    
+                    draw_and_push_fullscreen(read_idx);
                 } else {
                     if (lastFSMode) {
                         lastFSMode = false;
@@ -255,30 +266,19 @@ void processStream(WiFiClient* stream, uint8_t* d_buf) {
                         cam_img_dsc[read_idx].header.h = pic_info.height; 
                         cam_img_dsc[read_idx].header.cf = LV_IMG_CF_TRUE_COLOR;
                         cam_img_dsc[read_idx].data = out_buf; 
+                        
                         ViewBaby_SetImage(&cam_img_dsc[read_idx]); 
                         lvgl_port_unlock();
                     }
-                    vTaskDelay(pdMS_TO_TICKS(5));
-                }
-                
-                static uint32_t fCount = 0; static uint32_t lFps = 0;
-                fCount++;
-                if (unlikely(millis() - lFps >= 1000)) { 
-                    currentFps = fCount; 
-                    fCount = 0; 
-                    lFps = millis(); 
                 }
             } else {
-                Serial.println("[Video-Diag] Hardware JPEG Decoder Fehler! Auto-Reset...");
                 reset_jpeg_engine();
             }
-        } else {
-            Serial.println("[Video-Diag] jpeg_decoder_get_info() fehlgeschlagen. Verwerfe Frame.");
         }
-        
-        vTaskDelay(pdMS_TO_TICKS(1)); 
     }
 }
+
+
 
 
 static void videoTask(void * pvParameters) {
@@ -295,9 +295,6 @@ static void videoTask(void * pvParameters) {
             String url = camEntity;
             if (!url.startsWith("http")) url = "http://" + haIP + ":" + String(haPort) + url;
 
-            // ==============================================================
-            // SCHRITT 1 & 2: BOOT-SEQUENZ (HEALTH CHECK & SESSION START)
-            // ==============================================================
             setUiStatus("Ping Kamera...");
             HTTPClient httpInit;
             httpInit.setTimeout(2000);
@@ -328,9 +325,6 @@ static void videoTask(void * pvParameters) {
                 continue;
             }
 
-            // ==============================================================
-            // SCHRITT 3 & 4: WUNSCH-AUFLOESUNG SENDEN & WARTEN
-            // ==============================================================
             setUiStatus("Sende Aufloesung...");
             int reqW = 1280, reqH = 720;
             int xIdx = currentCamRes.indexOf('x');
@@ -339,18 +333,13 @@ static void videoTask(void * pvParameters) {
                 reqH = currentCamRes.substring(xIdx+1).toInt();
             }
             
-            // Setzt die Aufloesung via REST API auf der Kamera
             BabyCamApi_SetResolution(reqW, reqH);
             
-            // ATEMPAUSE: Der Kamera 1,5 Sekunden geben, um den Encoder mit der neuen Auflösung neuzustarten!
             vTaskDelay(pdMS_TO_TICKS(1500)); 
 
-            // ==============================================================
-            // SCHRITT 5: VIDEO STREAM ABGREIFEN
-            // ==============================================================
             HTTPClient http;
             http.setReuse(false);
-            http.setTimeout(5000); // Dem Stream beim Start bis zu 5 Sekunden Wakeup-Zeit geben
+            http.setTimeout(5000); 
             
             String connMsg = "Verbinde: " + url;
             setUiStatus(connMsg.c_str());
@@ -364,7 +353,6 @@ static void videoTask(void * pvParameters) {
                     stream->setNoDelay(true);
                     stream->setTimeout(10); 
                     
-                    // Startet den Download und das Zeichnen der Frames
                     processStream<true>(stream, download_buf);
                 } else {
                     if (isStreamActive) setUiStatus("Stream nicht verfuegbar");

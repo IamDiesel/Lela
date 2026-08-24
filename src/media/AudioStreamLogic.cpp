@@ -28,11 +28,16 @@ static void audioConsumerTask(void * pvParameters) {
             if (packetSize > 0) {
                 int bytesRead = udpIn.read(buffer, sizeof(buffer));
                 if (bytesRead > 0) {
-                    M5.Speaker.setChannelVolume(0, (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f ));
+                    // FIX 1: Pegel berechnen und bei 255 strikt abriegeln (Behebt "zu leise" bei 150%)
+                    int calcVol = (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteBaby ? 0 : volBaby/100.0f) * 255.0f );
+                    if (calcVol > 255) calcVol = 255; 
+                    M5.Speaker.setChannelVolume(0, calcVol);
+                    
+                    // FIX 2 (Rollback): Kamera sendet 16-Bit! Wieder als int16_t abspielen (Behebt lautes Rauschen)
                     M5.Speaker.playRaw((const int16_t*)buffer, bytesRead / 2, 44100, false, 1, 0);
                 }
-                // --- UDP WDT FIX ---
-                vTaskDelay(pdMS_TO_TICKS(1));
+                // FIX 3: Den Task flüssig durchlaufen lassen, ohne den Puffer verhungern zu lassen (Behebt Roboter-Stottern)
+                taskYIELD(); 
             } else {
                 vTaskDelay(pdMS_TO_TICKS(2));
             }
@@ -73,7 +78,6 @@ void AudioStreamLogic_Init() {
 void AudioStreamLogic_StartBaby() {
     if (isAudioStreaming || isPTTActive) return; 
     
-    // Hardware sicher umschalten
     M5.Mic.end(); 
     delay(50);
     M5.Speaker.begin();
@@ -86,9 +90,8 @@ void AudioStreamLogic_StartBaby() {
 void AudioStreamLogic_StopBaby() {
     if (!isAudioStreaming) return;
     
-    // WICHTIG: ERST das Flag setzen, damit der Consumer-Task stoppt!
     isAudioStreaming = false;
-    delay(50); // Warten, bis der Task sicher aus playRaw() raus ist
+    delay(50); 
     
     M5.Speaker.end();
     BabyCamApi_SetBabyAudio(false);
@@ -97,7 +100,6 @@ void AudioStreamLogic_StopBaby() {
 void AudioStreamLogic_StartPTT() {
     if (isPTTActive) return;
     
-    // Pausiere Baby-Audio sicher, falls es an ist
     resumeBabyAudioAfterPTT = isAudioStreaming;
     if (resumeBabyAudioAfterPTT) {
         AudioStreamLogic_StopBaby(); 
@@ -119,14 +121,12 @@ void AudioStreamLogic_StartPTT() {
 void AudioStreamLogic_StopPTT() {
     if (!isPTTActive) return;
     
-    // WICHTIG: ERST das Flag setzen, damit der Producer-Task stoppt!
     isPTTActive = false; 
-    delay(50); // Warten, bis der Task sicher aus record() raus ist
+    delay(50); 
     
     M5.Mic.end(); 
     BabyCamApi_SetParentAudio(false);
     
-    // Reaktiviere Baby-Audio, falls es vor PTT an war
     if (resumeBabyAudioAfterPTT) {
         AudioStreamLogic_StartBaby();
     } else {

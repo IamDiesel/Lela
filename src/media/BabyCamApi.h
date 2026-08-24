@@ -1,6 +1,8 @@
 #pragma once
 #include <Arduino.h>
 
+extern volatile bool isBabyApiActive; 
+
 void BabyCamApi_Init();
 void BabyCamApi_SetQuality(int qual);
 void BabyCamApi_SetSpeed(int speed);
