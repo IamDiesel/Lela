@@ -37,9 +37,21 @@ Registriert den Monitor-Client bei der Kamera. **Dieser Aufruf muss zwingend all
 
 ```
 
-
 *(Hinweis: `ip` ist die IP-Adresse des zugreifenden ESP32/Lela OS Clients, nicht die der Kamera).*
+
 * **Response:** `{"status":"OK"}`
+
+### Schritt 3: Session beenden (Graceful Disconnect)
+
+Meldet den Client sauber ab, wenn Lela OS in den Standby geht.
+
+* **Methode:** `POST /api/v1/client/offline`
+
+### Schritt 4: Passwort-Prüfung (Optional)
+
+Falls die Kamera mit einem Passwort geschützt ist (kann via `/api/v1/password/enabled` geprüft werden).
+
+* **Methode:** `POST /api/v1/password/check`
 
 ---
 
@@ -76,6 +88,7 @@ Weist die Kamera an, einen UDP-Stream an die definierte IP des Clients zu senden
 
 * **Befehl:** `POST /api/v1/audio/baby/start-stop`
 * **Body:**
+
 ```json
 {
   "audioBabyCompressed": false,
@@ -85,8 +98,8 @@ Weist die Kamera an, einen UDP-Stream an die definierte IP des Clients zu senden
 
 ```
 
-
 *(Zum Stoppen: `"status": "STOP"`).*
+
 * **Netzwerk-Routing:** Die Kamera feuert UDP-Pakete an den lokalen Client-Port **50001** (`audioBabyRecorderPort`).
 
 ### 🎤 Mit dem Baby sprechen (Push-to-Talk / Audio Uplink)
@@ -95,6 +108,7 @@ Versetzt die Kamera in den Zuhör-Modus.
 
 * **Befehl:** `POST /api/v1/audio/parents/start-stop`
 * **Body:**
+
 ```json
 {
   "ip": "192.168.178.50",
@@ -102,7 +116,6 @@ Versetzt die Kamera in den Zuhör-Modus.
 }
 
 ```
-
 
 * **Netzwerk-Routing:** Der Client muss nun UDP-Audio-Chunks (Empfehlung: 512 bis 1024 Bytes) an die IP der Kamera auf Ziel-Port **50003** (`audioParentPlayerPort`) senden.
 
@@ -117,6 +130,7 @@ Dieser Endpunkt sollte zyklisch (alle 3 bis 5 Sekunden) abgerufen werden, um das
 
 * **Methode:** `GET /api/v1/status?fast=true`
 * **Response Payload:**
+
 ```json
 {
   "batteryLevel": 85,
@@ -142,8 +156,6 @@ Dieser Endpunkt sollte zyklisch (alle 3 bis 5 Sekunden) abgerufen werden, um das
 
 ```
 
-
-
 ---
 
 ## 5. Manuelle Hardware-Steuerung & Einstellungen
@@ -163,6 +175,11 @@ Dieser Endpunkt sollte zyklisch (alle 3 bis 5 Sekunden) abgerufen werden, um das
 * **Auflösung ändern:**
 * `POST /api/v1/camera/change-resolution`
 * Body: `{"forceChangeResolution": false, "width": 1280, "height": 720}` *(Führt serverseitig zu einem Stream-Neustart)*
+
+
+* **Belichtung (Exposure) anpassen:**
+* `POST /api/v1/camera/exposure`
+* Body: `{"percentage": 50, "uuid": "<CLIENT_UUID>"}` *(0 bis 100)*
 
 
 
@@ -188,6 +205,10 @@ Dieser Endpunkt sollte zyklisch (alle 3 bis 5 Sekunden) abgerufen werden, um das
 * Response: `{"status": "ON"}` oder `{"status": "OFF"}`
 
 
+* **Lokale Videoaufzeichnung:**
+* `POST /api/v1/camera/record-video`
+
+
 
 ### 🔋 Power Management & Standby
 
@@ -198,6 +219,55 @@ Dieser Endpunkt sollte zyklisch (alle 3 bis 5 Sekunden) abgerufen werden, um das
 * Response: `{"screenOffTimeout": 30, "status": "ON"}` oder `{"screenOffTimeout": 0, "status": "OFF"}`
 
 
+* **Bildschirm temporär einschalten:**
+* `GET /api/v1/screen/on-temporal`
+* Response: `OK`
+
+
 * **Remote Power-Off (Kompletter Shutdown):**
 * `GET /api/v1/camera/power-off` -> `{"status": "OK"}`
 * *Achtung:* Fährt die Smartphone/Kamera-App vollständig herunter. Das Gerät ist danach nicht mehr per Netzwerk erreichbar.
+
+
+
+---
+
+## 6. Geräteinformationen & Lightweight-Polling
+
+Ressourcenschonende Endpunkte für Microcontroller (liefern kurze Plaintext- oder JSON-Antworten ohne den Overhead des globalen Status-Objekts).
+
+* **Akkustand abfragen:**
+* `GET /api/v1/battery`
+* Response (Plaintext): `46% Not charging`
+
+
+* **Gerätename abfragen:**
+* `GET /api/v1/name-device`
+* Response (Plaintext): `Google Pixel 9 Pro`
+
+
+* **Passwort-Schutz prüfen:**
+* `GET /api/v1/password/enabled`
+* Response (JSON): `{"status": "NO"}`
+
+
+* **Verfügbare Auflösungen auflisten (ohne Umschaltung):**
+* `GET /api/v1/camera/resolutions`
+* Response (JSON): `{"resolutions": ["1280x720", "1024x768", "800x600", "640x480", "320x240"]}`
+
+
+
+---
+
+## 7. Erweiterte Audio-Funktionen (Schlaflieder & Alarme)
+
+* **Schlaflied-Steuerung (Media Player):**
+* Wiedergabe starten/stoppen: `POST /api/v1/lullaby/start-stop`
+* Nächstes Lied: `POST /api/v1/lullaby/next`
+* Vorheriges Lied: `POST /api/v1/lullaby/previous`
+* Lautstärke ändern: `POST /api/v1/lullaby/change-media-volume`
+
+
+* **Geräuscherkennung / Baby-Alarm:**
+* Alarm umschalten: `POST /api/v1/audio-alert/baby/start-stop`
+
