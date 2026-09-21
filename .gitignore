@@ -13,3 +13,12 @@ src/config/secrets.h
 AGENTS.md
 Lela_TMP.code-workspace
 src/main_test.cpp
+
+# Ausgelesene Coredumps (Diagnose, nicht versionieren)
+coredumps/
+coredump.bin
+AudioStreamLogic.cpp.bak-vor-umbau
+BabyCamApi.cpp.bak-vor-umbau
+sdkconfig.defaults
+VideoLogic.cpp.bak-vor-umbau
+tools/read_coredump.ps1

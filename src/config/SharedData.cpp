@@ -8,6 +8,7 @@
 
 SemaphoreHandle_t bleMutex = NULL;
 volatile bool isStreamActive = false; 
+volatile bool videoLowLatency = true;   // Standard: niedrige Latenz
 uint8_t* download_buf = nullptr;
 
 Preferences preferences;
@@ -219,12 +220,24 @@ void Data_Init() {
     camEntity = preferences.getString("camEntity", SECRET_CAM_ENTITY);
     babyStreamUrl = preferences.getString("babyUrl", SECRET_BABY_STREAM_URL);
 
+    // Kameraeinstellungen. Sie wurden bisher zwar GESCHRIEBEN (in
+    // ViewBabySettings), aber nie zurueckgelesen - nach jedem Neustart standen
+    // die Regler wieder auf den Anfangswerten, waehrend die Kamera noch den
+    // zuletzt gesendeten Wert hielt. Anzeige und Wirklichkeit liefen damit
+    // auseinander, und beim Speed-Regler (0 = maximale fps, 100 = Eco) fiel
+    // das erst an der Bildrate auf.
+    //
+    // Vorgaben bewusst so: Tempo auf Anschlag, Qualitaet in der Mitte. Beides
+    // wird jetzt bei jedem Streamstart an die Kamera durchgereicht.
+    camQuality = preferences.getInt("camQuality", 50);
+    camSpeed   = preferences.getInt("camSpeed", 0);
+
     if (!useCustomUrls) {
         camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?id=lela-os-stream&uuid=" + camUuid + "&quality=" + String(camQuality);
         babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio";
     }
     
-    audioFormat = preferences.getInt("audioFmt", 0); 
+    audioFormat = preferences.getInt("audioFmt", 0);
     camHackMode = preferences.getInt("camHackM", 0); // <--- LÄDT DEN HACKMODE
     currentCamRes = preferences.getString("camRes", "1280x720");
 
@@ -294,11 +307,34 @@ void audioTask(void *pvParameters) {
 
             if (volFactor <= 0.01f) continue; 
 
-            if (isAudioStreaming) {
-                int streamVol = (int)(effMaster * effBaby * 255.0f);
-                if (streamVol > 255) streamVol = 255;
-                M5.Speaker.setChannelVolume(0, streamVol / 3); 
+            // Der Lautsprecher gehoert dem Audio-Besitzer-Task
+            // (AudioStreamLogic). Waehrend PTT ist er abgeschaltet - das
+            // Mikrofon belegt denselben I2S-Port - und waehrend eines
+            // Umschaltvorgangs ist er nicht ansprechbar.
+            //
+            // Hier wird gewartet statt verworfen: ein Alarmton wird genau
+            // einmal abgeschickt. Faellt er in ein Umschaltfenster (bis zu
+            // ~600 ms), waere er sonst stillschweigend weg - bei einer
+            // Katzenmatte und einem Babyphone die falsche Sparsamkeit.
+            // Die Grenze verhindert, dass ein dauerhaft defekter Lautsprecher
+            // die Warteschlange aufstaut.
+            // Siehe src/doc/video_refactoring.md, 2.18.
+            bool haveHw = false;
+            for (int tries = 0; tries < 60; tries++) {          // max. ~1,5 s
+                if (AudioHw_SpeakerUsable() && AudioHw_Lock(25)) { haveHw = true; break; }
+                vTaskDelay(pdMS_TO_TICKS(25));
             }
+            if (!haveHw) continue;
+
+            // Nach dem Schloss erneut pruefen: zwischen Pruefung und Schloss
+            // kann der Besitzer-Task den Lautsprecher abgeschaltet haben.
+            if (!AudioHw_SpeakerUsable()) { AudioHw_Unlock(); continue; }
+
+            // Den Babystream fuer die Dauer des Tons absenken. Bewusst NICHT
+            // ueber setChannelVolume(0, ...): die Wiedergabe setzt die
+            // Kanallautstaerke alle ~5 ms selbst und wuerde das sofort
+            // ueberschreiben.
+            if (isAudioStreaming) AudioHw_DuckStream(msg.duration + 50);
 
             int toneVol = (int)(volFactor * 255.0f);
             if (toneVol > 255) toneVol = 255;
@@ -309,14 +345,13 @@ void audioTask(void *pvParameters) {
             else if (msg.soundType == 2) M5.Speaker.tone(1100, 100, 1, true); 
             else if (msg.soundType == 3) M5.Speaker.tone(800, 100, 1, true); 
             else if (msg.soundType == 4) M5.Speaker.tone(150, 15, 1, true); 
-            
+
+            // Das Schloss NICHT ueber die Wartezeit halten: der Ton laeuft
+            // asynchron weiter, der Besitzer-Task braucht die Hardware
+            // zwischendurch fuer den Stream.
+            AudioHw_Unlock();
+
             vTaskDelay(pdMS_TO_TICKS(msg.duration + 50));
-            
-            if (isAudioStreaming) {
-                int streamVol = (int)(effMaster * effBaby * 255.0f);
-                if (streamVol > 255) streamVol = 255;
-                M5.Speaker.setChannelVolume(0, streamVol);
-            }
         }
     }
 }
@@ -380,4 +415,4 @@ namespace SharedData {
         
         preferences.end();
     }
-}
+}

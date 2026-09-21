@@ -57,18 +57,31 @@ void SystemLogic_Update() {
         lastScreen = currentScreen;
     }
 
+    // V-03: Der Videostart ist bewusst NICHT flankengesteuert.
+    // VideoLogic_Start() ist idempotent und legt nur dann einen Task an, wenn
+    // keiner laeuft. Frueher konnte ein schnelles Stop/Start den Stream dauerhaft
+    // toeten: die Flanke feuerte einmal, der alte Task lief aber noch, also wurde
+    // kein neuer erzeugt - und eine zweite Flanke kam nie.
+    // Der Aufruf in jedem Durchlauf kostet einen Zeigervergleich und holt den
+    // Start automatisch nach, sobald der Vorgaenger sich beendet hat.
     static bool lastStreamState = false;
-    if (isStreamActive && !lastStreamState) {
+    if (isStreamActive) {
         VideoLogic_Start();
-        AudioStreamLogic_StartBaby(); 
-        lastStreamState = true;
-    } else if (!isStreamActive && lastStreamState) {
+        if (!lastStreamState) {
+            AudioStreamLogic_StartBaby(); 
+            lastStreamState = true;
+        }
+    } else if (lastStreamState) {
         VideoLogic_Stop();
         AudioStreamLogic_Stop();  
         lastStreamState = false;
     }
 
     WebSetupLogic_Update(); 
+
+    // V-05: Kameradaten aus dem Hintergrundtask uebernehmen. Bewusst hier, im
+    // selben Kontext, aus dem die Oberflaeche sie liest.
+    BabyCamApi_Update();
 
     calcMultiplex(); 
     if (webSetupMode > 0 || pendingWebSetupMode > 0) return; 

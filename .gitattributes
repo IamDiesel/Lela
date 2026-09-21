@@ -1,0 +1,16 @@
+# ==============================================================
+# Zeilenenden-Normalisierung
+#
+# Das Repository speichert saemtliche Textdateien intern mit LF.
+# Beim Auschecken erzeugt Git die plattformueblichen Zeilenenden
+# (unter Windows CRLF), gesteuert ueber core.autocrlf / core.eol.
+#
+# Zweck: Werkzeuge ohne gesetztes core.autocrlf (Linux-Tooling, CI,
+# Container, Agenten) melden sonst faelschlich das gesamte Repo als
+# geaendert. Dieses Attribut macht das Verhalten maschinenunabhaengig.
+#
+# Das Repo enthaelt ausschliesslich Textdateien (.h .cpp .c .py .md
+# .ini .css .txt), daher genuegt eine einzige Regel.
+# ==============================================================
+
+* text=auto

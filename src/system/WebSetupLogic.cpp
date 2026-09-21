@@ -228,6 +228,11 @@ void WebSetupLogic_Init() {
 }
 
 void WebSetupLogic_Update() {
+#if NET_QUIET_DURING_VIDEO
+    // Waehrend eines Videostreams keine Webserver-Bearbeitung (siehe SharedData.h).
+    // Das Setup-Portal selbst laeuft ohnehin nur, wenn kein Video aktiv ist.
+    if (isStreamActive && webSetupMode == 0) return;
+#endif
     if (pendingWebSetupMode > 0) {
         webSetupMode = pendingWebSetupMode;
         pendingWebSetupMode = 0;

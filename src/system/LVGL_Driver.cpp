@@ -42,10 +42,36 @@ void Lvgl_Init() {
 
     static lv_disp_draw_buf_t draw_buf;
     
-    // WICHTIGSTER FIX HIER: Der riesige Render-Buffer (76 KB) liegt jetzt im PSRAM!
-    static lv_color_t *buf1 = (lv_color_t *)heap_caps_aligned_alloc(64, 1280 * 30 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-    
-    lv_disp_draw_buf_init(&draw_buf, buf1, NULL, 1280 * 30);
+    // Der Zeichenpuffer gehoert ins INTERNE SRAM, nicht ins PSRAM.
+    //
+    // LVGL liest und schreibt ihn beim Rendern staendig - Pixel fuer Pixel,
+    // mit schlechter Lokalitaet. Das ist der denkbar unguenstigste Zugriff auf
+    // PSRAM, wo jeder Fehlgriff eine 64-Byte-Cachezeile nachzieht. Internes
+    // SRAM hat weder Cache-Umweg noch Bus-Konkurrenz mit dem Videopfad, der
+    // PSRAM ohnehin dauerhaft belastet (Decoderausgabe, Framebuffer).
+    //
+    // Kosten: 76 KB von rund 375 KB freiem internen Speicher. Das ist der
+    // knappe Topf (der SDIO-WLAN-Treiber bedient sich daraus), deshalb bleibt
+    // es bei EINEM Puffer statt zweier - ein zweiter braechte ohne DMA im
+    // Flush ohnehin nichts, weil dort synchron gearbeitet wird.
+    //
+    // Faellt die Reservierung aus, weichen wir auf PSRAM zurueck: langsamer,
+    // aber lauffaehig. Ein Absturz beim Start waere die schlechtere Antwort.
+    static const size_t DRAW_BUF_PX = 1280 * 30;
+
+    static lv_color_t *buf1 = (lv_color_t *)heap_caps_aligned_alloc(
+        64, DRAW_BUF_PX * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (buf1 == nullptr) {
+        Serial.println("[LVGL] WARNUNG: Zeichenpuffer passt nicht ins interne RAM, nutze PSRAM.");
+        buf1 = (lv_color_t *)heap_caps_aligned_alloc(
+            64, DRAW_BUF_PX * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    } else {
+        Serial.printf("[LVGL] Zeichenpuffer im internen SRAM (%u KB).\n",
+                      (unsigned)(DRAW_BUF_PX * sizeof(lv_color_t) / 1024));
+    }
+
+    lv_disp_draw_buf_init(&draw_buf, buf1, NULL, DRAW_BUF_PX);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);

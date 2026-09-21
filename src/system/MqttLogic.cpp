@@ -97,6 +97,12 @@ void MqttLogic_Update() {
         return;
     }
 
+#if NET_QUIET_DURING_VIDEO
+    // Waehrend eines Videostreams schweigen, um den Stream nicht mit
+    // parallelem Netzverkehr zu stoeren (siehe SharedData.h).
+    if (isStreamActive) return;
+#endif
+
     if (!mqttClient.connected()) {
         uint32_t now = millis();
         if (now - lastMqttReconnectAttempt > 5000) {

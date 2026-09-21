@@ -71,6 +71,7 @@
 #include "HaWebsocketLogic.h" 
 #include "BleLogic.h"
 #include "ViewBootScreen.h"
+#include "CrashDiag.h"   // Absturz-Diagnose ueber Neustarts (Experiment E-1)
 
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
@@ -91,6 +92,11 @@ static bool melody_playing = false;
 void updateBootMelody() {
     if (!melody_playing) return;
 
+    // Auch die Bootmelodie fasst den Lautsprecher an. Sobald AudioStreamLogic
+    // initialisiert ist, gilt dessen Schloss fuer jeden Zugriff.
+    // Siehe src/doc/video_refactoring.md, 2.18.
+    if (!AudioHw_SpeakerUsable()) { melody_playing = false; return; }
+
     uint32_t now = millis();
     if (current_note >= 6) {
         melody_playing = false;
@@ -98,14 +104,20 @@ void updateBootMelody() {
     }
 
     if (note_start_time == 0) {
-        M5.Speaker.tone(boot_melody_freqs[current_note], boot_melody_durations[current_note], 1, true);
+        if (AudioHw_Lock(50)) {
+            M5.Speaker.tone(boot_melody_freqs[current_note], boot_melody_durations[current_note], 1, true);
+            AudioHw_Unlock();
+        }
         note_start_time = now;
     } else {
         // 10ms Pause zwischen den Toenen fuer saubere Trennung
         if (now - note_start_time >= boot_melody_durations[current_note] + 10) {
             current_note++;
             if (current_note < 6) {
-                M5.Speaker.tone(boot_melody_freqs[current_note], boot_melody_durations[current_note], 1, true);
+                if (AudioHw_Lock(50)) {
+                    M5.Speaker.tone(boot_melody_freqs[current_note], boot_melody_durations[current_note], 1, true);
+                    AudioHw_Unlock();
+                }
                 note_start_time = now;
             }
         }
@@ -123,6 +135,12 @@ void updateStaticStatus(const char* text) {
 
 void setup() {
     Serial.begin(115200);
+
+    // Bewusst KEIN Serial.setTxTimeoutMs(0). Der Versuch, damit blockierende
+    // Ausgaben zu vermeiden, fiel zeitlich mit einem neuen Absturz beim Booten
+    // zusammen (Panic, danach haengender Panic-Handler, Hardware-Watchdog) und
+    // hat nachweislich Logzeilen verstuemmelt. Die Vorgabefrist der HWCDC
+    // bleibt deshalb unveraendert.
     delay(10); // ANTI-BLOCK: Massiv gekuerzt von 1000ms
     Serial.println("\n--- SYSTEM BOOT ---");
     // =========================================================
@@ -130,7 +148,17 @@ void setup() {
     // Sichert sofort 150KB perfekt zusammenhaengendes internes RAM 
     // fuer maximales Video-DMA, bevor das WLAN fragmentieren kann!
     // =========================================================
-    download_buf = (uint8_t*)heap_caps_aligned_alloc(64, 150000, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    // Frueher wurden hier 150 KB internes RAM als Video-Downloadpuffer
+    // reserviert. Das ist entfallen:
+    //   - Die JPEG-Puffer legt jetzt VideoDecoder ueber jpeg_alloc_decoder_mem()
+    //     im PSRAM an, treiberkonform ausgerichtet.
+    //   - Internes RAM ist knapp (231 KB frei) und wird vom SDIO-WLAN-Treiber
+    //     fuer DMA-Puffer gebraucht; er alloziert sie pro Paket ueber den Heap.
+    // Siehe doc/video_refactoring.md, 2.18.
+    
+    // Absturz-Historie auswerten, bevor irgendetwas anderes laeuft.
+    // Unterscheidet Kalt- von Warmstart (siehe src/doc/video_refactoring.md, E-1).
+    CrashDiag_Init();
     
     auto cfg = M5.config();
     M5.begin(cfg);
@@ -189,6 +217,10 @@ void setup() {
         current_note = 0;
         note_start_time = 0;
     }
+
+    // Absturzbericht erst hier: vorher ist der USB-CDC-Port noch nicht
+    // enumeriert und die Ausgabe ginge verloren.
+    CrashDiag_Report();
 
     M5.Display.setRotation(1); 
     M5.Display.setSwapBytes(true);
@@ -254,6 +286,7 @@ void setup() {
 
 void loop() {
     M5.update(); 
+    CrashDiag_Update();   // Lebenszeichen fuer die Absturz-Diagnose
     updateBootMelody();
     
     // BOOTSCREEN-DAUER: Auf 1,2 Sekunden verkuerzt (passend zur Startmelodie)
@@ -342,11 +375,12 @@ void loop() {
     // im Hintergrund und verbinden WLAN, MQTT und Bluetooth!
     // ==========================================================
     SystemLogic_Update(); 
-    WebSetupLogic_Update();
+    // Hinweis: WebSetupLogic_Update() wird bereits in SystemLogic_Update()
+    // gerufen. Der fruehere Doppelaufruf an dieser Stelle ist entfernt.
 
     if (M5.Display.getBrightness() == 0) {
         delay(100); 
     } else {
         delay(5);
     }
-}
+}

@@ -59,14 +59,33 @@ static void btn_fs_event_cb(lv_event_t * e) {
     vidFSMode = true;  
 }
 
+// Verlaesst den Vollbildmodus vollstaendig und ist mehrfach aufrufbar.
+//
+// Der Zustandswechsel gehoert HIERHER und nicht zum Aufrufer: frueher musste
+// jeder Aufrufer `vidFSMode` selbst zuruecksetzen. Wer das vergass, liess die
+// Oberflaeche in einem Zwischenzustand zurueck - schwarzes Vollbild ohne
+// Bedienelemente und ohne Weg heraus.
 void ViewBaby_ExitFS() {
+    vidFSMode = false;
+
     if (fs_black_overlay) lv_obj_add_flag(fs_black_overlay, LV_OBJ_FLAG_HIDDEN);
+
     if (cam_image_obj) {
-        const lv_img_dsc_t * dsc = (const lv_img_dsc_t *)lv_img_get_src(cam_image_obj);
-        if (dsc != NULL) lv_obj_set_size(cam_image_obj, dsc->header.w, dsc->header.h);
+        // Die Bildquelle bewusst loeschen statt ihre alten Masse zu uebernehmen.
+        // Im Vollbild wird der Deskriptor nicht gepflegt (dort geht das Bild
+        // direkt ueber den PPA), nach einem Aufloesungswechsel stuenden darin
+        // also die Masse der VORIGEN Aufloesung. Das naechste Bild im
+        // Fenstermodus setzt ihn ohnehin neu.
+        lv_img_set_src(cam_image_obj, NULL);
         lv_img_set_zoom(cam_image_obj, 256); 
         lv_obj_align(cam_image_obj, LV_ALIGN_CENTER, 0, -20);
     }
+
+    // Die Kopfleiste wird beim Betreten des Vollbilds ausgeblendet und muss
+    // hier wieder erscheinen - sonst ist der Bildschirm bedienbar, sieht aber
+    // weiter nach Vollbild aus.
+    ViewTopbar_SetHidden(false);
+
     lv_obj_invalidate(lv_scr_act());
 }
 
@@ -74,6 +93,16 @@ static void cam_image_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_CLICKED) {
         playToneI2S(800, 100, true); 
+
+        // Im Vollbild ist der Tipper die Geste zum Verlassen - nicht zum
+        // Pausieren. Sonst gibt es im Vollbild keinen Weg zurueck, ohne
+        // vorher den Stream abzuwuergen. Pausieren geht danach im
+        // Normalmodus ueber denselben Tipper.
+        if (vidFSMode) {
+            ViewBaby_ExitFS();
+            return;
+        }
+
         isStreamActive = !isStreamActive; 
         requestBabyStream = isStreamActive; 
         
@@ -150,8 +179,6 @@ void ViewBaby_SetImage(const void* src) {
             if (lbl_cam_status) {
                 lv_obj_add_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
             }
-            
-            ViewBabySettings_Update();
         } else {
             ViewBaby_SetStatus("Fehler: Bildmasse 0x0");
             ViewBaby_StopStreamOnError();
@@ -297,6 +324,19 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_set_style_bg_color(fs_black_overlay, lv_color_black(), 0);
     lv_obj_add_flag(fs_black_overlay, LV_OBJ_FLAG_HIDDEN); 
     
+    // Der Tipper zum Verlassen darf nicht davon abhaengen, dass er zufaellig
+    // im 1024x576 grossen Beruehrungsfeld des Fensterbetriebs landet: die
+    // schwarze Flaeche liegt im Vollbild darueber und ist 1280x720 gross.
+    // Ohne diesen Ausgang war das Vollbild eine Sackgasse, sobald der Tipper
+    // ausserhalb dieses Bereichs kam.
+    lv_obj_add_flag(fs_black_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(fs_black_overlay, [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+        if (!vidFSMode) return;
+        playToneI2S(800, 100, true);
+        ViewBaby_ExitFS();
+    }, LV_EVENT_CLICKED, NULL);
+
     lbl_cam_bat_fs = lv_label_create(fs_black_overlay);
     lv_obj_set_style_text_color(lbl_cam_bat_fs, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl_cam_bat_fs, &lv_font_montserrat_24, 0);

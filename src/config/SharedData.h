@@ -7,6 +7,8 @@
 #include <WebServer.h>   
 #include <DNSServer.h>   
 
+#include "DebugFlags.h"   // Schalter fuer Diagnoselaeufe
+
 #define HISTORY_SIZE 900 
 #define WINDOW_SIZE 12
 #define INTERVAL_HISTORY_SIZE 5
@@ -171,13 +173,21 @@ extern bool mqttEnabled;
 extern volatile bool requestBabyStream;
 extern volatile int babyStreamStatus; 
 extern volatile bool vidFSMode; 
+
+// Latenzmodus: Der Decoder ueberspringt aufgestaute Bilder und nimmt immer das
+// neueste. Kostet Bilder, haelt aber die Verzoegerung zwischen Realitaet und
+// Anzeige klein - bei einem Babyphone meist die richtige Wahl.
+extern volatile bool videoLowLatency;
 extern volatile bool showFps;
 extern volatile int currentFps;
 
 extern int mjpegDropThreshold; 
 extern int camHackMode; 
 extern volatile bool isStreamActive;
-extern uint8_t* download_buf; //Globaler Video-Puffer
+// VERALTET: wird nicht mehr benutzt. Die JPEG-Puffer verwaltet VideoDecoder
+// ueber jpeg_alloc_decoder_mem() im PSRAM. Symbol bleibt aus
+// Kompatibilitaetsgruenden erhalten.
+extern uint8_t* download_buf;
 
 extern int audioFormat; 
 extern volatile bool audioStandaloneMode;

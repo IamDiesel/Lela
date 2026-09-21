@@ -1,50 +1,74 @@
 #pragma once
-#include <M5Unified.hpp>
+// ==============================================================================
+// VideoOverlay - Einblendung im Vollbildmodus
+// ==============================================================================
+// Zeigt bei gesetztem FPS-Schalter drei Werte in der linken oberen Ecke des
+// Videobildes:
+//   - aktuelle Bildrate
+//   - Akkustand der Kamera (Baby) als Symbol mit Prozentwert
+//   - Akkustand des Tablets (Tab)  als Symbol mit Prozentwert
+//
+// Gezeichnet wird in ein Sprite, das anschliessend in den RGB565-Bildpuffer
+// einkopiert wird. Die Einblendung hat KEINEN Hintergrund: uebertragen werden
+// nur die Bildpunkte, auf denen wirklich etwas steht. Alles andere bleibt
+// unveraendert - das Video laeuft sichtbar hinter der Leiste weiter.
+//
+// Umgesetzt ueber eine Schluesselfarbe: Das Sprite wird mit OVERLAY_KEY
+// gefuellt, und dieser Wert bedeutet beim Kopieren "ueberspringen".
+//
+// ACHTUNG, hier lag ein Fehler: Das Sprite legt 16-Bit-Farben NICHT
+// zwangslaeufig in derselben Byte-Reihenfolge ab wie das Zahlenliteral im
+// Quelltext. Der Vergleich gegen OVERLAY_KEY traf deshalb nie zu, und die
+// Leiste bekam einen rosa Kasten. Die tatsaechliche Darstellung wird jetzt
+// einmalig aus dem Sprite selbst ausgelesen (siehe s_keyRaw).
+//
+// Damit die Schrift auch auf hellen Bildinhalten lesbar bleibt, wird jeder
+// Text zusaetzlich um einen Bildpunkt versetzt in Schwarz gezeichnet.
+//
+// Passt das Overlay nicht in das Bild, wird nichts gezeichnet.
+// Siehe src/doc/video_refactoring.md, 2.18.
+// ==============================================================================
 
-class VideoOverlay {
-public:
-    static inline __attribute__((always_inline)) void applyOverlay(uint16_t* out_buf, int pic_w, int pic_h, int fps, int batteryPercent, bool showFps) {
-        if (!showFps || pic_w < 150 || pic_h < 34) return;
+#include <Arduino.h>
 
-        static LGFX_Sprite overlay(&M5.Display);
-        static bool initialized = false;
-        static uint32_t last_update_ms = 0;
+// Schluesselfarbe (Magenta). Sie darf in keinem gezeichneten Element
+// vorkommen - in Weiss, Gruen, Gelb, Rot und Grau tut sie das nicht.
+#define OVERLAY_KEY 0xF81F
 
-        if (!initialized) {
-            overlay.setColorDepth(16);
-            overlay.createSprite(150, 24);
-            initialized = true;
-        }
+// ------------------------------------------------------------------------------
+// Aufteilung des Sprites
+// ------------------------------------------------------------------------------
+// Ein Akkublock besteht aus Beschriftung, Gehaeuse, Pluspol und Prozentwert.
+// Die Breiten sind einzeln benannt, weil sich die Bloecke sonst ueberlappen:
+// Font2 ist rund 9 bis 11 px je Zeichen breit, "100%" braucht also gut 40 px.
+// Die Werte sind mit Reserve gewaehlt.
+#define OVERLAY_LABEL_W    40      // "BABY" / "TAB" in Font2
+#define OVERLAY_BODY_W     26      // Gehaeuse des Akkusymbols
+#define OVERLAY_TIP_W       3      // Pluspol
+#define OVERLAY_GAP_W       6      // Abstand vor dem Prozentwert
+#define OVERLAY_VALUE_W    44      // "100%" in Font2
+#define OVERLAY_BLOCK_W  (OVERLAY_LABEL_W + OVERLAY_BODY_W + OVERLAY_TIP_W + \
+                          OVERLAY_GAP_W + OVERLAY_VALUE_W)
 
-        if (millis() - last_update_ms >= 1000 || fps == 0) {
-            last_update_ms = millis();
-            overlay.fillSprite(TFT_BLACK);
-            
-            int batX = 85, batY = 4;
-            overlay.drawRect(batX, batY, 40, 16, TFT_WHITE);
-            overlay.drawRect(batX + 40, batY + 4, 3, 8, TFT_WHITE);
-            
-            uint16_t batColor = (batteryPercent < 20) ? TFT_RED : ((batteryPercent < 50) ? TFT_YELLOW : TFT_GREEN);
-            int fillW = (batteryPercent * 36) / 100;
-            if (fillW > 0) overlay.fillRect(batX + 2, batY + 2, fillW, 12, batColor);
+#define OVERLAY_FPS_X       6
+#define OVERLAY_FPS_W      62      // "99 fps" in Font2
+#define OVERLAY_BAT1_X   (OVERLAY_FPS_X + OVERLAY_FPS_W + 12)
+#define OVERLAY_BAT2_X   (OVERLAY_BAT1_X + OVERLAY_BLOCK_W + 12)
 
-            overlay.setTextColor(TFT_WHITE);
-            overlay.setFont(&fonts::Font4); 
-            overlay.setCursor(5, 4);
-            overlay.printf("%d FPS", fps);
-        }
+#define OVERLAY_WIDTH    (OVERLAY_BAT2_X + OVERLAY_BLOCK_W + 6)
+#define OVERLAY_HEIGHT    24
+#define OVERLAY_MARGIN    12
 
-        // Optimierter 32-Bit RAM-Transfer
-        uint32_t* src32 = (uint32_t*)overlay.getBuffer();
-        
-        for (int y = 0; y < 24; y++) {
-            // Ein Pixel = 16-Bit. 150 Pixel = 300 Bytes = 75x 32-Bit-Worte
-            uint32_t* dst32 = (uint32_t*)&out_buf[(y + 10) * pic_w + 10];
-            uint32_t* row_src = &src32[y * 75]; 
-            
-            for(int x = 0; x < 75; x++) {
-                dst32[x] = row_src[x];
-            }
-        }
-    }
-};
+// Senkrechte Lage innerhalb des Sprites.
+#define OVERLAY_TEXT_Y     4       // Grundlinie der Font2-Zeilen
+#define OVERLAY_ICON_Y     5       // Oberkante des Akkugehaeuses
+#define OVERLAY_ICON_H    14       // Hoehe des Akkugehaeuses
+
+// Zeichnet das Overlay in einen RGB565-Bildpuffer.
+//   pixels  : Bildpuffer (Zeilenlaenge == picW, siehe VideoDecoder::compactRows)
+//   picW/H  : Bildmasse in Pixeln
+//   fps     : anzuzeigende Bildrate
+//   camBat  : Akkustand der Kamera in Prozent (negativ = unbekannt)
+//   tabBat  : Akkustand des Tablets in Prozent (negativ = unbekannt)
+void VideoOverlay_Draw(uint16_t* pixels, int picW, int picH,
+                       int fps, int camBat, int tabBat);
