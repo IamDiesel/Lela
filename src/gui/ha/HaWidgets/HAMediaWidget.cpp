@@ -26,15 +26,8 @@ void HAMediaWidget::updateState(String state) {
     HAWidget::updateState(state); 
     lv_obj_set_style_text_opa(icon_label, 255, 0); 
     
-    uint32_t c_on_val = 0x00A0FF; 
-    if (color_on.length() > 0 && color_on.startsWith("#")) {
-        c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
-    }
-    
-    uint32_t c_off_val = 0x555555; 
-    if (color_off.length() > 0 && color_off.startsWith("#")) {
-        c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
-    }
+    const uint32_t c_on_val = colorOnOr(0x00A0FF);
+    const uint32_t c_off_val = colorOffOr(0x555555);
     
     if (state != "off" && state != "unavailable" && state != "unknown") {
         lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); 
@@ -77,15 +70,8 @@ void HAMediaItemWidget::updateState(String state) {
     HAWidget::updateState(state); 
     lv_obj_set_style_text_opa(icon_label, 255, 0); 
     
-    uint32_t c_on_val = 0x00A0FF; 
-    if (color_on.length() > 0 && color_on.startsWith("#")) {
-        c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
-    }
-    
-    uint32_t c_off_val = 0x555555; 
-    if (color_off.length() > 0 && color_off.startsWith("#")) {
-        c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
-    }
+    const uint32_t c_on_val = colorOnOr(0x00A0FF);
+    const uint32_t c_off_val = colorOffOr(0x555555);
     
     if (state == "playing") {
         lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); 

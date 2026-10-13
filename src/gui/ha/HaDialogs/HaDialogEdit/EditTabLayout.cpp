@@ -76,7 +76,7 @@ void EditTabLayout::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) {
     lbl_t_m_val = UIHelper::createLabel(parent, (String(w->getTextMargin()) + " px").c_str(), &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 680, y+10);
 
     y += 60;
-    if (w->getType() == "sensor") {
+    if (w->getKind() == HaWidgetKind::Sensor) {
         UIHelper::createLabel(parent, "Wert:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, y+10);
         dd_state_pos = UIHelper::createDropdown(parent, 140, 40, LV_ALIGN_TOP_LEFT, 80, y, "Oben\nMitte\nUnten\nLinks\nRechts", alignToIdx(w->getStateAlign()));
         lv_obj_add_event_cb(dd_state_pos, layout_change_cb, LV_EVENT_VALUE_CHANGED, this);

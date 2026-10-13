@@ -11,6 +11,11 @@
 #include "EditTabCondition.h"
 #include "EditTabSensor.h" 
 
+// Bildschirmtastatur und der Platz, den eine Vorschlagsliste unter einem
+// Eingabefeld braucht (Roller mit 3 Zeilen).
+static const lv_coord_t KEYBOARD_HEIGHT  = 350;
+static const lv_coord_t SUGGESTION_SPACE = 120;
+
 lv_obj_t* HaDialogEdit::overlay = nullptr; 
 lv_obj_t* HaDialogEdit::edit_panel = nullptr;          
 HAWidget* HaDialogEdit::current_widget = nullptr;
@@ -51,7 +56,7 @@ void HaDialogEdit::btn_cancel_event_cb(lv_event_t * e) {
     if (current_widget) { 
         current_widget->setSize(orig_w, orig_h); 
         current_widget->setAlignments(orig_i_align, orig_t_align, orig_s_align, orig_i_margin, orig_t_margin, orig_s_margin); 
-        if (current_widget->getType() == "vacuum") {
+        if (current_widget->getKind() == HaWidgetKind::Vacuum) {
             current_widget->setChartConfig(false, orig_c_w, orig_c_h, orig_c_x, orig_c_y, "", "");
         }
     }
@@ -77,6 +82,18 @@ void HaDialogEdit::bindKeyboard(lv_obj_t* ta, int mode) {
             }
             if (edit_panel && lv_obj_is_valid(edit_panel)) {
                 lv_obj_align(edit_panel, LV_ALIGN_TOP_MID, 0, 10);
+
+                // Feld samt Platz fuer die Vorschlagsliste darunter muss ueber
+                // der Tastatur liegen. Sonst den Dialog so weit nach oben
+                // schieben (frueher verdeckte die Tastatur z. B. Min/Max und
+                // die zweite Bedingung).
+                lv_obj_update_layout(edit_panel);
+                lv_area_t a;
+                lv_obj_get_coords(target, &a);
+                const lv_coord_t limit = (720 - KEYBOARD_HEIGHT) - SUGGESTION_SPACE;
+                if (a.y2 > limit) {
+                    lv_obj_align(edit_panel, LV_ALIGN_TOP_MID, 0, 10 - (a.y2 - limit));
+                }
             }
         }
         
@@ -103,11 +120,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     
     playToneI2S(800, 100, true);
     
-    overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(overlay, 1280, 720);
-    lv_obj_set_style_bg_opa(overlay, 80, 0); 
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE); 
-    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+    overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 80, &overlay, false);
 
     edit_panel = lv_obj_create(overlay);
     lv_obj_set_size(edit_panel, 860, 580); 
@@ -124,7 +137,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     lv_obj_set_style_text_font(lv_tabview_get_tab_btns(tv), &lv_font_montserrat_24, 0);
 
     kb = lv_keyboard_create(overlay);
-    lv_obj_set_size(kb, 1280, 350); 
+    lv_obj_set_size(kb, 1280, KEYBOARD_HEIGHT); 
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN); 
     
@@ -143,7 +156,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     active_tabs.push_back(new EditTabDisplay());
     active_tabs.push_back(new EditTabLayout());
     // Den neuen Sensor-Tab dynamisch hinzufügen
-    if (w->getType() == "sensor") {
+    if (w->getKind() == HaWidgetKind::Sensor) {
         active_tabs.push_back(new EditTabSensor());
     }
     active_tabs.push_back(new EditTabAction());
@@ -168,11 +181,7 @@ void HaDialogEdit::handleWidgetDeleteDrop(HAWidget* w) {
     if (_lv_area_intersect(&res, &trash_area, &w_area)) {
         playToneI2S(600, 100, true);
         
-        overlay = lv_obj_create(ViewHomeAssistant::screen);
-        lv_obj_set_size(overlay, 1280, 720);
-        lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(overlay, 200, 0);
-        lv_obj_clear_flag(overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+        overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200, &overlay);
 
         lv_obj_t* panel = lv_obj_create(overlay);
         lv_obj_set_size(panel, 500, 250); lv_obj_center(panel);
@@ -183,9 +192,10 @@ void HaDialogEdit::handleWidgetDeleteDrop(HAWidget* w) {
         
         UIHelper::createButton(panel, 200, 60, LV_ALIGN_BOTTOM_RIGHT, -20, -30, 0xAA0000, "Ja, loeschen", [](lv_event_t* e) {
             HAWidget* wid = (HAWidget*)lv_event_get_user_data(e);
-            if (wid && wid->container && lv_obj_is_valid(wid->container)) {
-                lv_obj_add_flag(wid->container, LV_OBJ_FLAG_HIDDEN);
-            }
+            // Ausblenden UND als geloescht markieren. Das Speichern erkennt
+            // Loeschungen am Merker, nicht mehr am HIDDEN-Flag (das setzen
+            // jetzt auch die Sichtbarkeitsbedingungen).
+            if (wid) wid->markDeleted();
             if (overlay && lv_obj_is_valid(overlay)) {
                 lv_obj_del_async(overlay); 
             }

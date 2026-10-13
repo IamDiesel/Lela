@@ -20,6 +20,7 @@ HAVacuumWidget::HAVacuumWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     lv_obj_center(lbl_play_pause);
     
     lv_obj_add_event_cb(btn_play_pause, [](lv_event_t* e) {
+        if (HAWidget::editModeActive) return;   // im Edit-Modus keine echten Aktionen
         HAVacuumWidget* w = (HAVacuumWidget*)lv_event_get_user_data(e);
         if (w->current_state == "cleaning") {
             HaWebsocketLogic_CallVacuumService(w->getEntityId(), "pause");
@@ -35,6 +36,7 @@ HAVacuumWidget::HAVacuumWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     lv_obj_center(lbl_stop);
     
     lv_obj_add_event_cb(btn_stop, [](lv_event_t* e) {
+        if (HAWidget::editModeActive) return;   // im Edit-Modus keine echten Aktionen
         HAVacuumWidget* w = (HAVacuumWidget*)lv_event_get_user_data(e);
         HaWebsocketLogic_CallVacuumService(w->getEntityId(), "stop");
     }, LV_EVENT_CLICKED, this);
@@ -73,15 +75,8 @@ void HAVacuumWidget::updateState(String state) {
         lv_label_set_text(lbl_play_pause, LV_SYMBOL_PLAY);
     }
 
-    uint32_t c_on_val = 0x1ABC9C; 
-    if (color_on.length() > 0 && color_on.startsWith("#")) {
-        c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
-    }
-    
-    uint32_t c_off_val = 0x555555; 
-    if (color_off.length() > 0 && color_off.startsWith("#")) {
-        c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
-    }
+    const uint32_t c_on_val = colorOnOr(0x1ABC9C);
+    const uint32_t c_off_val = colorOffOr(0x555555);
 
     if (state == "cleaning" || state == "returning" || state == "error") {
         lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); 

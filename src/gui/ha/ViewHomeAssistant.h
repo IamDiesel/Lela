@@ -18,12 +18,20 @@ public:
     static volatile bool pendingHaReload;
     static uint16_t currentActiveTab;
 
-    // FIX: Diese muessen public sein, damit GuiManager und HaDialogAdd sie nutzen koennen!
+    // Von GuiManager (Screenwechsel) und den Dialogen genutzt.
     static void clearWidgets();
     static String generateEntityId(String type, String input);
     
-    // --- FIX: Methode nach public verschoben, damit DialogFolder und DialogAdd sie aufrufen duerfen ---
+    // Uebernimmt das Layout des aktiven Tabs, speichert und baut neu auf.
     static void helper_saveWidgets(); 
+
+    // Uebernimmt das Layout des aktiven Tabs (Positionen, Groessen, Loeschungen,
+    // Aenderungen aus dem Bearbeiten-Dialog) nach HaConfigLogic::dashboards -
+    // OHNE zu speichern oder neu aufzubauen.
+    // Vor jeder Aktion im Edit-Modus aufrufen, die 'dashboards' selbst
+    // veraendert und danach speichert (Tab verschieben, umbenennen, Widget
+    // hinzufuegen, HA-Import). Sonst gehen die bisherigen Aenderungen verloren.
+    static void captureActiveTabLayout();
 
 private:
     static std::vector<HAWidget*> widgets;

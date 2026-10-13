@@ -8,12 +8,19 @@ private:
     lv_obj_t* state_label;
     lv_obj_t* unit_label;
     
-    float current_min;
-    float current_max;
+    // Verlauf der letzten CHART_POINTS Werte, Index 0 = aeltester.
+    // Gespeichert als echte Zahlen (NAN = kein Wert); die Umrechnung in die
+    // int16-Punkte des LVGL-Diagramms passiert erst beim Zeichnen.
+    static const int CHART_POINTS = 50;
+    float history[CHART_POINTS];
+    time_t timestamps[CHART_POINTS];
+    bool is_held[CHART_POINTS];
     bool first_value_received;
-    
-    time_t timestamps[50];
-    bool is_held[50];
+
+    // Faktor Wert -> Diagrammpunkt. lv_coord_t ist int16 (max. 32767): bei
+    // kleinen Werten 10 (eine Nachkommastelle), bei grossen entsprechend
+    // kleiner. Frueher fest 10 - ab 3277 (Watt, Lux, ppm) lief er ueber.
+    float chart_scale;
     lv_timer_t* hold_timer;
     float last_value;
     uint32_t last_update_millis;
@@ -22,6 +29,8 @@ private:
     static void hold_timer_cb(lv_timer_t * t);
     
     void addChartValue(float val, bool held);
+    void resetHistory();
+    void redrawChart();
     void buildUI();
 
 public:

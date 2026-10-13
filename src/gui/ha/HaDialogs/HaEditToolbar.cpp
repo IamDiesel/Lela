@@ -38,6 +38,9 @@ void HaEditToolbar::show() {
         playToneI2S(800, 100, true);
         uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
         if (act_tab > 0 && act_tab < HaConfigLogic::dashboards.size()) {
+            // Erst das aktuelle Layout uebernehmen, sonst verwerfen Save()
+            // und Neuaufbau alle ungespeicherten Aenderungen dieses Tabs.
+            ViewHomeAssistant::captureActiveTabLayout();
             HaConfigLogic::MoveTabLeft(act_tab); 
             HaConfigLogic::Save();
             ViewHomeAssistant::currentActiveTab = act_tab - 1; 
@@ -57,7 +60,8 @@ void HaEditToolbar::show() {
     lv_obj_add_event_cb(btn_tab_right, [](lv_event_t* e) {
         playToneI2S(800, 100, true);
         uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
-        if (act_tab >= 0 && act_tab < HaConfigLogic::dashboards.size() - 1) {
+        if (act_tab + 1 < HaConfigLogic::dashboards.size()) {
+            ViewHomeAssistant::captureActiveTabLayout();   // siehe Tab links
             HaConfigLogic::MoveTabRight(act_tab); 
             HaConfigLogic::Save();
             ViewHomeAssistant::currentActiveTab = act_tab + 1; 
@@ -90,6 +94,11 @@ void HaEditToolbar::show() {
         playToneI2S(800, 100, true);
         uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
         if (act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
+        // Der Import haengt an dashboards[act_tab] an und speichert danach.
+        // Bisherige Aenderungen vorher uebernehmen, sonst gehen sie verloren.
+        ViewHomeAssistant::captureActiveTabLayout();
+        // Der Import uebernimmt Optionen und Grenzen aus der Entitaetsliste.
+        HaWebsocketLogic_RequestEntityCatalog();
         HaDialogImport::showLoadingPopup("Lade Dashboards..."); 
         HaWebsocketLogic_RequestDashboardList(act_tab);
     }, LV_EVENT_CLICKED, NULL);

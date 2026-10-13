@@ -3,6 +3,8 @@
 #include <WiFi.h>
 #include <LittleFS.h>
 #include "ViewHomeAssistant.h"
+#include "HaConfigLogic.h"
+#include "HaWebsocketLogic.h"
 #include <M5Unified.h> // NEU: Für den Display-Zugriff
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
@@ -10,6 +12,12 @@ extern void lvgl_port_unlock(void);
 
 // Globale Variable für den chunk-weisen Datei-Upload
 static File fsUploadFile;
+
+// Ergebnis des letzten Layout-Uploads (/import_ha). Der Upload-Handler setzt
+// es, der Antwort-Handler meldet es danach an den Browser.
+static bool   haImportOk      = false;
+static bool   haImportTooBig  = false;
+static String haImportMessage = "";
 static bool serverRunning = false; // Speichert den Status des Webservers
 
 void WebSetupLogic_Init() {
@@ -176,20 +184,77 @@ void WebSetupLogic_Init() {
         }
     });
 
+    // Upload einer Layout-Sicherung.
+    // Ablauf: Datei in eine Zwischenablage schreiben -> vollstaendig pruefen ->
+    // erst dann Anzeige und Live-Datei ersetzen (HaConfigLogic::ImportFromFile).
+    // Frueher wurde direkt in die Live-Datei geschrieben, ohne Pruefung, und die
+    // Anzeige lud sie nie - das naechste Speichern schrieb den alten Stand zurueck.
+    // Webserver und GUI laufen beide im loopTask; der Austausch von
+    // 'dashboards' hier ist damit nicht nebenlaeufig zur Oberflaeche.
     server.on("/import_ha", HTTP_POST, []() {
-        String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:sans-serif; background:#121212; color:#00A0FF; text-align:center; padding-top:50px;} a{color:#fff; text-decoration:none; padding:10px 20px; background:#2980B9; border-radius:5px; display:inline-block; margin-top:20px;}</style></head><body><h2>Backup erfolgreich geladen!</h2><p style='color:#fff;'>Das Dashboard aktualisiert sich jetzt live auf dem Display.</p><a href='/'>Zurueck zum Setup</a></body></html>";
-        server.send(200, "text/html", html);
+        const bool ok = haImportOk;
+        String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:sans-serif; background:#121212; color:#00A0FF; text-align:center; padding-top:50px;} h2.err{color:#E74C3C;} a{color:#fff; text-decoration:none; padding:10px 20px; background:#2980B9; border-radius:5px; display:inline-block; margin-top:20px;}</style></head><body>";
+        if (ok) {
+            html += "<h2>Backup erfolgreich geladen!</h2><p style='color:#fff;'>Das Dashboard aktualisiert sich jetzt auf dem Display.</p>";
+        } else {
+            html += "<h2 class='err'>Backup nicht uebernommen</h2><p style='color:#fff;'>" + haImportMessage + "</p><p style='color:#aaa;'>Das bisherige Layout bleibt unveraendert.</p>";
+        }
+        html += "<a href='/'>Zurueck zum Setup</a></body></html>";
+        server.send(ok ? 200 : 400, "text/html", html);
     }, []() {
         HTTPUpload& upload = server.upload();
+
         if (upload.status == UPLOAD_FILE_START) {
-            fsUploadFile = LittleFS.open("/ha_config.json", "w");
+            haImportOk = false;
+            haImportTooBig = false;
+            haImportMessage = "Keine Datei empfangen.";
+            if (fsUploadFile) fsUploadFile.close();
+            fsUploadFile = LittleFS.open(HaConfigLogic::UPLOAD_PATH, "w");
+            if (!fsUploadFile) haImportMessage = "Datei konnte auf dem Geraet nicht angelegt werden.";
+
         } else if (upload.status == UPLOAD_FILE_WRITE) {
-            if (fsUploadFile) fsUploadFile.write(upload.buf, upload.currentSize);
-        } else if (upload.status == UPLOAD_FILE_END) {
-            if (fsUploadFile) {
+            if (!fsUploadFile || haImportTooBig) return;
+            // Groessengrenze schon waehrend des Empfangs pruefen, damit eine
+            // falsche (grosse) Datei den Flash nicht volllaufen laesst.
+            if (upload.totalSize > HaConfigLogic::MAX_FILE_BYTES) {
+                haImportTooBig = true;
                 fsUploadFile.close();
-                ViewHomeAssistant::pendingHaReload = true; 
+                LittleFS.remove(HaConfigLogic::UPLOAD_PATH);
+                return;
             }
+            if (fsUploadFile.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                haImportMessage = "Schreibfehler auf dem Geraet (Speicher voll?).";
+                fsUploadFile.close();
+                LittleFS.remove(HaConfigLogic::UPLOAD_PATH);
+            }
+
+        } else if (upload.status == UPLOAD_FILE_END) {
+            if (haImportTooBig) {
+                haImportMessage = "Datei ist zu gross.";
+                return;
+            }
+            if (!fsUploadFile) return;   // Fehler ist bereits in haImportMessage
+            fsUploadFile.close();
+
+            String err;
+            haImportOk = HaConfigLogic::ImportFromFile(HaConfigLogic::UPLOAD_PATH, err);
+            if (haImportOk) {
+                Serial.println("[WebSetup] Layout-Backup uebernommen.");
+                HaWebsocketLogic_UpdateTrackedEntities();
+                // Neuaufbau, falls der HA-Screen gerade offen ist. Sonst baut
+                // ihn der naechste Aufruf von build() ohnehin aus dem neuen Stand.
+                ViewHomeAssistant::pendingHaReload = true;
+            } else {
+                Serial.printf("[WebSetup] Layout-Backup abgelehnt: %s\n", err.c_str());
+                haImportMessage = err;
+            }
+
+        } else if (upload.status == UPLOAD_FILE_ABORTED) {
+            // Verbindung abgebrochen: halbe Datei verwerfen, nichts uebernehmen.
+            if (fsUploadFile) fsUploadFile.close();
+            LittleFS.remove(HaConfigLogic::UPLOAD_PATH);
+            haImportOk = false;
+            haImportMessage = "Upload abgebrochen.";
         }
     });
 
@@ -283,4 +348,4 @@ void WebSetupLogic_Update() {
             serverRunning = false;
         }
     }
-}
+}

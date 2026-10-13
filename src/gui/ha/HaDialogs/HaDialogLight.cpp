@@ -19,17 +19,26 @@ bool HaDialogLight::isActive() {
     return overlay != nullptr;
 }
 
+void HaDialogLight::clearPointers() {
+    overlay = nullptr;
+    slider_bri = nullptr;
+    slider_white = nullptr;
+    slider_temp = nullptr;
+    color_wheel = nullptr;
+    lbl_bri_val = nullptr;
+    lbl_w_val = nullptr;
+    lbl_temp_val = nullptr;
+}
+
+void HaDialogLight::overlay_delete_cb(lv_event_t * e) {
+    // Nur zuruecksetzen, wenn das geloeschte Objekt noch das aktuelle Overlay ist.
+    if (overlay == lv_event_get_target(e)) clearPointers();
+}
+
 void HaDialogLight::hide() {
     if (overlay) {
         lv_obj_del_async(overlay);
-        overlay = nullptr;
-        slider_bri = nullptr;
-        slider_white = nullptr;
-        slider_temp = nullptr;
-        color_wheel = nullptr;
-        lbl_bri_val = nullptr;
-        lbl_w_val = nullptr;
-        lbl_temp_val = nullptr;
+        clearPointers();
     }
 }
 
@@ -38,24 +47,29 @@ void HaDialogLight::close_event_cb(lv_event_t * e) {
     hide();
 }
 
-void HaDialogLight::send_state_cb(lv_event_t * e) {
-    lv_obj_t* target = lv_event_get_target(e);
-    
-    int bri = -1;
-    if (slider_bri != nullptr) {
-        bri = lv_slider_get_value(slider_bri);
-    }
-    
-    if (lbl_bri_val && bri >= 0) {
+void HaDialogLight::update_labels_cb(lv_event_t * e) {
+    if (slider_bri && lbl_bri_val) {
+        const int bri = lv_slider_get_value(slider_bri);
         lv_label_set_text_fmt(lbl_bri_val, "Helligkeit: %d %%", (int)((bri / 255.0f) * 100.0f));
     }
+    if (slider_temp && lbl_temp_val) {
+        const int mired = lv_slider_get_value(slider_temp);
+        lv_label_set_text_fmt(lbl_temp_val, "Farbtemperatur: %d K", 1000000 / mired);
+    }
+    if (slider_white && lbl_w_val) {
+        const int w_val = lv_slider_get_value(slider_white);
+        lv_label_set_text_fmt(lbl_w_val, "Weiss-Kanal: %d %%", (int)((w_val / 255.0f) * 100.0f));
+    }
+}
+
+void HaDialogLight::send_state_cb(lv_event_t * e) {
+    lv_obj_t* target = lv_event_get_target(e);
+    update_labels_cb(e);
+
+    const int bri = slider_bri ? lv_slider_get_value(slider_bri) : -1;
 
     if (target == slider_temp) {
-        int temp = lv_slider_get_value(slider_temp);
-        if (lbl_temp_val) {
-            lv_label_set_text_fmt(lbl_temp_val, "Farbtemperatur: %d Mired", temp);
-        }
-        HaWebsocketLogic_CallLightServiceTemp(current_entity, bri, temp);
+        HaWebsocketLogic_CallLightServiceTemp(current_entity, bri, lv_slider_get_value(slider_temp));
         return;
     }
 
@@ -64,20 +78,20 @@ void HaDialogLight::send_state_cb(lv_event_t * e) {
         lv_color32_t c32; 
         c32.full = lv_color_to32(col); 
         
-        int w_val = -1;
-        if (slider_white != nullptr) {
-            w_val = lv_slider_get_value(slider_white);
-        }
-        
-        if (lbl_w_val && w_val >= 0) {
-            lv_label_set_text_fmt(lbl_w_val, "Weiss-Kanal: %d %%", (int)((w_val / 255.0f) * 100.0f));
-        }
-        
+        const int w_val = slider_white ? lv_slider_get_value(slider_white) : -1;
         HaWebsocketLogic_CallLightService(current_entity, bri, c32.ch.red, c32.ch.green, c32.ch.blue, w_val);
         return;
     }
 
     HaWebsocketLogic_CallLightService(current_entity, bri, -1, -1, -1, -1);
+}
+
+// Legt einen Regler an: Wertanzeige beim Ziehen, Senden beim Loslassen.
+static lv_obj_t* createLightSlider(lv_obj_t* panel, int y, int min_val, int max_val, int val,
+                                   lv_event_cb_t on_change, lv_event_cb_t on_release) {
+    lv_obj_t* s = UIHelper::createSlider(panel, 350, 30, LV_ALIGN_TOP_MID, 0, y, min_val, max_val, val, on_change);
+    lv_obj_add_event_cb(s, on_release, LV_EVENT_RELEASED, NULL);
+    return s;
 }
 
 void HaDialogLight::show(HAWidget* w) {
@@ -108,12 +122,8 @@ void HaDialogLight::show(HAWidget* w) {
         init_temp = 300; 
     }
 
-    overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(overlay, 1280, 720);
-    lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(overlay, 180, 0); 
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+    overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 180);
+    lv_obj_add_event_cb(overlay, overlay_delete_cb, LV_EVENT_DELETE, NULL);
 
     lv_obj_t* panel = lv_obj_create(overlay);
     
@@ -145,14 +155,16 @@ void HaDialogLight::show(HAWidget* w) {
     if (s_bri) {
         lbl_bri_val = UIHelper::createLabel(panel, (String("Helligkeit: ") + String((int)((init_bri / 255.0f) * 100.0f)) + " %").c_str(), &lv_font_montserrat_16, LV_ALIGN_TOP_MID, 0, cur_y, 0xFFFFFF);
         cur_y += 30;
-        slider_bri = UIHelper::createSlider(panel, 350, 30, LV_ALIGN_TOP_MID, 0, cur_y, 1, 255, init_bri, send_state_cb);
+        slider_bri = createLightSlider(panel, cur_y, 1, 255, init_bri, update_labels_cb, send_state_cb);
         cur_y += 60;
     }
 
     if (s_tmp) {
-        lbl_temp_val = UIHelper::createLabel(panel, (String("Farbtemperatur: ") + String(init_temp) + " Mired").c_str(), &lv_font_montserrat_16, LV_ALIGN_TOP_MID, 0, cur_y, 0xFFFFFF);
+        // Regler intern in Mired (153 = 6500 K kalt ... 500 = 2000 K warm),
+        // angezeigt in Kelvin.
+        lbl_temp_val = UIHelper::createLabel(panel, (String("Farbtemperatur: ") + String(1000000 / init_temp) + " K").c_str(), &lv_font_montserrat_16, LV_ALIGN_TOP_MID, 0, cur_y, 0xFFFFFF);
         cur_y += 30;
-        slider_temp = UIHelper::createSlider(panel, 350, 30, LV_ALIGN_TOP_MID, 0, cur_y, 153, 500, init_temp, send_state_cb);
+        slider_temp = createLightSlider(panel, cur_y, 153, 500, init_temp, update_labels_cb, send_state_cb);
         cur_y += 60;
     } else {
         slider_temp = nullptr;
@@ -162,7 +174,7 @@ void HaDialogLight::show(HAWidget* w) {
     if (is_rgbw) {
         lbl_w_val = UIHelper::createLabel(panel, (String("Weiss-Kanal: ") + String((int)((init_w / 255.0f) * 100.0f)) + " %").c_str(), &lv_font_montserrat_16, LV_ALIGN_TOP_MID, 0, cur_y, 0xFFFFFF);
         cur_y += 30;
-        slider_white = UIHelper::createSlider(panel, 350, 30, LV_ALIGN_TOP_MID, 0, cur_y, 0, 255, init_w, send_state_cb);
+        slider_white = createLightSlider(panel, cur_y, 0, 255, init_w, update_labels_cb, send_state_cb);
         cur_y += 60;
     } else { 
         slider_white = nullptr; 
@@ -182,7 +194,7 @@ void HaDialogLight::show(HAWidget* w) {
         // Startmodus: Hue (ohne es hart zu sperren, Longpress in der Mitte ist also noch erlaubt)
         lv_colorwheel_set_mode(color_wheel, LV_COLORWHEEL_MODE_HUE);
 
-        // --- NEU: Buttons fuer direkte Modus-Auswahl ---
+        // Direkte Wahl des Farbrad-Modus
         UIHelper::createButton(panel, 130, 50, LV_ALIGN_TOP_MID, 120, cur_y + 15, 0x444444, "Farbton", [](lv_event_t* e){
             if (color_wheel) {
                 lv_colorwheel_set_mode(color_wheel, LV_COLORWHEEL_MODE_HUE);
@@ -202,10 +214,10 @@ void HaDialogLight::show(HAWidget* w) {
         });
 
         if (init_rgb != 0xFFFFFFFF) {
-            lv_color_t init_col;
-            init_col.ch.red = (init_rgb >> 16) & 0xFF; 
-            init_col.ch.green = (init_rgb >> 8) & 0xFF; 
-            init_col.ch.blue = init_rgb & 0xFF;
+            // lv_color_make statt direktem Schreiben in .ch: bei 16 Bit Farbtiefe
+            // sind die Kanaele 5/6-Bit-Bitfelder, 8-Bit-Werte wurden abgeschnitten
+            // und das Farbrad startete auf einer falschen Farbe.
+            lv_color_t init_col = lv_color_make((init_rgb >> 16) & 0xFF, (init_rgb >> 8) & 0xFF, init_rgb & 0xFF);
             lv_colorwheel_set_rgb(color_wheel, init_col);
         }
         

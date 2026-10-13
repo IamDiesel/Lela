@@ -29,6 +29,6 @@ public:
     static void CallClimateSetTemperature(String entity_id, float temperature);
     static void CallClimateSetHvacMode(String entity_id, String hvac_mode);
 
-    // --- NEU: Service-Methode fuer Texteingaben ---
+    // Texteingabe setzen (text.* bzw. input_text.*)
     static void CallTextSetValue(String entity_id, String value);
 };

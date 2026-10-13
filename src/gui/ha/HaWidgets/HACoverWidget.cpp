@@ -58,12 +58,15 @@ HACoverWidget::HACoverWidget(lv_obj_t* parent, int tab_idx, String type, String 
 void HACoverWidget::updateState(String state) {
     HAWidget::updateState(state);
     
-    // Ruckeln verhindern, wenn der Nutzer gerade zieht
-    if (lv_obj_has_state(slider, LV_STATE_PRESSED)) return;
-    
     int pos = HaWebsocketLogic_GetPosition(entity_id);
     
-    if (pos >= 0 && pos <= 100) {
+    // Slider nicht anfassen, solange der Nutzer zieht oder gerade losgelassen
+    // hat - sonst springt er bis zur ersten Rueckmeldung auf den alten Wert.
+    const bool sliderBusy = lv_obj_has_state(slider, LV_STATE_PRESSED) || remoteUpdatesHeld();
+
+    if (sliderBusy) {
+        // nur Icon-Farbe unten aktualisieren
+    } else if (pos >= 0 && pos <= 100) {
         lv_slider_set_value(slider, pos, LV_ANIM_OFF);
         lv_label_set_text_fmt(pos_label, "%d%%", pos);
     } else {
@@ -92,6 +95,7 @@ void HACoverWidget::slider_event_cb(lv_event_t * e) {
         lv_label_set_text_fmt(w->pos_label, "%d%%", val);
     } 
     else if (code == LV_EVENT_RELEASED) {
+        w->holdRemoteUpdates(3000);
         HaWebsocketLogic_CallCoverPosition(w->getEntityId(), val);
     }
 }

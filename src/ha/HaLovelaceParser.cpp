@@ -4,20 +4,14 @@
 #include "ViewHomeAssistant.h"
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include "HaPsramAllocator.h"
 #include <functional>
 
-class ParserRamAllocator : public ArduinoJson::Allocator {
-public:
-    void* allocate(size_t size) override { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
-    void deallocate(void* pointer) override { heap_caps_free(pointer); }
-    void* reallocate(void* pointer, size_t new_size) override { return heap_caps_realloc(pointer, new_size, MALLOC_CAP_SPIRAM); }
-};
-static ParserRamAllocator parserAlloc;
 
 void HaLovelaceParser::parseDashboardList(const String& payload) {
-    JsonDocument filter(&parserAlloc);
+    JsonDocument filter(HaPsramAlloc());
     filter["result"] = true;
-    JsonDocument doc(&parserAlloc);
+    JsonDocument doc(HaPsramAlloc());
     if (deserializeJson(doc, payload, DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(200))) {
         pendingImportError = true; importErrorMessage = "Fehler beim Lesen\nder Dashboard-Liste."; return;
     }
@@ -40,11 +34,11 @@ void HaLovelaceParser::parseDashboardList(const String& payload) {
 
 void HaLovelaceParser::parseViewsList(const String& payload) {
     availableViewTitles.clear();
-    JsonDocument filter(&parserAlloc);
+    JsonDocument filter(HaPsramAlloc());
     filter["result"]["views"][0]["title"] = true; filter["result"]["views"][0]["path"] = true; filter["result"]["views"][0]["icon"] = true;
     filter["result"]["result"]["views"][0]["title"] = true; filter["result"]["result"]["views"][0]["path"] = true;
     
-    JsonDocument doc(&parserAlloc);
+    JsonDocument doc(HaPsramAlloc());
     if (!deserializeJson(doc, payload, DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(200))) {
         JsonVariant views = doc["result"]["views"];
         if (views.isNull()) views = doc["result"]["result"]["views"];
@@ -68,13 +62,13 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
     int margin = 20, cols = 6, cardW = 160, cardH = 160, i = 0;
     std::vector<String> foundEntities; 
 
-    JsonDocument filter(&parserAlloc);
+    JsonDocument filter(HaPsramAlloc());
     filter["result"]["views"][0]["cards"] = true; 
     filter["result"]["views"][0]["sections"] = true; 
     filter["result"]["result"]["views"][0]["cards"] = true; 
     filter["result"]["result"]["views"][0]["sections"] = true; 
 
-    JsonDocument viewDoc(&parserAlloc);
+    JsonDocument viewDoc(HaPsramAlloc());
     DeserializationError viewErr = deserializeJson(viewDoc, payload, DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(200));
 
     if (viewErr) {
@@ -114,19 +108,19 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         else if (entity.startsWith("input_number.") || entity.startsWith("number.")) {
             widgetType = "number";
         }
-        // --- NEU: Zuweisung fuer Rolllaeden ---
+        // Rolllaeden
         else if (entity.startsWith("cover.")) {
             widgetType = "cover";
             currentCardW = (cardW * 2) + margin; // Doppelte Breite!
             itemsToAdvance = 2; // Nimmt 2 Spalten auf dem Dashboard ein
         }
-        // --- NEU: Zuweisung fuer Klima / Thermostate ---
+        // Klima / Thermostate
         else if (entity.startsWith("climate.")) {
             widgetType = "climate";
             currentCardW = (cardW * 2) + margin; // Doppelte Breite
             itemsToAdvance = 2; 
         }
-        // --- NEU: Text-Eingaben erfassen ---
+        // Texteingaben
         else if (entity.startsWith("text.") || entity.startsWith("input_text.")) {
             widgetType = "text";
             currentCardW = (cardW * 2) + margin; // Doppelte Breite fuer gute Lesbarkeit!
@@ -151,7 +145,7 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         wDef.tap_action_service = ta_srv;
         wDef.tap_action_target = ta_tgt;
 
-        // --- NEU: Backe Metadaten beim Import direkt aus dem globalen Speicher ein ---
+        // Optionen und Grenzen beim Import fest ins Widget uebernehmen (Entitaetsliste bzw. Live-Cache)
         // --- ANPASSUNG: Limits und Optionen auch fuer climate einbacken ---
         if (widgetType == "select" || widgetType == "climate") {
             std::vector<String> opts = HaWebsocketLogic_GetGlobalOptions(entity);

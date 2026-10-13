@@ -1,4 +1,5 @@
 #include "UIHelper.h"
+#include "HaWebsocketLogic.h"
 
 lv_obj_t* UIHelper::createLabel(lv_obj_t* parent, const char* text, const lv_font_t* font, int align, int x, int y, uint32_t color) {
     lv_obj_t* lbl = lv_label_create(parent);
@@ -99,4 +100,46 @@ lv_obj_t* UIHelper::createCheckbox(lv_obj_t* parent, const char* text, const lv_
         lv_obj_add_event_cb(cb_obj, cb, LV_EVENT_VALUE_CHANGED, user_data);
     }
     return cb_obj;
+}
+
+void UIHelper::trackOverlay(lv_obj_t* obj, lv_obj_t** slot) {
+    if (!obj || !slot) return;
+    lv_obj_add_event_cb(obj, [](lv_event_t* e) {
+        lv_obj_t** s = (lv_obj_t**)lv_event_get_user_data(e);
+        if (s && *s == lv_event_get_target(e)) *s = nullptr;
+    }, LV_EVENT_DELETE, slot);
+}
+
+lv_obj_t* UIHelper::createModalOverlay(lv_obj_t* parent, lv_opa_t opa, lv_obj_t** slot, bool black) {
+    lv_obj_t* overlay = lv_obj_create(parent);
+    lv_obj_set_size(overlay, SCREEN_W, SCREEN_H);
+    if (black) lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(overlay, opa, 0);
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    if (slot) trackOverlay(overlay, slot);
+    return overlay;
+}
+
+void UIHelper::showEntitySuggestions(lv_obj_t* roller, lv_obj_t* anchor, const String& query) {
+    if (!roller) return;
+
+    std::vector<String> hits;
+    if (query.length() >= 2) hits = HaWebsocketLogic_SearchEntities(query, 5);
+
+    if (hits.empty()) {
+        lv_obj_add_flag(roller, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    String opts;
+    for (size_t k = 0; k < hits.size(); k++) {
+        if (k > 0) opts += "\n";
+        opts += hits[k];
+    }
+    lv_roller_set_options(roller, opts.c_str(), LV_ROLLER_MODE_NORMAL);
+    if (anchor) lv_obj_align_to(roller, anchor, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
+    lv_obj_clear_flag(roller, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(roller);
 }

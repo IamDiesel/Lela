@@ -1,105 +1,45 @@
+// ==============================================================================
+// HaEntityCache - Implementierung (siehe Header)
+// ==============================================================================
+
 #include "HaEntityCache.h"
 #include "HaWebsocketLogic.h"
 #include "HaConfigLogic.h"
+#include "HaPsramAllocator.h"
+#include <algorithm>
 
-volatile bool HaEntityCache::triggerRestStateFetch = false;
 volatile uint32_t HaEntityCache::cacheVersion = 0;
 
 SemaphoreHandle_t HaEntityCache::mutex = nullptr;
 std::vector<String> HaEntityCache::trackedEntities;
-std::map<String, String> HaEntityCache::globalEntityMap;
+std::map<String, JsonDocument> HaEntityCache::entities;
 
-std::map<String, std::vector<String>> HaEntityCache::globalOptionsMap;
-std::map<String, float> HaEntityCache::globalMinMap;
-std::map<String, float> HaEntityCache::globalMaxMap;
-std::map<String, float> HaEntityCache::globalStepMap;
-
-std::map<String, String> HaEntityCache::states;
-std::map<String, String> HaEntityCache::icons;
-std::map<String, String> HaEntityCache::names;
-std::map<String, int> HaEntityCache::brightness;
-std::map<String, uint32_t> HaEntityCache::rgb;
-std::map<String, int> HaEntityCache::white;
-std::map<String, bool> HaEntityCache::isRGBW;
-std::map<String, String> HaEntityCache::units;
-std::map<String, String> HaEntityCache::mediaTitle;
-std::map<String, String> HaEntityCache::mediaArtist;
-std::map<String, float> HaEntityCache::mediaVolume;
-std::map<String, std::vector<String>> HaEntityCache::sourceList;
-std::map<String, String> HaEntityCache::source;
-std::map<String, int> HaEntityCache::battery;
-std::map<String, String> HaEntityCache::fanSpeed;
-std::map<String, int> HaEntityCache::positionMap;
-
-std::map<String, float> HaEntityCache::currentTemperatureMap;
-std::map<String, float> HaEntityCache::targetTemperatureMap;
-
-std::map<String, bool> HaEntityCache::supportsBrightness;
-std::map<String, bool> HaEntityCache::supportsColor;
-std::map<String, bool> HaEntityCache::supportsTemp;
-std::map<String, int> HaEntityCache::colorTemp;
-std::map<String, std::vector<String>> HaEntityCache::optionsMap;
-std::map<String, float> HaEntityCache::minMap;
-std::map<String, float> HaEntityCache::maxMap;
-std::map<String, float> HaEntityCache::stepMap;
-
+// ------------------------------------------------------------------------------
+// Verwaltung
+// ------------------------------------------------------------------------------
 void HaEntityCache::Init()
 {
-    mutex = xSemaphoreCreateMutex();
+    // Nur einmal anlegen: Init() laeuft bei jedem Betreten des HA-Screens.
+    if (mutex == nullptr)
+        mutex = xSemaphoreCreateMutex();
 }
 
 void HaEntityCache::ClearAll()
 {
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
     {
-        globalEntityMap.clear();
-        globalOptionsMap.clear();
-        globalMinMap.clear();
-        globalMaxMap.clear();
-        globalStepMap.clear();
-
-        states.clear();
-        icons.clear();
-        names.clear();
-        brightness.clear();
-        rgb.clear();
-        white.clear();
-        isRGBW.clear();
-        units.clear();
-        mediaTitle.clear();
-        mediaArtist.clear();
-        mediaVolume.clear();
-        sourceList.clear();
-        source.clear();
-        battery.clear();
-        fanSpeed.clear();
-        positionMap.clear();
-
-        currentTemperatureMap.clear();
-        targetTemperatureMap.clear();
-
-        supportsBrightness.clear();
-        supportsColor.clear();
-        supportsTemp.clear();
-        colorTemp.clear();
-        optionsMap.clear();
-        minMap.clear();
-        maxMap.clear();
-        stepMap.clear();
-
+        entities.clear();
         xSemaphoreGive(mutex);
     }
 }
 
-// --- NEU: Der rekursive Helfer fuer die VIP-Liste ---
+// Sammelt alle Entitaeten eines Widgets: eigene, Bedingungen, Ordnerkinder.
 static void recursivelyAddTrackedEntities(const HAWidgetDef &w, std::vector<String> &tracked)
 {
-    // 1. Die Haupt-Entitaet des Widgets
     if (w.entity_id.length() > 0 && std::find(tracked.begin(), tracked.end(), w.entity_id) == tracked.end())
     {
         tracked.push_back(w.entity_id);
     }
-    // 2. Alle Entitaeten, die in den Bedingungen (Conditions) genutzt werden!
     for (const auto &c : w.conditions)
     {
         if (c.entity.length() > 0 && std::find(tracked.begin(), tracked.end(), c.entity) == tracked.end())
@@ -107,7 +47,6 @@ static void recursivelyAddTrackedEntities(const HAWidgetDef &w, std::vector<Stri
             tracked.push_back(c.entity);
         }
     }
-    // 3. Wenn es ein Ordner ist: Rekursiv in die Kinder abtauchen!
     for (const auto &child : w.children)
     {
         recursivelyAddTrackedEntities(child, tracked);
@@ -119,8 +58,6 @@ void HaEntityCache::UpdateTrackedEntities()
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
     {
         trackedEntities.clear();
-
-        // Geht ueber alle Dashboards und nutzt unseren neuen, rekursiven Helfer
         for (const auto &tab : HaConfigLogic::dashboards)
         {
             for (const auto &w : tab.widgets)
@@ -130,594 +67,326 @@ void HaEntityCache::UpdateTrackedEntities()
         }
         xSemaphoreGive(mutex);
     }
-    triggerRestStateFetch = true;
-}
-// -----------------------------------------------------
-
-void HaEntityCache::ProcessParsedEntity(JsonObject doc)
-{
-    String entity_id = doc["entity_id"].as<String>();
-
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String f_name = "";
-        JsonObject attr = doc["attributes"];
-        if (!attr.isNull() && !attr["friendly_name"].isNull())
-        {
-            f_name = attr["friendly_name"].as<String>();
-        }
-
-        if (entity_id.startsWith("light.") || entity_id.startsWith("switch.") ||
-            entity_id.startsWith("select.") || entity_id.startsWith("input_select.") ||
-            entity_id.startsWith("number.") || entity_id.startsWith("input_number.") ||
-            entity_id.startsWith("text.") || entity_id.startsWith("input_text.") ||
-            entity_id.startsWith("cover.") || entity_id.startsWith("climate.") ||
-            entity_id.startsWith("vacuum.") || entity_id.startsWith("media_player.") ||
-            entity_id.startsWith("button.") || entity_id.startsWith("input_button."))
-        {
-
-            if (globalEntityMap.size() < 300)
-            {
-                globalEntityMap[entity_id] = f_name;
-            }
-        }
-
-        if (!attr.isNull())
-        {
-            if (entity_id.startsWith("select.") || entity_id.startsWith("input_select."))
-            {
-                if (attr["options"].is<JsonArray>())
-                {
-                    globalOptionsMap[entity_id].clear();
-                    for (JsonVariant v : attr["options"].as<JsonArray>())
-                    {
-                        globalOptionsMap[entity_id].push_back(v.as<String>());
-                    }
-                }
-            }
-            else if (entity_id.startsWith("number.") || entity_id.startsWith("input_number.") ||
-                     entity_id.startsWith("text.") || entity_id.startsWith("input_text."))
-            {
-                if (!attr["min"].isNull())
-                    globalMinMap[entity_id] = attr["min"].as<float>();
-                if (!attr["max"].isNull())
-                    globalMaxMap[entity_id] = attr["max"].as<float>();
-                if (!attr["step"].isNull())
-                    globalStepMap[entity_id] = attr["step"].as<float>();
-            }
-            else if (entity_id.startsWith("climate."))
-            {
-                if (attr["hvac_modes"].is<JsonArray>())
-                {
-                    globalOptionsMap[entity_id].clear();
-                    for (JsonVariant v : attr["hvac_modes"].as<JsonArray>())
-                    {
-                        globalOptionsMap[entity_id].push_back(v.as<String>());
-                    }
-                }
-                if (!attr["min_temp"].isNull())
-                    globalMinMap[entity_id] = attr["min_temp"].as<float>();
-                if (!attr["max_temp"].isNull())
-                    globalMaxMap[entity_id] = attr["max_temp"].as<float>();
-                if (!attr["target_temp_step"].isNull())
-                    globalStepMap[entity_id] = attr["target_temp_step"].as<float>();
-            }
-        }
-
-        if (std::find(trackedEntities.begin(), trackedEntities.end(), entity_id) != trackedEntities.end())
-        {
-            states[entity_id] = doc["state"].as<String>();
-
-            if (!attr.isNull())
-            {
-                icons[entity_id] = attr["icon"] | "";
-                names[entity_id] = f_name;
-                units[entity_id] = attr["unit_of_measurement"] | "";
-                battery[entity_id] = attr["battery_level"] | -1;
-                fanSpeed[entity_id] = attr["fan_speed"] | "";
-
-                if (attr["options"].is<JsonArray>())
-                {
-                    optionsMap[entity_id].clear();
-                    for (JsonVariant v : attr["options"].as<JsonArray>())
-                    {
-                        optionsMap[entity_id].push_back(v.as<String>());
-                    }
-                }
-                if (!attr["min"].isNull())
-                    minMap[entity_id] = attr["min"].as<float>();
-                if (!attr["max"].isNull())
-                    maxMap[entity_id] = attr["max"].as<float>();
-                if (!attr["step"].isNull())
-                    stepMap[entity_id] = attr["step"].as<float>();
-
-                if (entity_id.startsWith("light."))
-                {
-                    brightness[entity_id] = attr["brightness"] | -1;
-                    colorTemp[entity_id] = attr["color_temp"] | -1;
-                    bool s_bri = false;
-                    bool s_col = false;
-                    bool s_tmp = false;
-                    isRGBW[entity_id] = false;
-
-                    JsonArray c_m_s = attr["supported_color_modes"];
-                    if (!c_m_s.isNull())
-                    {
-                        for (JsonVariant v : c_m_s)
-                        {
-                            String mode = v.as<String>();
-                            if (mode == "brightness")
-                                s_bri = true;
-                            else if (mode == "color_temp")
-                            {
-                                s_bri = true;
-                                s_tmp = true;
-                            }
-                            else if (mode == "hs" || mode == "rgb" || mode == "xy")
-                            {
-                                s_bri = true;
-                                s_col = true;
-                            }
-                            else if (mode == "rgbw" || mode == "rgbww")
-                            {
-                                s_bri = true;
-                                s_col = true;
-                                isRGBW[entity_id] = true;
-                            }
-                        }
-                    }
-                    supportsBrightness[entity_id] = s_bri;
-                    supportsColor[entity_id] = s_col;
-                    supportsTemp[entity_id] = s_tmp;
-
-                    JsonArray rgb_color = attr["rgb_color"];
-                    if (!rgb_color.isNull() && rgb_color.size() >= 3)
-                    {
-                        uint8_t r = rgb_color[0];
-                        uint8_t g = rgb_color[1];
-                        uint8_t b = rgb_color[2];
-                        rgb[entity_id] = (uint32_t)(r << 16) | (g << 8) | b;
-                    }
-                    else
-                    {
-                        rgb[entity_id] = 0xFFFFFFFF;
-                    }
-                    JsonArray rgbw_color = attr["rgbw_color"];
-                    if (!rgbw_color.isNull() && rgbw_color.size() >= 4)
-                        white[entity_id] = rgbw_color[3];
-                    else
-                        white[entity_id] = -1;
-                }
-                else if (entity_id.startsWith("media_player."))
-                {
-                    mediaTitle[entity_id] = attr["media_title"] | "";
-                    mediaArtist[entity_id] = attr["media_artist"] | "";
-                    mediaVolume[entity_id] = attr["volume_level"] | -1.0f;
-                    source[entity_id] = attr["source"] | "";
-                    JsonArray s_list = attr["source_list"];
-                    sourceList[entity_id].clear();
-                    if (!s_list.isNull())
-                    {
-                        for (JsonVariant v : s_list)
-                            sourceList[entity_id].push_back(v.as<String>());
-                    }
-                }
-                else if (entity_id.startsWith("cover."))
-                {
-                    if (!attr["current_position"].isNull())
-                        positionMap[entity_id] = attr["current_position"].as<int>();
-                    else
-                        positionMap[entity_id] = -1;
-                }
-                else if (entity_id.startsWith("climate."))
-                {
-                    if (!attr["current_temperature"].isNull())
-                        currentTemperatureMap[entity_id] = attr["current_temperature"].as<float>();
-                    else
-                        currentTemperatureMap[entity_id] = -99.0f;
-
-                    if (!attr["temperature"].isNull())
-                        targetTemperatureMap[entity_id] = attr["temperature"].as<float>();
-                    else
-                        targetTemperatureMap[entity_id] = -99.0f;
-
-                    if (attr["hvac_modes"].is<JsonArray>())
-                    {
-                        optionsMap[entity_id].clear();
-                        for (JsonVariant v : attr["hvac_modes"].as<JsonArray>())
-                        {
-                            optionsMap[entity_id].push_back(v.as<String>());
-                        }
-                    }
-                    if (!attr["min_temp"].isNull())
-                        minMap[entity_id] = attr["min_temp"].as<float>();
-                    if (!attr["max_temp"].isNull())
-                        maxMap[entity_id] = attr["max_temp"].as<float>();
-                    if (!attr["target_temp_step"].isNull())
-                        stepMap[entity_id] = attr["target_temp_step"].as<float>();
-                }
-            }
-            cacheVersion++;
-        }
-        xSemaphoreGive(mutex);
-    }
+    // Das Neu-Abonnieren stoesst der Aufrufer an (HaWebsocketLogic_UpdateTrackedEntities
+    // -> HaEntitySync::RequestResync). Der Cache selbst kennt die Verbindung nicht.
 }
 
-std::vector<String> HaEntityCache::SearchEntities(String query, size_t max_results)
+std::vector<String> HaEntityCache::GetTrackedEntities()
 {
-    std::vector<String> results;
-    if (query.length() < 2)
-        return results;
-    query.toLowerCase();
+    // Kopie unter dem Mutex: der loopTask baut die Liste beim Speichern neu auf,
+    // waehrend der HA_WS_Task sie liest.
+    std::vector<String> copy;
     if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
     {
-        for (auto const &pair : globalEntityMap)
-        {
-            String lowerId = pair.first;
-            lowerId.toLowerCase();
-            String lowerName = pair.second;
-            lowerName.toLowerCase();
-            if (lowerId.indexOf(query) != -1 || lowerName.indexOf(query) != -1)
-            {
-                results.push_back(pair.first);
-                if (results.size() >= max_results)
-                    break;
-            }
-        }
+        copy = trackedEntities;
         xSemaphoreGive(mutex);
     }
-    return results;
+    return copy;
 }
 
 uint32_t HaEntityCache::GetCacheVersion() { return cacheVersion; }
-String HaEntityCache::GetState(String entity_id)
+
+void HaEntityCache::touch()
 {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String res = states[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return "";
-}
-String HaEntityCache::GetCachedIcon(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String res = icons[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return "";
-}
-int HaEntityCache::GetBrightness(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        int res = -1;
-        if (brightness.count(entity_id))
-            res = brightness[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -1;
-}
-uint32_t HaEntityCache::GetRGB(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        uint32_t res = 0xFFFFFFFF;
-        if (rgb.count(entity_id))
-            res = rgb[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return 0xFFFFFFFF;
-}
-int HaEntityCache::GetWhite(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        int res = -1;
-        if (white.count(entity_id))
-            res = white[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -1;
-}
-bool HaEntityCache::IsRGBW(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        bool res = false;
-        if (isRGBW.count(entity_id))
-            res = isRGBW[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return false;
-}
-String HaEntityCache::GetUnit(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String res = units[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return "";
-}
-String HaEntityCache::GetMediaTitle(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String res = mediaTitle[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return "";
-}
-String HaEntityCache::GetMediaArtist(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String res = mediaArtist[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return "";
-}
-float HaEntityCache::GetMediaVolume(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        float res = -1.0f;
-        if (mediaVolume.count(entity_id))
-            res = mediaVolume[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -1.0f;
-}
-std::vector<String> HaEntityCache::GetMediaSourceList(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        std::vector<String> res = sourceList[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return std::vector<String>();
-}
-String HaEntityCache::GetMediaSource(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String res = source[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return "";
-}
-bool HaEntityCache::EntityExists(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        bool res = globalEntityMap.find(entity_id) != globalEntityMap.end();
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return false;
-}
-String HaEntityCache::GetEntityName(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String res = names[entity_id];
-        if (res == "" && globalEntityMap.count(entity_id))
-            res = globalEntityMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return "";
-}
-int HaEntityCache::GetBattery(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        int res = -1;
-        if (battery.count(entity_id))
-            res = battery[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -1;
-}
-String HaEntityCache::GetFanSpeed(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        String res = fanSpeed[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return "";
-}
-int HaEntityCache::GetPosition(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        int res = -1;
-        if (positionMap.count(entity_id))
-            res = positionMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -1;
-}
-bool HaEntityCache::SupportsBrightness(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        bool res = false;
-        if (supportsBrightness.count(entity_id))
-            res = supportsBrightness[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return false;
-}
-bool HaEntityCache::SupportsColor(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        bool res = false;
-        if (supportsColor.count(entity_id))
-            res = supportsColor[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return false;
-}
-bool HaEntityCache::SupportsColorTemp(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        bool res = false;
-        if (supportsTemp.count(entity_id))
-            res = supportsTemp[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return false;
-}
-int HaEntityCache::GetColorTemp(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        int res = -1;
-        if (colorTemp.count(entity_id))
-            res = colorTemp[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -1;
-}
-std::vector<String> HaEntityCache::GetOptions(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        std::vector<String> res = optionsMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return std::vector<String>();
-}
-float HaEntityCache::GetMin(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        float res = 0.0f;
-        if (minMap.count(entity_id))
-            res = minMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return 0.0f;
-}
-float HaEntityCache::GetMax(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        float res = 100.0f;
-        if (maxMap.count(entity_id))
-            res = maxMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return 100.0f;
-}
-float HaEntityCache::GetStep(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        float res = 1.0f;
-        if (stepMap.count(entity_id))
-            res = stepMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return 1.0f;
-}
-float HaEntityCache::GetCurrentTemperature(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        float res = -99.0f;
-        if (currentTemperatureMap.count(entity_id))
-            res = currentTemperatureMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -99.0f;
-}
-float HaEntityCache::GetTargetTemperature(String entity_id)
-{
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        float res = -99.0f;
-        if (targetTemperatureMap.count(entity_id))
-            res = targetTemperatureMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return -99.0f;
+    cacheVersion = cacheVersion + 1;   // volatile: kein ++ (C++20-Warnung)
 }
 
-std::vector<String> HaEntityCache::GetGlobalOptions(String entity_id)
+// ------------------------------------------------------------------------------
+// Schreiben (HA_WS_Task)
+// ------------------------------------------------------------------------------
+JsonDocument &HaEntityCache::snapshotLocked(const char *entity_id)
 {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
+    auto it = entities.find(entity_id);
+    if (it == entities.end())
     {
-        std::vector<String> res = globalOptionsMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
+        it = entities.emplace(String(entity_id), JsonDocument(HaPsramAlloc())).first;
     }
-    return std::vector<String>();
+    return it->second;
 }
-float HaEntityCache::GetGlobalMin(String entity_id)
+
+void HaEntityCache::ApplyFull(const char *entity_id, JsonObjectConst entity)
 {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
-    {
-        float res = 0.0f;
-        if (globalMinMap.count(entity_id))
-            res = globalMinMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
-    }
-    return 0.0f;
+    if (!mutex || xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) return;
+
+    JsonDocument &snap = snapshotLocked(entity_id);
+    snap.clear();
+    snap["s"] = entity["s"];
+    if (entity["a"].is<JsonObjectConst>()) snap["a"] = entity["a"];
+    else                                   snap["a"].to<JsonObject>();
+    touch();
+
+    xSemaphoreGive(mutex);
 }
-float HaEntityCache::GetGlobalMax(String entity_id)
+
+void HaEntityCache::ApplyDiff(const char *entity_id, JsonObjectConst change)
 {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
+    if (!mutex || xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) return;
+
+    JsonDocument &snap = snapshotLocked(entity_id);
+    JsonObject attrs = snap["a"].is<JsonObject>() ? snap["a"].as<JsonObject>()
+                                                  : snap["a"].to<JsonObject>();
+
+    // "+": geaenderte Werte (nur die geaenderten Attribute!)
+    JsonObjectConst plus = change["+"];
+    if (!plus.isNull())
     {
-        float res = 100.0f;
-        if (globalMaxMap.count(entity_id))
-            res = globalMaxMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
+        if (!plus["s"].isNull()) snap["s"] = plus["s"];
+        for (JsonPairConst kv : plus["a"].as<JsonObjectConst>())
+        {
+            attrs[kv.key()] = kv.value();
+        }
     }
-    return 100.0f;
+
+    // "-": entfallene Attribute (z. B. brightness, wenn ein Licht ausgeht)
+    for (JsonVariantConst key : change["-"]["a"].as<JsonArrayConst>())
+    {
+        attrs.remove(key.as<const char *>());
+    }
+    touch();
+
+    xSemaphoreGive(mutex);
 }
-float HaEntityCache::GetGlobalStep(String entity_id)
+
+void HaEntityCache::ApplyRemoved(const char *entity_id)
 {
-    if (mutex && xSemaphoreTake(mutex, portMAX_DELAY))
+    if (!mutex || xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) return;
+
+    JsonDocument &snap = snapshotLocked(entity_id);
+    snap.clear();
+    snap["s"] = "unavailable";
+    snap["a"].to<JsonObject>();
+    touch();
+
+    xSemaphoreGive(mutex);
+}
+
+void HaEntityCache::Prune(const std::vector<String> &keep)
+{
+    if (!mutex || xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) return;
+
+    for (auto it = entities.begin(); it != entities.end();)
     {
-        float res = 1.0f;
-        if (globalStepMap.count(entity_id))
-            res = globalStepMap[entity_id];
-        xSemaphoreGive(mutex);
-        return res;
+        if (std::find(keep.begin(), keep.end(), it->first) == keep.end()) it = entities.erase(it);
+        else ++it;
     }
-    return 1.0f;
+
+    xSemaphoreGive(mutex);
+}
+
+// ------------------------------------------------------------------------------
+// Lesen (GUI)
+// ------------------------------------------------------------------------------
+JsonObjectConst HaEntityCache::findLocked(const String &entity_id)
+{
+    auto it = entities.find(entity_id);
+    return (it == entities.end()) ? JsonObjectConst() : it->second.as<JsonObjectConst>();
+}
+
+template <typename T, typename F>
+T HaEntityCache::read(const String &entity_id, T fallback, F fn)
+{
+    if (!mutex || xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) return fallback;
+    JsonObjectConst e = findLocked(entity_id);
+    T res = e.isNull() ? fallback : fn(e, e["a"].as<JsonObjectConst>());
+    xSemaphoreGive(mutex);
+    return res;
+}
+
+// Liest ein JSON-Array von Zeichenketten.
+static std::vector<String> toStringList(JsonVariantConst v)
+{
+    std::vector<String> out;
+    for (JsonVariantConst item : v.as<JsonArrayConst>()) out.push_back(item.as<String>());
+    return out;
+}
+
+// Prueft, ob supported_color_modes einen der Modi enthaelt.
+static bool hasColorMode(JsonObjectConst a, std::initializer_list<const char *> modes)
+{
+    for (JsonVariantConst v : a["supported_color_modes"].as<JsonArrayConst>())
+    {
+        const char *m = v.as<const char *>();
+        if (!m) continue;
+        for (const char *wanted : modes)
+        {
+            if (strcmp(m, wanted) == 0) return true;
+        }
+    }
+    return false;
+}
+
+static bool isClimate(const String &id) { return id.startsWith("climate."); }
+
+// Ganzzahl aus einem Zahlwert, egal ob HA ihn als 80 oder 80.0 liefert.
+static int intOr(JsonVariantConst v, int fallback)
+{
+    return v.is<float>() ? (int)lroundf(v.as<float>()) : fallback;
+}
+
+String HaEntityCache::GetState(String id)
+{
+    return read<String>(id, "", [](JsonObjectConst e, JsonObjectConst) { return String(e["s"] | ""); });
+}
+
+String HaEntityCache::GetCachedIcon(String id)
+{
+    return read<String>(id, "", [](JsonObjectConst, JsonObjectConst a) { return String(a["icon"] | ""); });
+}
+
+String HaEntityCache::GetEntityName(String id)
+{
+    return read<String>(id, "", [](JsonObjectConst, JsonObjectConst a) { return String(a["friendly_name"] | ""); });
+}
+
+String HaEntityCache::GetUnit(String id)
+{
+    return read<String>(id, "", [](JsonObjectConst, JsonObjectConst a) { return String(a["unit_of_measurement"] | ""); });
+}
+
+bool HaEntityCache::EntityExists(String id)
+{
+    // true, sobald HA fuer diese (abonnierte) Entitaet einen Zustand geliefert hat.
+    return read<bool>(id, false, [](JsonObjectConst, JsonObjectConst) { return true; });
+}
+
+// --- Licht ---
+int HaEntityCache::GetBrightness(String id)
+{
+    return read<int>(id, -1, [](JsonObjectConst, JsonObjectConst a) { return intOr(a["brightness"], -1); });
+}
+
+uint32_t HaEntityCache::GetRGB(String id)
+{
+    return read<uint32_t>(id, 0xFFFFFFFF, [](JsonObjectConst, JsonObjectConst a) -> uint32_t {
+        JsonArrayConst c = a["rgb_color"];
+        if (c.isNull() || c.size() < 3) return 0xFFFFFFFF;
+        return ((uint32_t)(uint8_t)(c[0] | 0) << 16) | ((uint32_t)(uint8_t)(c[1] | 0) << 8) | (uint8_t)(c[2] | 0);
+    });
+}
+
+int HaEntityCache::GetWhite(String id)
+{
+    return read<int>(id, -1, [](JsonObjectConst, JsonObjectConst a) -> int {
+        JsonArrayConst c = a["rgbw_color"];
+        return (c.isNull() || c.size() < 4) ? -1 : (int)(c[3] | -1);
+    });
+}
+
+bool HaEntityCache::IsRGBW(String id)
+{
+    return read<bool>(id, false, [](JsonObjectConst, JsonObjectConst a) { return hasColorMode(a, {"rgbw", "rgbww"}); });
+}
+
+bool HaEntityCache::SupportsBrightness(String id)
+{
+    return read<bool>(id, false, [](JsonObjectConst, JsonObjectConst a) {
+        return hasColorMode(a, {"brightness", "color_temp", "hs", "rgb", "xy", "rgbw", "rgbww"});
+    });
+}
+
+bool HaEntityCache::SupportsColor(String id)
+{
+    return read<bool>(id, false, [](JsonObjectConst, JsonObjectConst a) {
+        return hasColorMode(a, {"hs", "rgb", "xy", "rgbw", "rgbww"});
+    });
+}
+
+bool HaEntityCache::SupportsColorTemp(String id)
+{
+    return read<bool>(id, false, [](JsonObjectConst, JsonObjectConst a) { return hasColorMode(a, {"color_temp"}); });
+}
+
+int HaEntityCache::GetColorTemp(String id)
+{
+    // Farbtemperatur in Mired. Neuere HA-Versionen liefern nur noch
+    // color_temp_kelvin - dann wird umgerechnet (Mired = 1e6 / K).
+    return read<int>(id, -1, [](JsonObjectConst, JsonObjectConst a) -> int {
+        const int mired = a["color_temp"] | -1;
+        if (mired > 0) return mired;
+        const int kelvin = a["color_temp_kelvin"] | 0;
+        return (kelvin > 0) ? (1000000 / kelvin) : -1;
+    });
+}
+
+// --- Medien ---
+String HaEntityCache::GetMediaTitle(String id)
+{
+    return read<String>(id, "", [](JsonObjectConst, JsonObjectConst a) { return String(a["media_title"] | ""); });
+}
+
+String HaEntityCache::GetMediaArtist(String id)
+{
+    return read<String>(id, "", [](JsonObjectConst, JsonObjectConst a) { return String(a["media_artist"] | ""); });
+}
+
+float HaEntityCache::GetMediaVolume(String id)
+{
+    return read<float>(id, -1.0f, [](JsonObjectConst, JsonObjectConst a) { return (float)(a["volume_level"] | -1.0f); });
+}
+
+std::vector<String> HaEntityCache::GetMediaSourceList(String id)
+{
+    return read<std::vector<String>>(id, {}, [](JsonObjectConst, JsonObjectConst a) { return toStringList(a["source_list"]); });
+}
+
+String HaEntityCache::GetMediaSource(String id)
+{
+    return read<String>(id, "", [](JsonObjectConst, JsonObjectConst a) { return String(a["source"] | ""); });
+}
+
+// --- Sauger / Rollladen ---
+int HaEntityCache::GetBattery(String id)
+{
+    return read<int>(id, -1, [](JsonObjectConst, JsonObjectConst a) { return intOr(a["battery_level"], -1); });
+}
+
+String HaEntityCache::GetFanSpeed(String id)
+{
+    return read<String>(id, "", [](JsonObjectConst, JsonObjectConst a) { return String(a["fan_speed"] | ""); });
+}
+
+std::vector<String> HaEntityCache::GetFanSpeedList(String id)
+{
+    return read<std::vector<String>>(id, {}, [](JsonObjectConst, JsonObjectConst a) { return toStringList(a["fan_speed_list"]); });
+}
+
+int HaEntityCache::GetPosition(String id)
+{
+    return read<int>(id, -1, [](JsonObjectConst, JsonObjectConst a) { return intOr(a["current_position"], -1); });
+}
+
+// --- Klima ---
+float HaEntityCache::GetCurrentTemperature(String id)
+{
+    return read<float>(id, -99.0f, [](JsonObjectConst, JsonObjectConst a) { return (float)(a["current_temperature"] | -99.0f); });
+}
+
+float HaEntityCache::GetTargetTemperature(String id)
+{
+    return read<float>(id, -99.0f, [](JsonObjectConst, JsonObjectConst a) { return (float)(a["temperature"] | -99.0f); });
+}
+
+// --- Optionen und Grenzen ---
+std::vector<String> HaEntityCache::GetOptions(String id)
+{
+    const char *key = isClimate(id) ? "hvac_modes" : "options";
+    return read<std::vector<String>>(id, {}, [key](JsonObjectConst, JsonObjectConst a) { return toStringList(a[key]); });
+}
+
+float HaEntityCache::GetMin(String id)
+{
+    const char *key = isClimate(id) ? "min_temp" : "min";
+    return read<float>(id, 0.0f, [key](JsonObjectConst, JsonObjectConst a) { return (float)(a[key] | 0.0f); });
+}
+
+float HaEntityCache::GetMax(String id)
+{
+    const char *key = isClimate(id) ? "max_temp" : "max";
+    return read<float>(id, 100.0f, [key](JsonObjectConst, JsonObjectConst a) { return (float)(a[key] | 100.0f); });
+}
+
+float HaEntityCache::GetStep(String id)
+{
+    const char *key = isClimate(id) ? "target_temp_step" : "step";
+    return read<float>(id, 1.0f, [key](JsonObjectConst, JsonObjectConst a) { return (float)(a[key] | 1.0f); });
 }

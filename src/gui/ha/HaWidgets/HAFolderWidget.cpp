@@ -27,12 +27,13 @@ HAFolderWidget::~HAFolderWidget() {
 }
 
 void HAFolderWidget::addChild(HAWidget* widget, const HAWidgetDef& def) {
+    widget->setInFolder(true);   // Sichtbarkeit steuert ab jetzt der Ordner
     folder_children.push_back({widget, def});
     lv_obj_add_flag(widget->getContainer(), LV_OBJ_FLAG_HIDDEN);
 }
 
 void HAFolderWidget::removeChild(HAWidget* widget) {
-    // FIX: std::find_if verhindert das gefaehrliche Verschieben (move) im Speicher, das zum Crash fuehrte!
+    // Kind suchen und entfernen; der Ordner besitzt seine Kinder (delete hier).
     auto it = std::find_if(folder_children.begin(), folder_children.end(), [widget](const FolderChildInfo& info) {
         return info.widget == widget;
     });
@@ -53,38 +54,11 @@ std::vector<HAWidgetDef> HAFolderWidget::getChildrenDefs() {
     return res;
 }
 
-bool HAFolderWidget::evaluate(const HAWidgetDef& def) {
-    if (def.conditions.empty()) return true; 
-    
-    bool result = (def.conditions_type == "AND"); 
-    
-    for (const auto& c : def.conditions) {
-        String state = HaWebsocketLogic_GetState(c.entity);
-        bool cond_met = false;
-        
-        if (c.op == "==") cond_met = (state == c.value);
-        else if (c.op == "!=") cond_met = (state != c.value);
-        else {
-            float s_f = state.toFloat();
-            float v_f = c.value.toFloat();
-            if (c.op == ">") cond_met = (s_f > v_f);
-            else if (c.op == "<") cond_met = (s_f < v_f);
-            else if (c.op == ">=") cond_met = (s_f >= v_f);
-            else if (c.op == "<=") cond_met = (s_f <= v_f);
-        }
-        
-        if (def.conditions_type == "AND") {
-            result = result && cond_met;
-            if (!result) break; 
-        } else {
-            result = result || cond_met;
-            if (result) break; 
-        }
-    }
-    return result;
-}
-
 void HAFolderWidget::checkConditions() {
+    // Eigene Bedingungen des Ordners zuerst. Ist er selbst ausgeblendet,
+    // bleibt alles darin unsichtbar - die Kinder muessen nicht geprueft werden.
+    if (!applyOwnVisibility()) return;
+
     if (HAWidget::editModeActive) {
         lv_obj_clear_flag(placeholder_lbl, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_bg_opa(container, 50, 0); 
@@ -101,7 +75,7 @@ void HAFolderWidget::checkConditions() {
     
     bool found_true = false;
     for (auto& c : folder_children) {
-        if (!found_true && evaluate(c.def)) {
+        if (!found_true && HAWidget::evaluateConditions(c.widget->getConditionsType(), c.widget->getConditions())) {
             lv_obj_clear_flag(c.widget->getContainer(), LV_OBJ_FLAG_HIDDEN);
             c.widget->checkConditions(); 
             found_true = true; 

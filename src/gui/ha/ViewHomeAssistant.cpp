@@ -16,6 +16,7 @@
 #include "HaDialogTab.h"
 #include "HaEditToolbar.h"
 #include "HaDialogFolder.h" 
+#include "HeapMonitor.h"
 
 #include <algorithm> 
 
@@ -29,6 +30,9 @@ std::vector<HAWidget*> ViewHomeAssistant::widgets;
 std::vector<lv_obj_t*> ViewHomeAssistant::tab_pages; 
 
 volatile bool ViewHomeAssistant::pendingHaReload = false;
+
+// Erzwingt nach build() einen sofortigen Abgleich aller Widgets mit dem Cache.
+static bool forceWidgetRefresh = false;
 uint16_t ViewHomeAssistant::currentActiveTab = 0;
 
 static lv_obj_t* btn_back = nullptr;
@@ -36,10 +40,9 @@ static lv_obj_t* btn_back = nullptr;
 void ViewHomeAssistant::helper_loadWidgets() {
     clearWidgets();
     
-    // --- DER BOOT-PROFIT ---
-    // Da unser neuer Task beim Booten die Datei schon eingelesen hat,
-    // ist '.empty()' hier false. Der langsame Flash-Speicher wird ignoriert!
-    // Die UI greift in 0 Millisekunden auf die PSRAM-Daten zu.
+    // Die Konfiguration liest normalerweise schon der Preload-Task beim Start
+    // (HaConfigLogic::Init). Nur falls das (noch) nicht geschehen ist, hier
+    // nachladen.
     if (HaConfigLogic::dashboards.empty()) {
         HaConfigLogic::Load();
     }
@@ -65,14 +68,18 @@ void ViewHomeAssistant::helper_loadWidgets() {
     lv_obj_add_event_cb(tabview, tabview_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
-void ViewHomeAssistant::helper_saveWidgets() {
+void ViewHomeAssistant::captureActiveTabLayout() {
+    // Ohne Tabs gibt es nichts zu uebernehmen. Load() stellt zwar mindestens
+    // einen Tab sicher, der Zugriff auf dashboards[0] bleibt trotzdem geschuetzt.
+    if (HaConfigLogic::dashboards.empty() || !tabview) return;
+
     uint16_t act_tab = lv_tabview_get_tab_act(tabview);
-    
     if (act_tab >= HaConfigLogic::dashboards.size()) {
         act_tab = 0;
     }
     currentActiveTab = act_tab;
     
+    // Reihenfolge = Zeichenreihenfolge in LVGL (move_foreground beim Ziehen).
     std::stable_sort(widgets.begin(), widgets.end(), [](HAWidget* a, HAWidget* b) {
         int idxA = (a && a->container && lv_obj_is_valid(a->container)) ? lv_obj_get_index(a->container) : 999999;
         int idxB = (b && b->container && lv_obj_is_valid(b->container)) ? lv_obj_get_index(b->container) : 999999;
@@ -83,7 +90,10 @@ void ViewHomeAssistant::helper_saveWidgets() {
     HaConfigLogic::dashboards[act_tab].widgets.reserve(widgets.size());
 
     for (HAWidget* w : widgets) {
-        if (!w || !w->container || !lv_obj_is_valid(w->container) || lv_obj_has_flag(w->container, LV_OBJ_FLAG_HIDDEN)) {
+        // Geloeschte Widgets ueberspringen. Bewusst NICHT am HIDDEN-Flag
+        // erkennen: ausgeblendet ist auch ein Widget, dessen Bedingung gerade
+        // nicht erfuellt ist - es wuerde sonst beim Speichern verschwinden.
+        if (!w || !w->container || !lv_obj_is_valid(w->container) || w->isMarkedDeleted()) {
             continue; 
         }
         
@@ -92,7 +102,10 @@ void ViewHomeAssistant::helper_saveWidgets() {
             HaConfigLogic::dashboards[act_tab].widgets.push_back(def);
         }
     }
-    
+}
+
+void ViewHomeAssistant::helper_saveWidgets() {
+    captureActiveTabLayout();
     HaConfigLogic::Save();
     HaWebsocketLogic_UpdateTrackedEntities(); 
     pendingHaReload = true;
@@ -148,9 +161,13 @@ void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
 void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
     playToneI2S(800, 100, true); 
     HAWidget::editModeActive = !HAWidget::editModeActive;
+    HAWidget::applyEditModeScrollChain();
     
     if (HAWidget::editModeActive) {
         HaEditToolbar::show();
+        // Widgets mit nicht erfuellter Bedingung sofort einblenden, damit
+        // sie bearbeitet werden koennen (nicht erst beim naechsten 500-ms-Takt).
+        HAWidget::checkAllConditions();
     } else {
         HaEditToolbar::hide();
         helper_saveWidgets();
@@ -166,12 +183,16 @@ lv_obj_t* ViewHomeAssistant::build() {
     HaDialogMedia::resetState(); 
     HaDialogTab::resetState();
     HaEditToolbar::resetState();
-    HaDialogFolder::resetState(); 
-    
-    if (HaColorPicker::isActive()) HaColorPicker::hide();
-    if (HaDialogLight::isActive()) HaDialogLight::hide();
+
+    // Ordner-Dialog, Licht-Dialog, Farbwaehler, Sauger-Dialog und
+    // Text-Tastatur werden hier bewusst NICHT geschlossen.
+    // Ihre Overlays haengen am alten Screen und werden mit ihm geloescht -
+    // bei lv_scr_load_anim(..., 0, 0, true) sogar synchron. Ein zusaetzliches
+    // hide()/del_async() traf frueher bereits freigegebenen Speicher.
+    // Die Zeiger setzen die LV_EVENT_DELETE-Handler der Overlays zurueck.
 
     pendingHaReload = false; 
+    forceWidgetRefresh = true;
     HAWidget::editModeActive = false; 
     
     HaWebsocketLogic_Start();
@@ -239,8 +260,22 @@ lv_obj_t* ViewHomeAssistant::build() {
 }
 
 void ViewHomeAssistant::update() {
+    // Antworten fuer Import und Medien-Browser, vom HA_WS_Task abgelegt, hier
+    // im loopTask auswerten (sie veraendern Daten, die die Oberflaeche liest).
+    HaWebsocketLogic_ProcessPendingResponses();
+
+    // Diagnose: Stand des internen RAMs (siehe HeapMonitor.h).
+    HeapMonitor_Update();
     HaDialogImport::checkPendingEvents();
     HaDialogMedia::update();
+
+    // Entitaetsliste neu geladen -> offene Hinzufuegen-Vorschau aktualisieren.
+    static uint32_t lastCatalogVersion = 0;
+    const uint32_t catalogVersion = HaEntityCatalog::GetVersion();
+    if (catalogVersion != lastCatalogVersion) {
+        lastCatalogVersion = catalogVersion;
+        HaDialogAdd::onCatalogUpdated();
+    }
     
     static uint32_t lastConditionCheck = 0;
     if (millis() - lastConditionCheck > 500) {
@@ -279,15 +314,32 @@ void ViewHomeAssistant::update() {
     static uint32_t localCacheVersion = 0;
     uint32_t currentVersion = HaEntityCache::GetCacheVersion();
 
-    if (currentVersion != localCacheVersion && (millis() - lastWidgetUpdate > 100)) {
+    // Nach einem Neuaufbau sofort alle Widgets fuellen, nicht erst bei der
+    // naechsten Zustandsaenderung - sonst zeigten alle kurz "unknown".
+    const bool force = forceWidgetRefresh;
+
+    if (force || (currentVersion != localCacheVersion && (millis() - lastWidgetUpdate > 100))) {
+        forceWidgetRefresh = false;
         localCacheVersion = currentVersion;
         lastWidgetUpdate = millis();
         
         for (HAWidget* w : widgets) {
             String state = HaWebsocketLogic_GetState(w->getEntityId());
-            // --- FIX: Erlaube auch dem Ordner, Updates anzunehmen, um sie weiterzureichen! ---
-            if (state.length() > 0 || w->getType() == "folder") {
+            // Ordner haben keinen eigenen Zustand, reichen das Update aber an ihre Kinder weiter.
+            if (state.length() > 0 || w->getKind() == HaWidgetKind::Folder) {
                 w->updateState(state);
+            }
+        }
+    }
+
+    // Nach einer Bedienung waren Serverwerte kurz gesperrt. Ist die Sperre
+    // abgelaufen, den aktuellen Stand einmal nachziehen.
+    static uint32_t lastHoldCheck = 0;
+    if (millis() - lastHoldCheck > 250) {
+        lastHoldCheck = millis();
+        for (HAWidget* w : widgets) {
+            if (w->refreshAfterHoldDue()) {
+                w->updateState(HaWebsocketLogic_GetState(w->getEntityId()));
             }
         }
     }

@@ -1,6 +1,15 @@
 #pragma once
 #include "HAWidgetBase.h"
 
+// Saugroboter: Status-Icon plus Start/Pause- und Stop-Knopf.
+//
+// Hinweis zur Konfiguration: Die Geometrie der beiden Knoepfe wird in den
+// Diagramm-Feldern gespeichert (chart_w_pct/chart_h_pct = Knopfbreite/-hoehe
+// in Pixeln, chart_x_ofs = Abstand zwischen den Knoepfen, chart_y_ofs =
+// Abstand zum unteren Rand). Ein Diagramm hat dieses Widget nicht. Die
+// Zweckentfremdung bleibt aus Kompatibilitaet mit gespeicherten
+// Konfigurationen bestehen; der Bearbeiten-Dialog setzt die Werte ueber
+// setChartConfig().
 class HAVacuumWidget : public HAWidget {
 private:
     lv_obj_t* btn_play_pause;

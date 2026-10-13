@@ -5,7 +5,7 @@
 void EditTabSensor::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) {
     this->current_widget = w;
 
-    if (w->getType() != "sensor") {
+    if (w->getKind() != HaWidgetKind::Sensor) {
         UIHelper::createLabel(parent, "Keine Diagramm-Optionen\nfür diesen Widget-Typ verfügbar.", 
                               &lv_font_montserrat_20, LV_ALIGN_CENTER, 0, 0);
         return;

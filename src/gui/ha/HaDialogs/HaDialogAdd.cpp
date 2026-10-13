@@ -1,5 +1,6 @@
 #include "HaDialogAdd.h"
 #include "ViewHomeAssistant.h"
+#include "UIHelper.h"
 #include "HaWebsocketLogic.h"
 #include "HaConfigLogic.h"
 #include "SharedData.h"
@@ -50,11 +51,17 @@ static void updateAddWidgetPreview() {
     }
 
     String e_id = ViewHomeAssistant::generateEntityId(e_type, input_txt);
-    bool exists = HaEntityCache::EntityExists(e_id); 
-    String ha_name = HaEntityCache::GetEntityName(e_id);
+    bool exists = HaWebsocketLogic_EntityExists(e_id); 
+    String ha_name = HaWebsocketLogic_GetEntityName(e_id);
     
     String previewText = "ID wird: " + e_id + "\n";
-    if (exists) {
+    if (!exists && !HaEntityCatalog::IsReady()) {
+        // Liste aller Entitaeten noch nicht da - kein "Unbekannt" anzeigen,
+        // das waere irrefuehrend. Die Vorschau aktualisiert sich nach dem Laden.
+        previewText += HaEntityCatalog::IsLoading() ? "Status: Entitaetsliste wird geladen ..."
+                                                     : "Status: Entitaetsliste nicht verfuegbar (HA getrennt?)";
+        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0xAAAAAA), 0);
+    } else if (exists) {
         previewText += "Status: Gefunden in HA! " LV_SYMBOL_OK;
         if (ha_name.length() > 0) previewText += " (" + ha_name + ")";
         lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0x2ECC71), 0); 
@@ -65,20 +72,24 @@ static void updateAddWidgetPreview() {
     lv_label_set_text(lbl_preview, previewText.c_str());
 }
 
+void HaDialogAdd::onCatalogUpdated() {
+    // Eine offene Vorschau zeigte evtl. noch "wird geladen".
+    if (add_widget_overlay) updateAddWidgetPreview();
+}
+
 void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
     if (add_widget_overlay != nullptr) return; 
     
     target_folder = folder; 
+
+    // Liste aller Entitaeten fuer Suche und Vorschau anfordern (laedt nur,
+    // wenn noch keine aktuelle da ist).
+    HaWebsocketLogic_RequestEntityCatalog();
     
-    add_widget_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(add_widget_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(add_widget_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(add_widget_overlay, 220, 0);
-    lv_obj_add_flag(add_widget_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(add_widget_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    add_widget_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 220, &add_widget_overlay);
 
     lv_obj_t* panel = lv_obj_create(add_widget_overlay);
-    lv_obj_set_size(panel, 860, 480); // <--- DEUTLICH BREITER ---
+    lv_obj_set_size(panel, 860, 480);
     lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
     lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
@@ -105,7 +116,7 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
         "sensor\nbinary_sensor\nweather\nperson\ndevice_tracker\n"
         "folder" 
     );
-    lv_obj_set_width(dd_widget_type, 600); // <--- VOLLE BREITE AUSNUTZEN ---
+    lv_obj_set_width(dd_widget_type, 600);
     lv_obj_set_style_text_font(dd_widget_type, &lv_font_montserrat_24, 0);
     lv_obj_align(dd_widget_type, LV_ALIGN_TOP_MID, 0, 60);
 
@@ -133,7 +144,15 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
         lv_roller_get_selected_str(roller_search, buf, sizeof(buf));
         String selected = String(buf);
         int dotIdx = selected.indexOf('.');
-        if (dotIdx != -1) selected = selected.substring(dotIdx + 1);
+        if (dotIdx != -1) {
+            // Typauswahl auf die Domain der gewaehlten Entitaet stellen. Sonst
+            // wuerde aus "sensor.temp_wz" bei eingestelltem "light" die ID
+            // "light.temp_wz" erzeugt. Unbekannte Domains lassen die Auswahl stehen.
+            const String domain = selected.substring(0, dotIdx);
+            const int32_t idx = lv_dropdown_get_option_index(dd_widget_type, domain.c_str());
+            if (idx >= 0) lv_dropdown_set_selected(dd_widget_type, (uint16_t)idx);
+            selected = selected.substring(dotIdx + 1);
+        }
         lv_textarea_set_text(ta_widget_entity, selected.c_str());
         lv_obj_add_flag(roller_search, LV_OBJ_FLAG_HIDDEN); 
         updateAddWidgetPreview();
@@ -155,24 +174,7 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
         
         if(code == LV_EVENT_VALUE_CHANGED) {
             updateAddWidgetPreview();
-            String txt = lv_textarea_get_text(ta_widget_entity);
-            if (txt.length() >= 2 && roller_search) {
-                std::vector<String> hits = HaEntityCache::SearchEntities(txt, 5);
-                if (hits.size() > 0) {
-                    String opts = "";
-                    for (size_t k = 0; k < hits.size(); k++) {
-                        opts += hits[k];
-                        if (k < hits.size() - 1) opts += "\n";
-                    }
-                    lv_roller_set_options(roller_search, opts.c_str(), LV_ROLLER_MODE_NORMAL);
-                    lv_obj_clear_flag(roller_search, LV_OBJ_FLAG_HIDDEN);
-                    lv_obj_move_foreground(roller_search); 
-                } else {
-                    lv_obj_add_flag(roller_search, LV_OBJ_FLAG_HIDDEN);
-                }
-            } else if (roller_search) {
-                lv_obj_add_flag(roller_search, LV_OBJ_FLAG_HIDDEN);
-            }
+            UIHelper::showEntitySuggestions(roller_search, nullptr, String(lv_textarea_get_text(ta_widget_entity)));
         }
     }, LV_EVENT_ALL, kb);
     
@@ -198,11 +200,11 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
             
             String e_id = ViewHomeAssistant::generateEntityId(e_type, input_txt);
             String friendly_name = input_txt;
-            String ha_name = HaEntityCache::GetEntityName(e_id); 
+            String ha_name = HaWebsocketLogic_GetEntityName(e_id); 
             if (ha_name.length() > 0) friendly_name = ha_name;
             else if (input_txt.indexOf('.') != -1) friendly_name = formatEntityName(e_id, "");
             
-            String cached_icon = HaEntityCache::GetCachedIcon(e_id); 
+            String cached_icon = HaWebsocketLogic_GetEntityIcon(e_id); 
             
             String w_type = "light";
             if (e_type == "sensor" || e_type == "binary_sensor" || e_type == "weather" || e_type == "person" || e_type == "device_tracker") w_type = "sensor";
@@ -215,8 +217,9 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
             else if (e_type == "number" || e_type == "input_number") w_type = "number";
             else if (e_type == "text" || e_type == "input_text") w_type = "text";
             else if (e_type == "folder") w_type = "folder"; 
+            const HaWidgetKind kind = HaWidgetKindFromString(w_type);
             
-            if (input_txt.length() > 0 || w_type == "folder") {
+            if (input_txt.length() > 0 || kind == HaWidgetKind::Folder) {
                 uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
                 if(act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
                 ViewHomeAssistant::currentActiveTab = act_tab;
@@ -226,16 +229,17 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
                 def.type = w_type;
                 def.x = 20; def.y = 20; def.w = 160; def.h = 105;
                 def.name = friendly_name; 
-                if (w_type == "folder" && def.name == "") def.name = "Neuer Ordner";
+                if (kind == HaWidgetKind::Folder && def.name == "") def.name = "Neuer Ordner";
                 def.mdi_icon = cached_icon; 
                 def.color_on = "";
                 def.color_off = "";
 
-                if (w_type == "cover" || w_type == "vacuum" || w_type == "climate" || w_type == "text" || w_type == "folder") {
+                if (kind == HaWidgetKind::Cover || kind == HaWidgetKind::Vacuum || kind == HaWidgetKind::Climate ||
+                    kind == HaWidgetKind::Text || kind == HaWidgetKind::Folder) {
                     def.w = 340; 
                 }
                 
-                if (w_type == "vacuum") {
+                if (kind == HaWidgetKind::Vacuum) {
                     def.show_chart = false;
                     def.chart_w_pct = 60;  
                     def.chart_h_pct = 40;   
@@ -243,8 +247,8 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
                     def.chart_y_ofs = 10;   
                 }
 
-                if (w_type == "select" || w_type == "climate") {
-                    std::vector<String> opts = HaEntityCache::GetGlobalOptions(e_id);
+                if (kind == HaWidgetKind::Select || kind == HaWidgetKind::Climate) {
+                    std::vector<String> opts = HaWebsocketLogic_GetGlobalOptions(e_id);
                     String opt_str = "";
                     for (size_t k = 0; k < opts.size(); k++) {
                         opt_str += opts[k];
@@ -253,10 +257,10 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
                     def.select_options = opt_str;
                 } 
                 
-                if (w_type == "number" || w_type == "climate" || w_type == "text") {
-                    def.slider_min = HaEntityCache::GetGlobalMin(e_id);
-                    def.slider_max = HaEntityCache::GetGlobalMax(e_id);
-                    def.slider_step = HaEntityCache::GetGlobalStep(e_id);
+                if (kind == HaWidgetKind::Number || kind == HaWidgetKind::Climate || kind == HaWidgetKind::Text) {
+                    def.slider_min = HaWebsocketLogic_GetGlobalMin(e_id);
+                    def.slider_max = HaWebsocketLogic_GetGlobalMax(e_id);
+                    def.slider_step = HaWebsocketLogic_GetGlobalStep(e_id);
                 }
                 
                 if (target_folder) {
@@ -281,6 +285,10 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
                     
                     return; 
                 } else {
+                    // Ungespeicherte Aenderungen am Layout zuerst uebernehmen.
+                    // captureActiveTabLayout() baut dashboards[act_tab] aus den
+                    // Widgets neu auf - das neue Widget kommt danach dazu.
+                    ViewHomeAssistant::captureActiveTabLayout();
                     HaConfigLogic::dashboards[act_tab].widgets.push_back(def);
                     HaConfigLogic::Save();
                     HaWebsocketLogic_UpdateTrackedEntities();

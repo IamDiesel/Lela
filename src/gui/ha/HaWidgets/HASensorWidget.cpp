@@ -1,6 +1,11 @@
 #include "HASensorWidget.h"
 #include "HaWebsocketLogic.h"
 #include "MdiMapper.h"
+#include <math.h>
+#include <string.h>
+
+// Anzahl beschrifteter Zeitmarken auf der X-Achse.
+static const int X_MAJOR_TICKS = 5;
 
 HASensorWidget::HASensorWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off, bool showChart, int chart_w, int chart_h, int chart_x, int chart_y, String c_min, String c_max)
     : HAWidget(parent, tab_idx, type, entity, x, y, w, h, name, mdi, c_on, c_off) {
@@ -18,19 +23,10 @@ HASensorWidget::HASensorWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     this->unit_label = nullptr; 
     this->ser = nullptr;
     
-    this->current_min = 0; 
-    this->current_max = 100; 
-    this->first_value_received = false;
+    this->chart_scale = 10.0f;
     this->last_value = 0; 
     this->last_update_millis = millis();
-    
-    time_t now; 
-    time(&now);
-    
-    for (int i = 0; i < 50; i++) { 
-        timestamps[i] = now - ((49 - i) * 10); 
-        is_held[i] = true; 
-    }
+    resetHistory();
     
     hold_timer = lv_timer_create(hold_timer_cb, 10000, this);
     
@@ -59,8 +55,8 @@ void HASensorWidget::buildUI() {
         
         lv_chart_set_type(chart, LV_CHART_TYPE_LINE); 
         lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
-        lv_chart_set_point_count(chart, 50); 
-        lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 5, 2, 5, 1, true, 25);
+        lv_chart_set_point_count(chart, CHART_POINTS); 
+        lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 5, 2, X_MAJOR_TICKS, 1, true, 25);
         lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y, 5, 2, 4, 1, true, 35);
         
         lv_obj_set_style_bg_opa(chart, 0, LV_PART_MAIN); 
@@ -138,15 +134,7 @@ void HASensorWidget::setChartConfig(bool show, int w_p, int h_p, int x_ofs, int 
         unit_label = nullptr; 
     }
     
-    first_value_received = false; 
-    time_t now; 
-    time(&now);
-    
-    for (int i = 0; i < 50; i++) { 
-        timestamps[i] = now - ((49 - i) * 10); 
-        is_held[i] = true; 
-    }
-    
+    resetHistory();
     buildUI(); 
     
     String old = current_state; 
@@ -167,47 +155,79 @@ void HASensorWidget::hold_timer_cb(lv_timer_t * t) {
     }
 }
 
+void HASensorWidget::resetHistory() {
+    first_value_received = false;
+    time_t now;
+    time(&now);
+    for (int i = 0; i < CHART_POINTS; i++) {
+        history[i] = NAN;
+        timestamps[i] = now - ((CHART_POINTS - 1 - i) * 10);
+        is_held[i] = true;
+    }
+}
+
 void HASensorWidget::addChartValue(float val, bool held) {
     if (!show_chart || !chart || !ser) {
         return;
     }
     
-    for (int i = 0; i < 49; i++) { 
-        timestamps[i] = timestamps[i+1]; 
-        is_held[i] = is_held[i+1]; 
-    }
-    
+    // Verlauf um einen Punkt nach vorne schieben, neuer Wert ans Ende.
+    memmove(&history[0],    &history[1],    (CHART_POINTS - 1) * sizeof(history[0]));
+    memmove(&timestamps[0], &timestamps[1], (CHART_POINTS - 1) * sizeof(timestamps[0]));
+    memmove(&is_held[0],    &is_held[1],    (CHART_POINTS - 1) * sizeof(is_held[0]));
+
     time_t now; 
     time(&now); 
-    timestamps[49] = now; 
-    is_held[49] = held;
+    history[CHART_POINTS - 1] = val;
+    timestamps[CHART_POINTS - 1] = now; 
+    is_held[CHART_POINTS - 1] = held;
+    first_value_received = true;
 
-    if (!first_value_received) { 
-        current_min = val; 
-        current_max = val; 
-        first_value_received = true; 
-    } else { 
-        if (val < current_min) {
-            current_min = val; 
-        }
-        if (val > current_max) {
-            current_max = val; 
-        }
+    redrawChart();
+}
+
+void HASensorWidget::redrawChart() {
+    if (!chart || !ser) return;
+
+    // Bereich aus dem SICHTBAREN Verlauf - er schrumpft also auch wieder,
+    // wenn ein Ausreisser aus dem Fenster gelaufen ist.
+    float lo = INFINITY, hi = -INFINITY;
+    for (int i = 0; i < CHART_POINTS; i++) {
+        if (isnan(history[i])) continue;
+        if (history[i] < lo) lo = history[i];
+        if (history[i] > hi) hi = history[i];
     }
+    if (lo > hi) return;   // noch kein Wert
 
-    if (chart_min.length() > 0 && chart_max.length() > 0) {
-        lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)(chart_min.toFloat() * 10.0f), (lv_coord_t)(chart_max.toFloat() * 10.0f));
+    float fixMin, fixMax;
+    if (HAWidget::parseNumber(chart_min, fixMin) && HAWidget::parseNumber(chart_max, fixMax) && fixMax > fixMin) {
+        lo = fixMin;
+        hi = fixMax;
     } else {
-        float range = current_max - current_min;
-        if (range < 0.5f) {
-            lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)((current_min - 0.5f) * 10.0f), (lv_coord_t)((current_max + 0.5f) * 10.0f));
-        } else { 
-            float pad = range * 0.2f; 
-            lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, (lv_coord_t)((current_min - pad) * 10.0f), (lv_coord_t)((current_max + pad) * 10.0f)); 
-        }
+        const float range = hi - lo;
+        const float pad = (range < 0.5f) ? 0.5f : range * 0.2f;
+        lo -= pad;
+        hi += pad;
     }
-    
-    lv_chart_set_next_value(chart, ser, (lv_coord_t)(val * 10.0f));
+
+    // Skalierung so waehlen, dass beide Grenzen in int16 passen.
+    const float maxAbs = fmaxf(fabsf(lo), fabsf(hi));
+    chart_scale = 10.0f;
+    while (maxAbs * chart_scale > 30000.0f && chart_scale > 0.0001f) {
+        chart_scale /= 10.0f;
+    }
+
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y,
+                       (lv_coord_t)lroundf(lo * chart_scale), (lv_coord_t)lroundf(hi * chart_scale));
+
+    // Alle Punkte neu schreiben (Index 0 = aeltester), damit eine geaenderte
+    // Skalierung auch fuer die alten Punkte gilt.
+    lv_chart_set_x_start_point(chart, ser, 0);
+    lv_coord_t* ys = lv_chart_get_y_array(chart, ser);
+    for (int i = 0; i < CHART_POINTS; i++) {
+        ys[i] = isnan(history[i]) ? LV_CHART_POINT_NONE : (lv_coord_t)lroundf(history[i] * chart_scale);
+    }
+    lv_chart_refresh(chart);
 }
 
 void HASensorWidget::chart_draw_event_cb(lv_event_t * e) {
@@ -216,8 +236,12 @@ void HASensorWidget::chart_draw_event_cb(lv_event_t * e) {
     
     if (dsc->part == LV_PART_TICKS && dsc->id == LV_CHART_AXIS_PRIMARY_X) {
         if (dsc->text) {
-            int pt_idx = dsc->value; 
-            if (pt_idx >= 0 && pt_idx < 50) {
+            // LVGL liefert hier die Nummer der Hauptmarke (0..X_MAJOR_TICKS-1),
+            // nicht den Punktindex. Frueher wurden deshalb die 5 aeltesten
+            // Punkte beschriftet. Marke -> gleichmaessig verteilter Punkt.
+            const int tick = dsc->value;
+            const int pt_idx = (tick * (CHART_POINTS - 1)) / (X_MAJOR_TICKS - 1);
+            if (pt_idx >= 0 && pt_idx < CHART_POINTS) {
                 time_t t = w->timestamps[pt_idx];
                 if (t > 1000000) { 
                     struct tm * tm_info = localtime(&t); 
@@ -229,11 +253,13 @@ void HASensorWidget::chart_draw_event_cb(lv_event_t * e) {
         }
     } else if (dsc->part == LV_PART_TICKS && dsc->id == LV_CHART_AXIS_PRIMARY_Y) {
         if (dsc->text) {
-            snprintf(dsc->text, dsc->text_length, "%.1f", (float)dsc->value / 10.0f);
+            const float v = (float)dsc->value / w->chart_scale;
+            if (w->chart_scale >= 10.0f) snprintf(dsc->text, dsc->text_length, "%.1f", v);
+            else                         snprintf(dsc->text, dsc->text_length, "%.0f", v);
         }
     } else if (dsc->part == LV_PART_INDICATOR) {
         int pt_idx = dsc->id; 
-        if (pt_idx >= 0 && pt_idx < 50) {
+        if (pt_idx >= 0 && pt_idx < CHART_POINTS) {
             if (w->is_held[pt_idx]) { 
                 dsc->rect_dsc->bg_opa = LV_OPA_TRANSP; 
                 dsc->rect_dsc->border_opa = LV_OPA_TRANSP; 
@@ -288,22 +314,13 @@ void HASensorWidget::updateState(String state) {
     
     HAWidget::updateState(state);
     
-    uint32_t c_on_val = 0x3498DB; 
-    if (color_on.length() > 0 && color_on.startsWith("#")) {
-        c_on_val = strtol(color_on.substring(1).c_str(), NULL, 16);
-    }
-    
-    uint32_t c_off_val = 0x888888; // Grau als Fallback fuer "Aus"
-    if (color_off.length() > 0 && color_off.startsWith("#")) {
-        c_off_val = strtol(color_off.substring(1).c_str(), NULL, 16);
-    }
+    const uint32_t c_on_val = colorOnOr(0x3498DB);
+    const uint32_t c_off_val = colorOffOr(0x888888);   // Grau fuer "Aus"
 
     uint32_t active_color = c_on_val;
     String display_text = state;
     
-    // ==============================================================
-    // BUGFIX 1: Status & Farbe fuer binary_sensor auswerten
-    // ==============================================================
+    // binary_sensor: Farbe nach aktiv/inaktiv und deutsche Klartexte
     if (entity_id.startsWith("binary_sensor.")) {
         // Logik: Ist der Sensor in einem aktiven Zustand?
         bool isActive = (state == "on" || state == "open" || state == "home" || state == "true" || state == "1");
@@ -347,27 +364,17 @@ void HASensorWidget::updateState(String state) {
     
     lv_label_set_text(state_label, display_text.c_str());
     
-    if (show_chart && state != "unavailable" && state != "unknown") {
-        float val = state.toFloat(); 
+    // Nur echte Zahlen ins Diagramm ("on", "unavailable" usw. wurden frueher
+    // als 0 eingetragen).
+    float val;
+    if (show_chart && HAWidget::parseNumber(state, val)) {
         last_value = val; 
         last_update_millis = millis(); 
         addChartValue(val, false); 
     }
 }
 
-// ==============================================================
-// BUGFIX 2: Die tap_action ausführen
-// ==============================================================
+// Klick: nur die konfigurierte Aktion (Anzeige-Widget hat keine eigene).
 void HASensorWidget::onClick() {
-    // Wenn in der Dashboard-Konfiguration explizit eine Aktion vergeben wurde:
-    if (tap_domain.length() > 0 && tap_service.length() > 0) {
-        String target = tap_target.length() > 0 ? tap_target : entity_id;
-        
-        // Die Signatur hängt von deiner Websocket-Logik ab. 
-        // Oftmals heisst sie "HaWebsocketLogic_CallService" oder ähnlich.
-        // Falls der Compiler hier meckert, passe den Methodennamen bitte exakt
-        // an den an, den ihr in der HaWebsocketLogic vorgesehen habt!
-        extern void HaWebsocketLogic_CallService(String domain, String service, String entity);
-        HaWebsocketLogic_CallService(tap_domain, tap_service, target);
-    }
+    runTapAction();
 }

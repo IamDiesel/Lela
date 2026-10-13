@@ -4,5 +4,5 @@
 namespace HaDialogMedia {
     void resetState();
     void showMediaControlDialog(HAWidget* w);
-    void update(); // NEU: Horcht auf den Media-Browser
+    void update();   // zyklisch: Ergebnisse des Medien-Browsers anzeigen
 }

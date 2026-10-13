@@ -1,4 +1,5 @@
 #include "HaColorPicker.h"
+#include "UIHelper.h"
 #include "ViewHomeAssistant.h"
 #include "SharedData.h"
 
@@ -39,12 +40,7 @@ void HaColorPicker::show(String currentColor, std::function<void(String)> callba
     
     onColorSelected = callback;
 
-    overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(overlay, 1280, 720);
-    lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(overlay, 200, 0);
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200, &overlay);
     
     lv_obj_add_event_cb(overlay, close_event_cb, LV_EVENT_CLICKED, NULL);
 

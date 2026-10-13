@@ -11,4 +11,4 @@
 #include "HACoverWidget.h"
 #include "HAClimateWidget.h"
 #include "HATextWidget.h"
-#include "HAFolderWidget.h" // NEU
+#include "HAFolderWidget.h"

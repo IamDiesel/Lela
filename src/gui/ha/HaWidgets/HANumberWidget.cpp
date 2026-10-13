@@ -34,28 +34,39 @@ int HANumberWidget::getScaleFactor() {
     return 1;
 }
 
+// Zeigt einen Wert mit so vielen Nachkommastellen, wie die Schrittweite hat.
+static void showValue(lv_obj_t* label, float val, int scale) {
+    if (scale >= 100)     lv_label_set_text_fmt(label, "%.2f", val);
+    else if (scale >= 10) lv_label_set_text_fmt(label, "%.1f", val);
+    else                  lv_label_set_text_fmt(label, "%ld", lroundf(val));
+}
+
 void HANumberWidget::updateState(String state) {
     HAWidget::updateState(state);
     
-    // Verhindert ruckelnde Slider, wenn der Nutzer ihn gerade gedrueckt haelt!
-    if (lv_obj_has_state(slider, LV_STATE_PRESSED)) {
+    // Nicht eingreifen, solange der Nutzer zieht oder gerade losgelassen hat
+    // (HA meldet zunaechst noch den alten Wert).
+    if (lv_obj_has_state(slider, LV_STATE_PRESSED) || remoteUpdatesHeld()) {
         return; 
     }
     
-    float val = state.toFloat();
+    float val;
+    if (!HAWidget::parseNumber(state, val)) {
+        // "unavailable"/"unknown": nicht als 0 anzeigen.
+        lv_label_set_text(val_label, "--");
+        lv_obj_set_style_text_color(icon_label, lv_color_hex(0x555555), 0);
+        return;
+    }
+
     float min_v = HaWebsocketLogic_GetMin(entity_id);
     float max_v = HaWebsocketLogic_GetMax(entity_id);
     
     int scale = getScaleFactor();
     
-    lv_slider_set_range(slider, (int)(min_v * scale), (int)(max_v * scale));
-    lv_slider_set_value(slider, (int)(val * scale), LV_ANIM_OFF);
-    
-    if (scale > 1) {
-        lv_label_set_text_fmt(val_label, "%.1f", val);
-    } else {
-        lv_label_set_text_fmt(val_label, "%d", (int)val);
-    }
+    // Runden statt abschneiden: 0.7 * 10 ergibt in float 6.9999 -> frueher 6.
+    lv_slider_set_range(slider, (int32_t)lroundf(min_v * scale), (int32_t)lroundf(max_v * scale));
+    lv_slider_set_value(slider, (int32_t)lroundf(val * scale), LV_ANIM_OFF);
+    showValue(val_label, val, scale);
     
     lv_obj_set_style_text_color(icon_label, lv_color_hex(0x03A9F4), 0); 
 }
@@ -74,17 +85,19 @@ void HANumberWidget::slider_event_cb(lv_event_t * e) {
     
     // Live-Update des Labels waehrend des Ziehens
     if (code == LV_EVENT_VALUE_CHANGED) {
-        if (scale > 1) {
-            lv_label_set_text_fmt(w->val_label, "%.1f", val);
-        } else {
-            lv_label_set_text_fmt(w->val_label, "%d", (int)val);
-        }
+        showValue(w->val_label, val, scale);
     } 
     // Erst beim LOSLASSEN an Home Assistant senden!
     else if (code == LV_EVENT_RELEASED) {
-        String payload = "{\"value\":" + String(val) + "}";
+        w->holdRemoteUpdates();
+
+        // JSON ueber ArduinoJson statt per String-Verkettung.
+        JsonDocument data;
+        data["value"] = val;
+        String payload;
+        serializeJson(data, payload);
+
         String domain = w->getEntityId().startsWith("number.") ? "number" : "input_number";
-        
         HaWebsocketLogic_CallServiceWithData(domain, "set_value", w->getEntityId(), payload);
     }
 }

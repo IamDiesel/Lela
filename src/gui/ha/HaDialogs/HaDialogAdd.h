@@ -6,7 +6,10 @@ class HAFolderWidget; // Forward Declaration
 
 class HaDialogAdd {
 public:
-    static HAFolderWidget* target_folder; // NEU: Merkt sich das Ziel
+    static HAFolderWidget* target_folder; // Zielordner, nullptr = aktiver Tab
     static void showAddWidgetDialog(HAFolderWidget* folder = nullptr);
     static void resetState();
+
+    // Die Entitaetsliste wurde (neu) geladen - offene Vorschau aktualisieren.
+    static void onCatalogUpdated();
 };

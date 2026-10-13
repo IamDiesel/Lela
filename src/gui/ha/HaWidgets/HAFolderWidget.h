@@ -3,6 +3,9 @@
 #include "HaConfigLogic.h"
 #include <vector>
 
+// 'def' ist der Stand beim Anlegen des Kindes (nur fuer die Anzeige im
+// Ordner-Dialog). Fuer Bedingungen gilt immer der aktuelle Stand am Widget,
+// damit Aenderungen aus dem Bearbeiten-Dialog sofort wirken.
 struct FolderChildInfo {
     HAWidget* widget;
     HAWidgetDef def; 
@@ -11,7 +14,7 @@ struct FolderChildInfo {
 class HAFolderWidget : public HAWidget {
 public:
     HAFolderWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off);
-    ~HAFolderWidget(); // FIX: Speicherleck verhindern!
+    ~HAFolderWidget(); // gibt die Kinder frei (der Ordner besitzt sie)
     
     void updateState(String state) override;
     void checkConditions() override;
@@ -25,6 +28,4 @@ public:
 private:
     std::vector<FolderChildInfo> folder_children;
     lv_obj_t* placeholder_lbl;
-    
-    bool evaluate(const HAWidgetDef& def);
 };

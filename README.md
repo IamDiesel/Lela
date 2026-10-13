@@ -34,8 +34,10 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * **Live-Screenshot Engine:** Web-Endpunkt zum Auslesen des RAM-Framebuffers und Download als unkomprimiertes `.BMP`-Bild.
 
 ### 1.2 Home Assistant Integration
-* **WebSocket-Verbindung:** Persistenter, bidirektionaler Echtzeitkanal zu Home Assistant (ohne REST-Polling).
-* **Speichereffizienz:** Das System abonniert und parst (via ArduinoJson) nur State-Updates von Entitäten, die aktiv auf dem Dashboard platziert sind.
+* **WebSocket-Verbindung:** Persistenter, bidirektionaler Echtzeitkanal zu Home Assistant (ohne REST-Polling). Ziel ist die HA-IP/Port aus dem Web-Setup; `secrets.h` dient als Rückfall (leeres Setup oder wiederholt nicht erreichbar). Lebenszeichen per Ping, automatischer Neuaufbau mit wachsender Wartezeit, lange Pausen bei ungültigem Token.
+* **Live-Zustände (`HaEntitySync`):** `subscribe_entities` mit Filter auf die platzierten Entitäten (Widgets, Ordnerkinder, Bedingungen) – in Blöcken zu 16, beim Start vollständiger Zustand inkl. Attribute, danach nur Änderungen. Nur die von der Oberfläche benötigten Attribute werden geparst. Vor jedem Neuaufbau werden die alten Abos abgemeldet.
+* **Speichereffizienz (`HaEntityCache`):** Je Entität ein JSON-Abbild im PSRAM; das knappe interne RAM bleibt für WLAN (ESP-Hosted/SDIO) frei.
+* **Entitätsliste (`HaEntityCatalog`):** Für Suche und Hinzufügen wird bei Bedarf eine kompakte Liste aller wählbaren Entitäten per einmaligem Template geladen (nicht beim Start).
 * **Dienst-Steuerung:** Steuerung von Schaltern, Tasten, Lichtern (inkl. RGB/W-Farbwahl und Helligkeit), Mediaplayern sowie **Saugrobotern** (inkl. Saugstufen-Auswahl und Lokalisierung).
 * **Lovelace-Parser:** Import bestehender Home Assistant Dashboards (Lovelace JSON) in native C++ LVGL-Widgets.
 
@@ -63,7 +65,9 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 
 
 ### 1.3 On-Device Dashboard-Editor
-* **Layout-Engine:** Freies Platzieren von Widgets per Drag & Drop mit 10px-Snap-to-Grid.
+* **Layout-Engine:** Freies Platzieren von Widgets per Drag & Drop mit 10px-Snap-to-Grid (begrenzt auf die Tab-Breite).
+* **Ordner und Bedingungen:** Ordner-Widgets zeigen das erste Kind, dessen Bedingungen erfüllt sind; Sichtbarkeitsbedingungen (AND/OR, `==` `!=` `<` `>` `<=` `>=`) wirken auf jedes Widget.
+* **Datensicherheit:** Konfiguration wird atomar gespeichert (temporäre Datei + Umbenennen); eine defekte Datei wird als `/ha_config.bad` gesichert statt überschrieben. Der Web-Import prüft die Datei vollständig, bevor er das Layout ersetzt.
 * **Stabile Rendering-Pipeline:** Sicheres Z-Order-Management beim Widget-Editing.
 * **Widget-Konfiguration:** Einstellungen für Margin, Alignment, Farben und Icons direkt über Touch-Eingaben und On-Screen-Keyboard. Optionale Skalierung für dynamische Sub-Elemente (z. B. Vacuum-Buttons).
 * **Backup/Restore (PSRAM optimiert):** JSON-basierter Export und Import des Layouts über das lokale Web-Portal. Das Speichern großer Konfigurationen wird via Custom Allocator in den 32MB PSRAM ausgelagert, um den internen RAM zu schonen (Out-Of-Memory Schutz).
@@ -72,7 +76,7 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * **Dynamische Graphen:** Rendering von Sensordaten als Area-Charts über LVGL.
 * **Smartes UI-Design:** Dynamische LVGL-`recolor`-Einheiten (dezent und kontrastarm) sowie semi-transparente Wasserzeichen-Icons für maximale Lesbarkeit der Sensorwerte in Kachel-Ansichten.
 * **Historisierung:** Lokales Array für 50 Messwerte inkl. NTP-Zeitstempel (HH:MM) für die X-Achse.
-* **Auto-Scaling:** Skalierung der Y-Achse auf Basis von Min/Max-Werten mit dynamischem Padding. Manuelle Fixierung von Wertebereichen möglich.
+* **Auto-Scaling:** Skalierung der Y-Achse aus dem sichtbaren Verlauf (wird auch wieder kleiner) mit dynamischem Padding; Werteskalierung passt sich an, sodass auch große Werte (W, lx, ppm) ohne Überlauf dargestellt werden. Manuelle Fixierung von Wertebereichen möglich.
 * **Hold-Logik:** Interpolation fehlender Datenpunkte in festen Zeitintervallen (10s) zur Wahrung der Zeitachsen-Integrität.
 
 ### 1.5 Audio & Video (Babyphone-Modus)
@@ -125,11 +129,16 @@ Das Projekt wird mit **PlatformIO** (Framework: Arduino) kompiliert. Alle erford
 * **Board:** `esp32p4` (`esp32-p4-evboard`)
 
 **Verwendete Haupt-Bibliotheken:**
-* **`m5stack/M5Unified`** (`^0.2.2`): Hardware-Abstraktion für Display, Touch und I2S-Audio des M5Stack.
-* **`bblanchon/ArduinoJson`** (`^7.3.0`): Für performantes, PSRAM-optimiertes JSON-Parsing.
-* **`gilmaimon/ArduinoWebsockets`** (`^0.5.4`): Für den bidirektionalen Home Assistant Echtzeit-Feed.
-* **`earlephilhower/ESP8266Audio`** (`^1.9.9`): Für die I2S-Audiosignalausgabe (MP3/AAC/WAV).
-* **`lvgl/lvgl`** (`~8.4.0`): Die Basis der Grafik-Engine, konfiguriert über die lokale `lv_conf.h`.
+Die Versionen von LVGL, M5GFX und M5Unified sind **bewusst exakt festgelegt**: andere Kombinationen führten zu Displayflackern. Nicht ohne Test aktualisieren.
+
+* **`lvgl/lvgl`** (`8.3.11`): Grafik-Engine, konfiguriert über die lokale `lv_conf.h` (Speicher im PSRAM).
+* **`m5stack/M5GFX`** (`0.2.19`) und **`m5stack/M5Unified`** (`0.2.13`): Hardware-Abstraktion für Display, Touch, Akku und I2S-Audio.
+* **`tobozo/LGFX_PPA`** (`^0.2.2`): Hardware-Bildverarbeitung (PPA) des ESP32-P4 für das Video.
+* **`bblanchon/ArduinoJson`** (`^7.0.4`, aktuell 7.4.3): JSON-Parsing, große Dokumente mit PSRAM-Allocator (`HaPsramAllocator`).
+* **`gilmaimon/ArduinoWebsockets`** (`^0.5.4`): Home Assistant WebSocket.
+* **`knolleary/PubSubClient`** (`^2.8`): MQTT.
+* **`earlephilhower/ESP8266Audio`** (Git): I2S-Audioausgabe (MP3/AAC/WAV).
+* **`bertmelis/USBHostSerial`** (Git): USB-CDC zum BLE-Coprozessor (T-Dongle S3).
 
 ---
 

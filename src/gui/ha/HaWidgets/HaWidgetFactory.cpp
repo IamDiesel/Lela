@@ -3,8 +3,9 @@
 
 HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAWidgetDef& wDef) {
     HAWidget* new_widget = nullptr;
+    const HaWidgetKind kind = HaWidgetKindFromString(wDef.type);
 
-    if (wDef.type == "sensor") {
+    if (kind == HaWidgetKind::Sensor) {
         new_widget = new HASensorWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
@@ -13,21 +14,21 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             wDef.chart_x_ofs, wDef.chart_y_ofs, wDef.chart_min, wDef.chart_max
         );
     } 
-    else if (wDef.type == "action") {
+    else if (kind == HaWidgetKind::Action) {
         new_widget = new HAActionWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     } 
-    else if (wDef.type == "media_player") {
+    else if (kind == HaWidgetKind::MediaPlayer) {
         new_widget = new HAMediaWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     } 
-    else if (wDef.type == "media_item") {
+    else if (kind == HaWidgetKind::MediaItem) {
         new_widget = new HAMediaItemWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
@@ -35,35 +36,35 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             wDef.media_content_type, wDef.media_content_id
         );
     } 
-    else if (wDef.type == "vacuum") {
+    else if (kind == HaWidgetKind::Vacuum) {
         new_widget = new HAVacuumWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         ); 
     }
-    else if (wDef.type == "cover") {
+    else if (kind == HaWidgetKind::Cover) {
         new_widget = new HACoverWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     }
-    else if (wDef.type == "climate") {
+    else if (kind == HaWidgetKind::Climate) {
         new_widget = new HAClimateWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     }
-    else if (wDef.type == "text") {
+    else if (kind == HaWidgetKind::Text) {
         new_widget = new HATextWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     }
-    else if (wDef.type == "folder") {
+    else if (kind == HaWidgetKind::Folder) {
         HAFolderWidget* folder = new HAFolderWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
@@ -71,7 +72,7 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
         );
         
         for (const auto& childDef : wDef.children) {
-            // FIX: Das Kind-Widget erbt die exakten absoluten Dimensionen des Ordners!
+            // Kinder fuellen den Ordner vollstaendig aus: gleiche Groesse wie der Ordner.
             HAWidgetDef realChildDef = childDef;
             realChildDef.w = wDef.w; 
             realChildDef.h = wDef.h; 
@@ -79,21 +80,21 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             HAWidget* child = HaWidgetFactory::createWidget(folder->getContainer(), tab_idx, realChildDef);
             if (child) {
                 lv_obj_set_pos(child->getContainer(), 0, 0);
-                // LV_PCT(100) Hack restlos entfernt. Das Widget kennt nun beim Bauen seine absolute 
-                // Pixelbreite und berechnet alle internen Labels direkt korrekt.
+                // Absolute Pixelgroesse (nicht LV_PCT): die Widgets richten ihre
+                // Beschriftungen beim Anlegen danach aus.
                 folder->addChild(child, childDef);
             }
         }
         new_widget = folder;
     }
-    else if (wDef.type == "select") {
+    else if (kind == HaWidgetKind::Select) {
         new_widget = new HASelectWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     }
-    else if (wDef.type == "number") {
+    else if (kind == HaWidgetKind::Number) {
         new_widget = new HANumberWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
             wDef.x, wDef.y, wDef.w, wDef.h, 
@@ -179,7 +180,7 @@ HAWidgetDef HaWidgetFactory::createDefFromWidget(HAWidget* w) {
     def.conditions_type = w->getConditionsType();
     def.conditions = w->getConditions();
 
-    if (def.type == "folder") {
+    if (w->getKind() == HaWidgetKind::Folder) {
         def.children = ((HAFolderWidget*)w)->getChildrenDefs();
     }
 

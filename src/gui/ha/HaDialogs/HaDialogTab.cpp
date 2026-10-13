@@ -3,24 +3,22 @@
 #include "HaConfigLogic.h"
 #include "HaWebsocketLogic.h"
 #include "SharedData.h"
+#include "UIHelper.h"
 
 lv_obj_t* HaDialogTab::kb_overlay = nullptr;
 lv_obj_t* HaDialogTab::ta_new_tab = nullptr;
 int HaDialogTab::editingTabIndex = -1;
+lv_obj_t* HaDialogTab::confirm_overlay = nullptr;
 
 void HaDialogTab::resetState() {
     kb_overlay = nullptr;
     ta_new_tab = nullptr;
     editingTabIndex = -1;
+    confirm_overlay = nullptr;
 }
 
 void HaDialogTab::createOverlay(const char* placeholder_or_text, bool is_placeholder) {
-    kb_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(kb_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(kb_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(kb_overlay, 200, 0);
-    lv_obj_add_flag(kb_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(kb_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+    kb_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200, &kb_overlay);
     
     ta_new_tab = lv_textarea_create(kb_overlay);
     lv_obj_set_size(ta_new_tab, 600, 80);
@@ -66,6 +64,7 @@ void HaDialogTab::createOverlay(const char* placeholder_or_text, bool is_placeho
 }
 
 void HaDialogTab::showAddTabDialog() {
+    if (kb_overlay != nullptr) return;   // kein zweites Overlay uebereinander
     playToneI2S(800, 100, true);
     editingTabIndex = -1; 
     createOverlay("Name des neuen Raums...", true);
@@ -84,17 +83,56 @@ void HaDialogTab::showRenameTabDialog() {
 }
 
 void HaDialogTab::deleteCurrentTab() {
-    playToneI2S(600, 100, true); 
+    if (confirm_overlay != nullptr || kb_overlay != nullptr) return;
+
     uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
-    
-    if (act_tab < HaConfigLogic::dashboards.size()) {
-        HaConfigLogic::DeleteTab(act_tab); 
-        HaConfigLogic::Save();
-        HaWebsocketLogic_UpdateTrackedEntities();
-        
-        ViewHomeAssistant::currentActiveTab = 0; 
-        ViewHomeAssistant::pendingHaReload = true; 
+    if (act_tab >= HaConfigLogic::dashboards.size()) return;
+
+    playToneI2S(600, 100, true); 
+
+    // Rueckfrage, denn ein geloeschter Tab nimmt alle seine Widgets mit und
+    // laesst sich nicht wiederherstellen.
+    confirm_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200, &confirm_overlay);
+
+    lv_obj_t* panel = lv_obj_create(confirm_overlay);
+    lv_obj_set_size(panel, 560, 260);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+    const String question = "Tab \"" + HaConfigLogic::dashboards[act_tab].name + "\" loeschen?";
+    UIHelper::createLabel(panel, question.c_str(), &lv_font_montserrat_24, LV_ALIGN_TOP_MID, 0, 25, 0xFFFFFF);
+    UIHelper::createLabel(panel, "Alle Widgets darin gehen verloren.", &lv_font_montserrat_16, LV_ALIGN_TOP_MID, 0, 75, 0xAAAAAA);
+
+    // Index im user_data mitgeben: er ist der Tab, nach dem gefragt wurde,
+    // auch falls sich der aktive Tab bis zur Bestaetigung aendern sollte.
+    UIHelper::createButton(panel, 220, 60, LV_ALIGN_BOTTOM_RIGHT, -20, -25, 0xAA0000, "Ja, loeschen",
+                           confirm_delete_cb, (void*)(uintptr_t)act_tab);
+    UIHelper::createButton(panel, 220, 60, LV_ALIGN_BOTTOM_LEFT, 20, -25, 0x333333, "Abbrechen",
+                           [](lv_event_t* e) { closeConfirm(); });
+}
+
+void HaDialogTab::closeConfirm() {
+    if (confirm_overlay) {
+        lv_obj_del_async(confirm_overlay);
+        confirm_overlay = nullptr;
     }
+}
+
+void HaDialogTab::confirm_delete_cb(lv_event_t* e) {
+    const int idx = (int)(uintptr_t)lv_event_get_user_data(e);
+    closeConfirm();
+
+    if (idx < 0 || idx >= (int)HaConfigLogic::dashboards.size()) return;
+
+    playToneI2S(600, 100, true);
+    HaConfigLogic::DeleteTab(idx); 
+    HaConfigLogic::Save();
+    HaWebsocketLogic_UpdateTrackedEntities();
+    
+    ViewHomeAssistant::currentActiveTab = 0; 
+    ViewHomeAssistant::pendingHaReload = true; 
 }
 
 void HaDialogTab::kb_event_cb(lv_event_t * e) {
@@ -109,6 +147,9 @@ void HaDialogTab::kb_event_cb(lv_event_t * e) {
                 HaConfigLogic::AddTab(String(txt)); 
                 ViewHomeAssistant::currentActiveTab = HaConfigLogic::dashboards.size() - 1; 
             } else {
+                // Ungespeicherte Aenderungen am Layout zuerst uebernehmen -
+                // Save() und der Neuaufbau wuerden sie sonst verwerfen.
+                ViewHomeAssistant::captureActiveTabLayout();
                 HaConfigLogic::RenameTab(editingTabIndex, String(txt)); 
                 ViewHomeAssistant::currentActiveTab = editingTabIndex; 
             }

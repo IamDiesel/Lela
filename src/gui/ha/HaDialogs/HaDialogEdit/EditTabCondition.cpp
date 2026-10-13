@@ -1,7 +1,7 @@
 #include "EditTabCondition.h"
 #include "UIHelper.h"
 #include "HaDialogEdit.h"
-#include "HaEntityCache.h"
+#include "HaWebsocketLogic.h"
 
 void EditTabCondition::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) {
     UIHelper::createLabel(parent, "Sichtbarkeit:", &lv_font_montserrat_20, LV_ALIGN_TOP_LEFT, 10, 10);
@@ -63,26 +63,10 @@ void EditTabCondition::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard
         
         if (code == LV_EVENT_FOCUSED) {
             lv_obj_set_user_data(tab->roller_cond_search, ta);
+            // Suche ueber alle Entitaeten: Liste bei Bedarf nachladen.
+            HaWebsocketLogic_RequestEntityCatalog();
         } else if (code == LV_EVENT_VALUE_CHANGED) {
-            String txt = lv_textarea_get_text(ta);
-            if (txt.length() >= 2 && tab->roller_cond_search) {
-                std::vector<String> hits = HaEntityCache::SearchEntities(txt, 5);
-                if (hits.size() > 0) {
-                    String opts = "";
-                    for (size_t k = 0; k < hits.size(); k++) {
-                        opts += hits[k];
-                        if (k < hits.size() - 1) opts += "\n";
-                    }
-                    lv_roller_set_options(tab->roller_cond_search, opts.c_str(), LV_ROLLER_MODE_NORMAL);
-                    lv_obj_align_to(tab->roller_cond_search, ta, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
-                    lv_obj_clear_flag(tab->roller_cond_search, LV_OBJ_FLAG_HIDDEN);
-                    lv_obj_move_foreground(tab->roller_cond_search); 
-                } else {
-                    lv_obj_add_flag(tab->roller_cond_search, LV_OBJ_FLAG_HIDDEN);
-                }
-            } else if (tab->roller_cond_search) {
-                lv_obj_add_flag(tab->roller_cond_search, LV_OBJ_FLAG_HIDDEN);
-            }
+            UIHelper::showEntitySuggestions(tab->roller_cond_search, ta, String(lv_textarea_get_text(ta)));
         }
     };
     

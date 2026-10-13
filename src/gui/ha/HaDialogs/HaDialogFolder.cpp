@@ -16,15 +16,11 @@ void HaDialogFolder::show(HAFolderWidget* folder) {
 
     playToneI2S(800, 100, true);
 
-    overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(overlay, 1280, 720);
-    lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(overlay, 200, 0);
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200);
+    lv_obj_add_event_cb(overlay, overlay_delete_cb, LV_EVENT_DELETE, NULL);
 
     lv_obj_t* panel = lv_obj_create(overlay);
-    lv_obj_set_size(panel, 860, 520); // <--- DEUTLICH BREITER ---
+    lv_obj_set_size(panel, 860, 520);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -32,7 +28,7 @@ void HaDialogFolder::show(HAFolderWidget* folder) {
     UIHelper::createLabel(panel, "Ordner Inhalt verwalten", &lv_font_montserrat_24, LV_ALIGN_TOP_MID, 0, 10);
 
     lv_obj_t* list = lv_obj_create(panel);
-    lv_obj_set_size(list, 820, 340); // <--- LISTENPLATZ ERWEITERT ---
+    lv_obj_set_size(list, 820, 340);
     lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 60);
     lv_obj_set_style_bg_color(list, lv_color_hex(0x333333), 0);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
@@ -49,8 +45,11 @@ void HaDialogFolder::show(HAFolderWidget* folder) {
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
         String title = child.def.name + " (" + child.def.type + ")";
-        if (child.def.conditions.size() > 0) {
-             title += " [" + String(child.def.conditions.size()) + " Bed.]";
+        // Bedingungen vom Widget lesen, nicht aus der Lade-Kopie: sonst zeigt
+        // die Liste nach dem Bearbeiten einen veralteten Stand.
+        const size_t n_cond = child.widget->getConditions().size();
+        if (n_cond > 0) {
+             title += " [" + String(n_cond) + " Bed.]";
         }
         UIHelper::createLabel(row, title.c_str(), &lv_font_montserrat_20, LV_ALIGN_LEFT_MID, 10, 0);
 
@@ -113,6 +112,15 @@ void HaDialogFolder::show(HAFolderWidget* folder) {
     UIHelper::createButton(panel, 260, 50, LV_ALIGN_BOTTOM_LEFT, 580, -20, 0x555555, "Schliessen", [](lv_event_t* e){
         HaDialogFolder::resetState();
     });
+}
+
+void HaDialogFolder::overlay_delete_cb(lv_event_t* e) {
+    // resetState() + show() legen ein neues Overlay an, waehrend das alte noch
+    // asynchron geloescht wird. Dessen DELETE darf das neue nicht zuruecksetzen.
+    if (overlay == lv_event_get_target(e)) {
+        overlay = nullptr;
+        current_folder = nullptr;
+    }
 }
 
 void HaDialogFolder::resetState() {

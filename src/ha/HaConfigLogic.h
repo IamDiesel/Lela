@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <vector>
 
-// --- NEU: Die Einzelbedingung ---
+// Eine Sichtbarkeitsbedingung: Entitaet, Vergleich, Wert.
 struct HACondition {
     String entity;
     String op;    // "==", "!=", ">", "<", ">=", "<="
@@ -21,9 +21,12 @@ struct HAWidgetDef {
     String color_on = "";
     String color_off = "";
     
-    int icon_align = 0;  
-    int text_align = 2;  
-    int state_align = 1; 
+    // Gleiche Standardwerte wie beim Laden (deserializeWidget). Frueher stand
+    // hier 0/2/1 (DEFAULT/TOP_MID/TOP_LEFT) - manuell hinzugefuegte Widgets
+    // bekamen dadurch uebereinanderliegende Beschriftungen.
+    int icon_align = 2;    // LV_ALIGN_TOP_MID
+    int text_align = 5;    // LV_ALIGN_BOTTOM_MID
+    int state_align = 9;   // LV_ALIGN_CENTER
     
     int icon_margin = 5;
     int text_margin = 5;
@@ -55,7 +58,7 @@ struct HAWidgetDef {
     float slider_max = 100.0f;
     float slider_step = 1.0f;
 
-    // --- NEU: Das Regelwerk und die Ordner-Kinder ---
+    // Sichtbarkeitsbedingungen und Ordner-Kinder
     String conditions_type = "AND"; // Entweder "AND" oder "OR"
     std::vector<HACondition> conditions;
     std::vector<HAWidgetDef> children; 
@@ -68,13 +71,39 @@ struct HADashboardDef {
 
 class HaConfigLogic {
 public:
+    // Alle Tabs samt Widgets. Invariante: nach Init()/Load() mindestens ein Tab.
+    // Wird nur im loopTask veraendert (GUI, Webserver); der Preload-Task liest
+    // beim Start einmalig ein.
     static std::vector<HADashboardDef> dashboards;
+
     static void Init();
     static void Load();
-    static void Save();
+
+    // Schreibt atomar (temporaere Datei + Umbenennen). false = Datei unveraendert.
+    static bool Save();
+
     static void AddTab(String name);
     static void DeleteTab(int index);
     static void RenameTab(int index, String newName);
     static void MoveTabLeft(int index);
     static void MoveTabRight(int index);
+
+    // Uebernimmt eine hochgeladene Sicherung (Web-Setup).
+    // Die Datei wird vollstaendig geprueft, BEVOR etwas ersetzt wird. Bei
+    // Erfolg ersetzt sie 'dashboards' und die Live-Datei und wird geloescht.
+    // Bei Fehler bleibt alles unveraendert, 'err' beschreibt den Grund.
+    // Nur im loopTask aufrufen (gleicher Thread wie die GUI).
+    static bool ImportFromFile(const char* path, String& err);
+
+    // Liefert einen Tab-Namen, der noch nicht vergeben ist: getrimmt, leer
+    // wird zu "Tab", bei Kollision " 2", " 3", ... angehaengt.
+    // ignoreIndex: dieser Tab zaehlt nicht als Kollision (Umbenennen).
+    static String MakeUniqueTabName(const std::vector<HADashboardDef>& list, String wanted, int ignoreIndex = -1);
+
+    // Zwischenablage fuer den Web-Upload. Wird beim Start aufgeraeumt.
+    static constexpr const char* UPLOAD_PATH = "/ha_config.upload";
+
+    // Groesste akzeptierte Konfigurationsdatei. Schutz gegen versehentlich
+    // hochgeladene Fremddateien; reale Konfigurationen liegen weit darunter.
+    static constexpr size_t MAX_FILE_BYTES = 512u * 1024u;
 };

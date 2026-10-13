@@ -56,22 +56,24 @@ HAClimateWidget::HAClimateWidget(lv_obj_t* parent, int tab_idx, String type, Str
 void HAClimateWidget::updateState(String state) {
     HAWidget::updateState(state);
 
+    // Ist-Temperatur ist reine Anzeige und wird immer uebernommen.
     float cur_temp = HaWebsocketLogic_GetCurrentTemperature(entity_id);
-    float tgt_temp = HaWebsocketLogic_GetTargetTemperature(entity_id);
-
     if (cur_temp > -90.0f) {
         lv_label_set_text_fmt(lbl_current_temp, "%.1f°C", cur_temp);
     } else {
         lv_label_set_text(lbl_current_temp, "--.-°C");
     }
 
-    if (tgt_temp > -90.0f) {
-        current_target = tgt_temp;
-        lv_label_set_text_fmt(lbl_target_temp, "%.1f", current_target);
+    // Soll-Temperatur und Modus: kurz nach einer Bedienung den lokalen Wert
+    // behalten (HA meldet zunaechst noch den alten Stand zurueck).
+    if (!remoteUpdatesHeld()) {
+        float tgt_temp = HaWebsocketLogic_GetTargetTemperature(entity_id);
+        if (tgt_temp > -90.0f) {
+            current_target = tgt_temp;
+            lv_label_set_text_fmt(lbl_target_temp, "%.1f", current_target);
+        }
+        lv_label_set_text(lbl_mode, state.c_str());
     }
-
-    // Aktuellen Modus im Button anzeigen
-    lv_label_set_text(lbl_mode, state.c_str());
 
     // Optisches Feedback über die Icon-Farbe
     if (state == "heat") {
@@ -99,23 +101,23 @@ void HAClimateWidget::btn_event_cb(lv_event_t * e) {
         if (btn == w->btn_plus) w->current_target += step;
         if (btn == w->btn_minus) w->current_target -= step;
 
+        // In den Grenzen des Geraets halten (min_temp/max_temp aus HA).
+        const float mn = HaWebsocketLogic_GetMin(w->getEntityId());
+        const float mx = HaWebsocketLogic_GetMax(w->getEntityId());
+        if (mx > mn) {
+            if (w->current_target < mn) w->current_target = mn;
+            if (w->current_target > mx) w->current_target = mx;
+        }
+
+        // Ab jetzt zaehlt der lokale Wert; mehrfaches "+" baut darauf auf.
+        w->holdRemoteUpdates();
+
         lv_label_set_text_fmt(w->lbl_target_temp, "%.1f", w->current_target);
         HaWebsocketLogic_CallClimateSetTemperature(w->getEntityId(), w->current_target);
     }
     // Modus (hvac_mode) durchschalten
     else if (btn == w->btn_mode) {
-        std::vector<String> opts = HaWebsocketLogic_GetOptions(w->getEntityId());
-
-        // Crash-Schutz / Fallback auf gebackene Optionen
-        if (opts.empty() && w->baked_options.length() > 0) {
-            int start = 0;
-            while (start < w->baked_options.length()) {
-                int end = w->baked_options.indexOf(',', start);
-                if (end == -1) end = w->baked_options.length();
-                opts.push_back(w->baked_options.substring(start, end));
-                start = end + 1;
-            }
-        }
+        std::vector<String> opts = w->optionsOrBaked();
 
         if (opts.size() > 0) {
             String current_mode = lv_label_get_text(w->lbl_mode);
@@ -132,6 +134,7 @@ void HAClimateWidget::btn_event_cb(lv_event_t * e) {
             if (idx >= opts.size()) idx = 0;
 
             String new_mode = opts[idx];
+            w->holdRemoteUpdates();
             lv_label_set_text(w->lbl_mode, new_mode.c_str());
             HaWebsocketLogic_CallClimateSetHvacMode(w->getEntityId(), new_mode);
         }

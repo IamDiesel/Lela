@@ -1,6 +1,7 @@
 #include "HATextWidget.h"
 #include "HaWebsocketLogic.h"
-#include "ViewHomeAssistant.h" 
+#include "ViewHomeAssistant.h"
+#include "UIHelper.h" 
 
 lv_obj_t* HATextWidget::keyboard_overlay = nullptr;
 lv_obj_t* HATextWidget::keyboard_ta = nullptr;
@@ -13,7 +14,7 @@ HATextWidget::HATextWidget(lv_obj_t* parent, int tab_idx, String type, String en
     lbl_value = lv_label_create(container);
     lv_obj_set_width(lbl_value, lv_pct(90));
     
-    // --- FIX: Schriftart und Farbe hinzugefuegt! Vorher war der Text unsichtbar ---
+    // Schrift und Farbe explizit setzen (Theme-Standard waere auf dunklem Grund unsichtbar).
     lv_obj_set_style_text_font(lbl_value, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_value, lv_color_white(), 0);
     
@@ -26,7 +27,14 @@ HATextWidget::HATextWidget(lv_obj_t* parent, int tab_idx, String type, String en
     updateState("unknown");
 }
 
-// --- NEU: Dynamische Ausrichtung anwenden ---
+HATextWidget::~HATextWidget() {
+    // Offene Tastatur gehoert nicht mehr zu einem lebenden Widget.
+    // updateState() eines spaeteren Widgets an derselben Adresse wuerde sonst
+    // in das Label des alten Overlays schreiben.
+    if (active_text_widget == this) active_text_widget = nullptr;
+}
+
+// Ausrichtung: Icon/Name ueber die Basis, der Textwert nach state_align/state_margin.
 void HATextWidget::setAlignments(int i_align, int t_align, int s_align, int i_margin, int t_margin, int s_margin) {
     // Ruft die Basis-Ausrichtung fuer Icon und Name auf
     HAWidget::setAlignments(i_align, t_align, s_align, i_margin, t_margin, s_margin);
@@ -57,6 +65,16 @@ void HATextWidget::close_keyboard() {
     }
 }
 
+void HATextWidget::overlay_delete_cb(lv_event_t * e) {
+    // Nur zuruecksetzen, wenn das geloeschte Objekt noch das aktuelle Overlay ist.
+    if (keyboard_overlay == lv_event_get_target(e)) {
+        keyboard_overlay = nullptr;
+        keyboard_ta = nullptr;
+        keyboard_lbl = nullptr;
+        active_text_widget = nullptr;
+    }
+}
+
 void HATextWidget::keyboard_event_cb(lv_event_t * e) {
     lv_event_code_t code = lv_event_get_code(e);
     
@@ -78,11 +96,8 @@ void HATextWidget::onClick() {
     
     active_text_widget = this;
     
-    keyboard_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(keyboard_overlay, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(keyboard_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(keyboard_overlay, 220, 0); 
-    lv_obj_clear_flag(keyboard_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    keyboard_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 220);
+    lv_obj_add_event_cb(keyboard_overlay, overlay_delete_cb, LV_EVENT_DELETE, NULL);
     
     keyboard_lbl = lv_label_create(keyboard_overlay);
     lv_obj_set_style_text_font(keyboard_lbl, &lv_font_montserrat_20, 0);

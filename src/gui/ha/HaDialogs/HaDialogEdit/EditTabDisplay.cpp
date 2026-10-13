@@ -76,6 +76,7 @@ void EditTabDisplay::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) 
     }
     dd_icon_cat = UIHelper::createDropdown(parent, 700, 40, LV_ALIGN_TOP_LEFT, 100, 100, cat_opts.c_str(), 0, [](lv_event_t* e) {
         EditTabDisplay* tab = (EditTabDisplay*)lv_event_get_user_data(e);
+        if (!tab) return;
         if (tab->dd_icon && lv_obj_is_valid(tab->dd_icon) && tab->dd_icon_cat && lv_obj_is_valid(tab->dd_icon_cat)) {
             lv_dropdown_set_options(tab->dd_icon, icon_categories[lv_dropdown_get_selected(tab->dd_icon_cat)].options); 
             lv_dropdown_set_selected(tab->dd_icon, 0); 
@@ -84,8 +85,7 @@ void EditTabDisplay::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) 
             tab->last_search_term = ""; 
             lv_textarea_set_text(tab->ta_icon_search, ""); 
         }
-    });
-    lv_obj_add_event_cb(dd_icon_cat, NULL, LV_EVENT_VALUE_CHANGED, this);
+    }, this);   // user_data = dieser Reiter. Ohne ihn liest der Callback einen Nullzeiger.
 
     UIHelper::createLabel(parent, "Icon:", &lv_font_montserrat_16, LV_ALIGN_TOP_LEFT, 10, 160);
     dd_icon = UIHelper::createDropdown(parent, 700, 40, LV_ALIGN_TOP_LEFT, 100, 150, "", 0);

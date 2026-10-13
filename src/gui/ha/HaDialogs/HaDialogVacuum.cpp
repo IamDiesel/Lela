@@ -2,6 +2,7 @@
 #include "ViewHomeAssistant.h"
 #include "HaWebsocketLogic.h"
 #include "SharedData.h"
+#include "UIHelper.h"
 
 static lv_obj_t* vacuum_overlay = nullptr;
 static String cur_vacuum_entity = "";
@@ -13,10 +14,7 @@ void HaDialogVacuum::showVacuumDialog(HAWidget* w) {
     
     cur_vacuum_entity = w->getEntityId();
 
-    vacuum_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(vacuum_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(vacuum_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(vacuum_overlay, 220, 0);
+    vacuum_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 220, &vacuum_overlay);
 
     lv_obj_t* panel = lv_obj_create(vacuum_overlay);
     lv_obj_set_size(panel, 650, 480);
@@ -127,24 +125,30 @@ void HaDialogVacuum::showVacuumDialog(HAWidget* w) {
     lv_obj_align(lbl_fan, LV_ALIGN_TOP_LEFT, 10, btn_y + 10);
 
     lv_obj_t* dd_fan = lv_dropdown_create(panel);
-    lv_dropdown_set_options(dd_fan, "low\nmedium\nhigh\nmax");
     lv_obj_set_width(dd_fan, 450);
     lv_obj_align(dd_fan, LV_ALIGN_TOP_RIGHT, -10, btn_y);
-    
-    String cur_speed = HaWebsocketLogic_GetFanSpeed(cur_vacuum_entity);
-    int sel_idx = 0;
-    if (cur_speed == "medium") {
-        sel_idx = 1;
-    } else if (cur_speed == "high") {
-        sel_idx = 2;
-    } else if (cur_speed == "max") {
-        sel_idx = 3;
+
+    // Saugstufen so, wie der Sauger sie meldet (fan_speed_list). Hersteller
+    // nennen sie sehr unterschiedlich ("Quiet", "Turbo", "gentle", ...);
+    // die feste Liste low/medium/high/max passte oft nicht. Nur ohne Angabe
+    // von HA wird auf diese Liste zurueckgegriffen.
+    std::vector<String> speeds = HaWebsocketLogic_GetFanSpeedList(cur_vacuum_entity);
+    if (speeds.empty()) speeds = { "low", "medium", "high", "max" };
+
+    const String cur_speed = HaWebsocketLogic_GetFanSpeed(cur_vacuum_entity);
+    String opts;
+    uint16_t sel_idx = 0;
+    for (size_t i = 0; i < speeds.size(); i++) {
+        if (i > 0) opts += "\n";
+        opts += speeds[i];
+        if (speeds[i] == cur_speed) sel_idx = (uint16_t)i;
     }
+    lv_dropdown_set_options(dd_fan, opts.c_str());
     lv_dropdown_set_selected(dd_fan, sel_idx);
 
     lv_obj_add_event_cb(dd_fan, [](lv_event_t* e) {
         lv_obj_t* dd = lv_event_get_target(e);
-        char buf[32];
+        char buf[64];
         lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
         HaWebsocketLogic_CallVacuumSetFanSpeed(cur_vacuum_entity, String(buf));
     }, LV_EVENT_VALUE_CHANGED, NULL);

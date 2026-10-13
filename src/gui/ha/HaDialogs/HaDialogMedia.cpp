@@ -3,6 +3,7 @@
 #include "HaWebsocketLogic.h"
 #include "HaConfigLogic.h" // Fuer das Hinzufuegen von Widgets
 #include "SharedData.h"
+#include "UIHelper.h"
 
 static lv_obj_t* media_control_overlay = nullptr;
 static lv_obj_t* cur_media_slider = nullptr;
@@ -21,6 +22,27 @@ void HaDialogMedia::resetState() {
     browser_spinner = nullptr;
     browser_lbl_error = nullptr;
 }
+
+// Neue Anfrage im Browser: Spinner zeigen, Liste und Fehlermeldung ausblenden.
+static void requestFolder(const String& type = "", const String& id = "") {
+    if (browser_list) lv_obj_add_flag(browser_list, LV_OBJ_FLAG_HIDDEN);
+    if (browser_lbl_error) lv_obj_add_flag(browser_lbl_error, LV_OBJ_FLAG_HIDDEN);
+    if (browser_spinner) lv_obj_clear_flag(browser_spinner, LV_OBJ_FLAG_HIDDEN);
+    HaWebsocketLogic_RequestBrowseMedia(cur_media_entity, type, id);
+}
+
+static void closeBrowser() {
+    // Laufende Anfrage verwerfen, damit ihre Antwort nicht beim naechsten
+    // Oeffnen (evtl. fuer einen anderen Player) erscheint.
+    HaWebsocketLogic_CancelMediaBrowse();
+    if (browser_overlay) {
+        lv_obj_del_async(browser_overlay);
+        browser_overlay = nullptr;
+    }
+}
+
+// Hoechstzahl angezeigter Eintraege je Ordner.
+static const size_t MAX_BROWSER_ROWS = 100;
 
 static void buildBrowserList() {
     if (!browser_list) return;
@@ -43,14 +65,15 @@ static void buildBrowserList() {
     lv_obj_add_flag(row_back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(row_back, [](lv_event_t* e) {
         playToneI2S(800, 100, true);
-        lv_obj_add_flag(browser_list, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(browser_spinner, LV_OBJ_FLAG_HIDDEN);
-        HaWebsocketLogic_RequestBrowseMedia(cur_media_entity); 
+        requestFolder();
     }, LV_EVENT_CLICKED, NULL);
 
-    // Listenelemente
-    for (int i = 0; i < currentMediaFolder.size(); i++) {
-        const auto& item = currentMediaFolder[i];
+    // Listenelemente (begrenzt: jede Zeile kostet mehrere LVGL-Objekte)
+    const size_t count = HaWebsocketLogic_MediaFolderCount();
+    const size_t shown = count < MAX_BROWSER_ROWS ? count : MAX_BROWSER_ROWS;
+    for (size_t i = 0; i < shown; i++) {
+        MediaBrowserItem item;
+        if (!HaWebsocketLogic_GetMediaItem(i, item)) break;
         
         lv_obj_t* row = lv_obj_create(browser_list);
         lv_obj_set_width(row, lv_pct(100));
@@ -82,17 +105,14 @@ static void buildBrowserList() {
         lv_obj_add_event_cb(btn_main, [](lv_event_t* e) {
             playToneI2S(1000, 50, true);
             int idx = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target(e));
-            if (idx >= 0 && idx < currentMediaFolder.size()) {
-                const auto& selItem = currentMediaFolder[idx];
+            MediaBrowserItem selItem;   // Kopie aus dem Ordner
+            if (idx >= 0 && HaWebsocketLogic_GetMediaItem((size_t)idx, selItem)) {
                 if (selItem.can_expand) {
-                    lv_obj_add_flag(browser_list, LV_OBJ_FLAG_HIDDEN);
-                    lv_obj_clear_flag(browser_spinner, LV_OBJ_FLAG_HIDDEN);
-                    HaWebsocketLogic_RequestBrowseMedia(cur_media_entity, selItem.media_content_type, selItem.media_content_id);
+                    requestFolder(selItem.media_content_type, selItem.media_content_id);
                 } 
                 else if (selItem.can_play) {
                     HaWebsocketLogic_CallPlayMedia(cur_media_entity, selItem.media_content_type, selItem.media_content_id);
-                    lv_obj_del_async(browser_overlay);
-                    browser_overlay = nullptr;
+                    closeBrowser();
                 }
             }
         }, LV_EVENT_CLICKED, NULL);
@@ -114,8 +134,9 @@ static void buildBrowserList() {
                 playToneI2S(1500, 80, true); 
                 int idx = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target(e));
                 
-                if (idx >= 0 && idx < currentMediaFolder.size()) {
-                    const auto& selItem = currentMediaFolder[idx];
+                MediaBrowserItem selItem;
+                
+                if (idx >= 0 && HaWebsocketLogic_GetMediaItem((size_t)idx, selItem)) {
                     
                     uint16_t act_tab = ViewHomeAssistant::currentActiveTab;
                     if (act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
@@ -155,6 +176,11 @@ void HaDialogMedia::update() {
             pendingMediaBrowserError = false;
             lv_obj_add_flag(browser_spinner, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(browser_lbl_error, LV_OBJ_FLAG_HIDDEN);
+            // Liste mit nur dem "Hauptverzeichnis"-Eintrag zeigen - frueher
+            // gab es nach einem Fehler keinen Weg zurueck ausser Schliessen.
+            HaWebsocketLogic_ClearMediaFolder();
+            lv_obj_clear_flag(browser_list, LV_OBJ_FLAG_HIDDEN);
+            buildBrowserList();
         }
     }
 }
@@ -162,18 +188,16 @@ void HaDialogMedia::update() {
 static void showBrowserOverlay() {
     if (browser_overlay != nullptr) return;
     
-    HaWebsocketLogic_RequestBrowseMedia(cur_media_entity);
+    // Reste einer frueheren Sitzung (evtl. anderer Player) verwerfen.
+    HaWebsocketLogic_CancelMediaBrowse();
 
-    browser_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(browser_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(browser_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(browser_overlay, 230, 0); 
-    lv_obj_add_flag(browser_overlay, LV_OBJ_FLAG_CLICKABLE);
+    browser_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 230, &browser_overlay);
 
     lv_obj_t* panel = lv_obj_create(browser_overlay);
     lv_obj_set_size(panel, 800, 600);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
     
     lv_obj_t* lbl_title = lv_label_create(panel);
     lv_label_set_text(lbl_title, "Medien Browser");
@@ -181,7 +205,7 @@ static void showBrowserOverlay() {
     lv_obj_set_style_text_color(lbl_title, lv_color_white(), 0);
     lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 10);
 
-    // NEU: Separater Schliessen-Button (oben rechts)
+    // Schliessen (oben rechts)
     lv_obj_t* btn_close = lv_btn_create(panel);
     lv_obj_set_size(btn_close, 50, 50);
     lv_obj_align(btn_close, LV_ALIGN_TOP_RIGHT, 0, 0);
@@ -190,8 +214,7 @@ static void showBrowserOverlay() {
     lv_label_set_text(lbl_close, LV_SYMBOL_CLOSE);
     lv_obj_center(lbl_close);
     lv_obj_add_event_cb(btn_close, [](lv_event_t* e) {
-        lv_obj_del_async(browser_overlay); 
-        browser_overlay = nullptr;
+        closeBrowser();
     }, LV_EVENT_CLICKED, NULL);
 
     browser_spinner = lv_spinner_create(panel, 1000, 60);
@@ -200,8 +223,8 @@ static void showBrowserOverlay() {
 
     browser_lbl_error = lv_label_create(panel);
     lv_label_set_text(browser_lbl_error, "Keine Medien verfuegbar.");
-    lv_obj_set_style_text_color(browser_lbl_error, lv_color_hex(0xAA0000), 0);
-    lv_obj_align(browser_lbl_error, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(browser_lbl_error, lv_color_hex(0xE74C3C), 0);
+    lv_obj_align(browser_lbl_error, LV_ALIGN_TOP_MID, 0, 55);   // ueber der Liste
     lv_obj_add_flag(browser_lbl_error, LV_OBJ_FLAG_HIDDEN);
 
     // Die Liste (wird durch buildBrowserList befuellt)
@@ -211,6 +234,10 @@ static void showBrowserOverlay() {
     lv_obj_set_style_bg_color(browser_list, lv_color_hex(0x111111), 0);
     lv_obj_set_style_pad_all(browser_list, 10, 0);
     lv_obj_add_flag(browser_list, LV_OBJ_FLAG_HIDDEN);
+
+    // Erst jetzt anfragen: alle Anzeigeobjekte existieren, und ein sofortiger
+    // Fehler (keine Verbindung) kann direkt angezeigt werden.
+    requestFolder();
 }
 
 void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
@@ -229,12 +256,7 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
     if (artist.length() == 0) artist = "Unbekannt";
     if (vol < 0) vol = 0.5f; 
 
-    media_control_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(media_control_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(media_control_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(media_control_overlay, 180, 0); 
-    lv_obj_add_flag(media_control_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(media_control_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    media_control_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 180, &media_control_overlay);
 
     lv_obj_t* panel = lv_obj_create(media_control_overlay);
     
@@ -249,7 +271,7 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
     lv_obj_set_style_text_color(lbl_header, lv_color_white(), 0);
     lv_obj_align(lbl_header, LV_ALIGN_TOP_MID, 0, 10);
 
-    // FIX: Power Button Oben Links platziert
+    // Ein/Aus (oben links)
     lv_obj_t* btn_power = lv_btn_create(panel);
     lv_obj_set_size(btn_power, 60, 50);
     lv_obj_align(btn_power, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -420,4 +442,4 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
         float new_vol = lv_slider_get_value(sl) / 100.0f;
         HaWebsocketLogic_CallMediaVolumeService(cur_media_entity, new_vol);
     }, LV_EVENT_RELEASED, NULL);
-}
+}

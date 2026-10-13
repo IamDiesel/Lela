@@ -10,5 +10,6 @@ public:
 
 private:
     lv_obj_t* dropdown;
+    String applied_options;   // zuletzt gesetzte Optionsliste
     static void dropdown_event_cb(lv_event_t * e);
 };

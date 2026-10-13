@@ -3,7 +3,14 @@
 #include "HaWebsocketLogic.h"
 #include "SharedData.h"
 #include "HaConfigLogic.h"
+#include "UIHelper.h"
 #include <lvgl.h>
+
+// Laenger als das wartet niemand auf HA. Danach wird abgebrochen und ein
+// Fehler angezeigt - frueher blieb das Ladefenster im Fehlerfall fuer immer
+// stehen und blockierte den ganzen HA-Screen.
+static const uint32_t IMPORT_TIMEOUT_MS = 20000;
+static uint32_t loading_since = 0;
 
 static lv_obj_t* import_overlay = nullptr;
 static lv_obj_t* dd_dashboards = nullptr;
@@ -27,30 +34,46 @@ bool HaDialogImport::isAnyOverlayActive() {
     return import_overlay != nullptr || view_overlay != nullptr || error_overlay != nullptr || loading_overlay != nullptr;
 }
 
+// Bricht den laufenden Import ab: Anfragen verwerfen, offene Meldungen
+// zuruecknehmen, Ladefenster schliessen.
+static void cancelImport() {
+    HaWebsocketLogic_CancelImport();
+    pendingDashboardList = false;
+    pendingViewList = false;
+    pendingImportError = false;
+    isImporting = false;
+    HaDialogImport::hideLoadingPopup();
+}
+
 void HaDialogImport::showLoadingPopup(const char* text) {
     if (loading_overlay == nullptr) {
-        loading_overlay = lv_obj_create(ViewHomeAssistant::screen);
-        lv_obj_set_size(loading_overlay, 1280, 720);
-        lv_obj_set_style_bg_color(loading_overlay, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(loading_overlay, 200, 0);
-        lv_obj_clear_flag(loading_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+        loading_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200, &loading_overlay);
 
         lv_obj_t* panel = lv_obj_create(loading_overlay);
-        lv_obj_set_size(panel, 400, 200);
+        lv_obj_set_size(panel, 420, 290);
         lv_obj_center(panel);
         lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
         lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+        lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t* spinner = lv_spinner_create(panel, 1000, 60);
         lv_obj_set_size(spinner, 80, 80);
-        lv_obj_align(spinner, LV_ALIGN_TOP_MID, 0, 20);
+        lv_obj_align(spinner, LV_ALIGN_TOP_MID, 0, 10);
 
         loading_label = lv_label_create(panel);
         lv_obj_set_style_text_font(loading_label, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(loading_label, lv_color_white(), 0);
-        lv_obj_align(loading_label, LV_ALIGN_BOTTOM_MID, 0, -30);
+        lv_obj_align(loading_label, LV_ALIGN_TOP_MID, 0, 110);
+
+        // Abbrechen ist jederzeit moeglich.
+        UIHelper::createButton(panel, 200, 55, LV_ALIGN_BOTTOM_MID, 0, -5, 0x555555, "Abbrechen",
+                               [](lv_event_t* e) {
+                                   playToneI2S(600, 100, true);
+                                   cancelImport();
+                               });
     }
     lv_label_set_text(loading_label, text);
+    loading_since = millis();   // jeder Schritt bekommt die volle Wartezeit
 }
 
 void HaDialogImport::hideLoadingPopup() {
@@ -63,11 +86,7 @@ void HaDialogImport::hideLoadingPopup() {
 
 void HaDialogImport::showDashboardSelectionPopup() {
     playToneI2S(800, 100, true);
-    import_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(import_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(import_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(import_overlay, 200, 0);
-    lv_obj_clear_flag(import_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+    import_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200, &import_overlay);
 
     lv_obj_t* panel = lv_obj_create(import_overlay);
     lv_obj_set_size(panel, 600, 400);
@@ -133,11 +152,7 @@ void HaDialogImport::showDashboardSelectionPopup() {
 
 void HaDialogImport::showViewSelectionPopup() {
     playToneI2S(800, 100, true);
-    view_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(view_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(view_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(view_overlay, 200, 0);
-    lv_obj_clear_flag(view_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+    view_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200, &view_overlay);
 
     lv_obj_t* panel = lv_obj_create(view_overlay);
     lv_obj_set_size(panel, 600, 400);
@@ -208,11 +223,7 @@ void HaDialogImport::showViewSelectionPopup() {
 
 void HaDialogImport::showImportErrorPopup() {
     playToneI2S(600, 200, true);
-    error_overlay = lv_obj_create(ViewHomeAssistant::screen);
-    lv_obj_set_size(error_overlay, 1280, 720);
-    lv_obj_set_style_bg_color(error_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(error_overlay, 200, 0);
-    lv_obj_clear_flag(error_overlay, LV_OBJ_FLAG_GESTURE_BUBBLE); 
+    error_overlay = UIHelper::createModalOverlay(ViewHomeAssistant::screen, 200, &error_overlay);
 
     lv_obj_t* panel = lv_obj_create(error_overlay);
     lv_obj_set_size(panel, 640, 300);
@@ -222,7 +233,6 @@ void HaDialogImport::showImportErrorPopup() {
 
     lv_obj_t* lbl = lv_label_create(panel);
     
-    // FIX: Nutze die rein globale Variable ohne lokales 'extern'
     lv_label_set_text(lbl, ::importErrorMessage.c_str());
     
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
@@ -245,6 +255,13 @@ void HaDialogImport::showImportErrorPopup() {
 }
 
 void HaDialogImport::checkPendingEvents() {
+    // Zeitueberschreitung: HA antwortet nicht (Verbindung weg, Anfrage verloren).
+    if (loading_overlay != nullptr && millis() - loading_since > IMPORT_TIMEOUT_MS) {
+        cancelImport();
+        importErrorMessage = "Keine Antwort von Home Assistant.\nBitte spaeter erneut versuchen.";
+        pendingImportError = true;
+    }
+
     if (pendingDashboardList) { pendingDashboardList = false; hideLoadingPopup(); showDashboardSelectionPopup(); }
     if (pendingViewList) { pendingViewList = false; hideLoadingPopup(); showViewSelectionPopup(); }
     if (pendingImportError) { pendingImportError = false; hideLoadingPopup(); showImportErrorPopup(); }

@@ -2,14 +2,8 @@
 #include "HaWebsocketLogic.h"
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include "HaPsramAllocator.h"
 
-class CallerRamAllocator : public ArduinoJson::Allocator {
-public:
-    void* allocate(size_t size) override { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
-    void deallocate(void* pointer) override { heap_caps_free(pointer); }
-    void* reallocate(void* pointer, size_t new_size) override { return heap_caps_realloc(pointer, new_size, MALLOC_CAP_SPIRAM); }
-};
-static CallerRamAllocator callerAlloc;
 
 void HaServiceCaller::CallService(String domain, String service, String entity_id) {
     CallServiceWithData(domain, service, entity_id, "");
@@ -18,8 +12,7 @@ void HaServiceCaller::CallService(String domain, String service, String entity_i
 void HaServiceCaller::CallServiceWithData(String domain, String service, String entity_id, String json_data) {
     if (!HaWebsocketLogic_IsConnected()) return;
     
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = domain;
     doc["service"] = service;
@@ -36,42 +29,35 @@ void HaServiceCaller::CallServiceWithData(String domain, String service, String 
         }
     }
 
-    String payload; 
-    serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
-// --- NEU: Senden von einfachen Cover-Befehlen (open, close, stop) ---
+// Rollladen: open_cover, close_cover, stop_cover
 void HaServiceCaller::CallCoverService(String entity_id, String service) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "cover";
     doc["service"] = service; // "open_cover", "close_cover" oder "stop_cover"
     doc["target"]["entity_id"] = entity_id;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
-// --- NEU: Senden der exakten Rollladen-Position in % ---
+// Rollladen auf Position (0-100 %) fahren
 void HaServiceCaller::CallCoverPosition(String entity_id, int position) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "cover";
     doc["service"] = "set_cover_position";
     doc["target"]["entity_id"] = entity_id;
     doc["service_data"]["position"] = position;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
 void HaServiceCaller::CallLightService(String entity_id, int brightness, int r, int g, int b, int w) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "light";
     doc["service"] = "turn_on";
@@ -88,8 +74,7 @@ void HaServiceCaller::CallLightService(String entity_id, int brightness, int r, 
             rgb.add(r); rgb.add(g); rgb.add(b);
         }
     }
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
 void HaServiceCaller::CallLightServiceTemp(String entity_id, int brightness, int color_temp) {
@@ -97,8 +82,7 @@ void HaServiceCaller::CallLightServiceTemp(String entity_id, int brightness, int
         return;
     }
     
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "light";
     doc["service"] = "turn_on";
@@ -108,181 +92,163 @@ void HaServiceCaller::CallLightServiceTemp(String entity_id, int brightness, int
     if (brightness >= 0) {
         service_data["brightness"] = brightness;
     }
-    if (color_temp >= 0) {
-        service_data["color_temp"] = color_temp;
+    if (color_temp > 0) {
+        // HA hat den Parameter color_temp (Mired) 2026 entfernt; ein Aufruf
+        // damit schlaegt fehl. Die Oberflaeche rechnet intern weiter in Mired,
+        // gesendet wird Kelvin (K = 1e6 / Mired).
+        service_data["color_temp_kelvin"] = 1000000 / color_temp;
     }
 
-    String payload; 
-    serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
 void HaServiceCaller::CallMediaService(String entity_id, String service) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "media_player";
     doc["service"] = service;
     doc["target"]["entity_id"] = entity_id;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
 void HaServiceCaller::CallMediaVolumeService(String entity_id, float volume) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "media_player";
     doc["service"] = "volume_set";
     doc["target"]["entity_id"] = entity_id;
     doc["service_data"]["volume_level"] = volume;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
 void HaServiceCaller::CallMediaSelectSource(String entity_id, String source) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "media_player";
     doc["service"] = "select_source";
     doc["target"]["entity_id"] = entity_id;
     doc["service_data"]["source"] = source;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
 void HaServiceCaller::RequestBrowseMedia(String entity_id, String media_content_type, String media_content_id) {
-    if (!HaWebsocketLogic_IsConnected()) return;
-    lastMediaBrowseReqId = HaWebsocketLogic_GetNextMessageId();
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = lastMediaBrowseReqId;
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "media_player/browse_media";
     doc["entity_id"] = entity_id;
     if (media_content_type.length() > 0) doc["media_content_type"] = media_content_type;
     if (media_content_id.length() > 0) doc["media_content_id"] = media_content_id;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+
+    // Nicht gesendet (keine Verbindung): Fehler melden, sonst dreht der
+    // Lade-Spinner im Browser endlos.
+    if (!HaWebsocketLogic_IsConnected() || HaWebsocketLogic_SendRequest(doc, &lastMediaBrowseReqId) == 0) {
+        pendingMediaBrowserError = true;
+    }
 }
 
 void HaServiceCaller::CallPlayMedia(String entity_id, String media_content_type, String media_content_id) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "media_player";
     doc["service"] = "play_media";
     doc["target"]["entity_id"] = entity_id;
     doc["service_data"]["media_content_type"] = media_content_type;
     doc["service_data"]["media_content_id"] = media_content_id;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
+}
+
+// Gemeinsame Fehlermeldung, wenn eine Import-Anfrage nicht rausgeht. Ohne sie
+// blieb das Ladefenster stehen (frueher stille Returns).
+static void reportImportNotSent() {
+    importErrorMessage = "Keine aktive Verbindung zu Home Assistant!\nBitte warte einen Moment.";
+    pendingImportError = true;
 }
 
 void HaServiceCaller::RequestDashboardList(int target_tab_index) {
-    if (!HaWebsocketLogic_IsConnected()) {
-        importErrorMessage = "Keine aktive Verbindung zu Home Assistant!\nBitte warte einen Moment.";
-        pendingImportError = true;
-        return;
-    }
     currentImportTab = target_tab_index;
-    lastLovelaceDashboardsReqId = HaWebsocketLogic_GetNextMessageId();
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = lastLovelaceDashboardsReqId;
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "get_panels";
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    if (!HaWebsocketLogic_IsConnected() || HaWebsocketLogic_SendRequest(doc, &lastLovelaceDashboardsReqId) == 0) {
+        reportImportNotSent();
+    }
 }
 
 void HaServiceCaller::RequestDashboardViews(String url_path) {
-    if (!HaWebsocketLogic_IsConnected()) return;
     requestingViewsOnly = true;
     currentImportUrl = url_path;
-    lastLovelaceReqId = HaWebsocketLogic_GetNextMessageId();
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = lastLovelaceReqId;
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "lovelace/config";
     if (url_path.length() > 0 && url_path != "lovelace") doc["url_path"] = url_path;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    if (!HaWebsocketLogic_IsConnected() || HaWebsocketLogic_SendRequest(doc, &lastLovelaceReqId) == 0) {
+        reportImportNotSent();
+    }
 }
 
 void HaServiceCaller::RequestDashboardCards(String url_path, int view_index) {
-    if (!HaWebsocketLogic_IsConnected()) return;
     requestingViewsOnly = false;
     targetViewIndex = view_index;
-    lastLovelaceReqId = HaWebsocketLogic_GetNextMessageId();
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = lastLovelaceReqId;
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "lovelace/config";
     if (url_path.length() > 0 && url_path != "lovelace") doc["url_path"] = url_path;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    if (!HaWebsocketLogic_IsConnected() || HaWebsocketLogic_SendRequest(doc, &lastLovelaceReqId) == 0) {
+        reportImportNotSent();
+    }
 }
 
 void HaServiceCaller::CallVacuumService(String entity_id, String service) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "vacuum";
     doc["service"] = service;
     doc["target"]["entity_id"] = entity_id;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
 void HaServiceCaller::CallVacuumSetFanSpeed(String entity_id, String speed) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "vacuum";
     doc["service"] = "set_fan_speed";
     doc["target"]["entity_id"] = entity_id;
     doc["service_data"]["fan_speed"] = speed;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 // [...] (Bestehende Methoden bleiben unveraendert)
 
-// --- NEU: Zieltemperatur setzen ---
+// Klima: Zieltemperatur setzen
 void HaServiceCaller::CallClimateSetTemperature(String entity_id, float temperature) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "climate";
     doc["service"] = "set_temperature";
     doc["target"]["entity_id"] = entity_id;
     doc["service_data"]["temperature"] = temperature;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
-// --- NEU: Modus (Heizen/Kuehlen/Auto/Aus) setzen ---
+// Klima: Modus (heat/cool/auto/off ...) setzen
 void HaServiceCaller::CallClimateSetHvacMode(String entity_id, String hvac_mode) {
     if (!HaWebsocketLogic_IsConnected()) return;
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     doc["domain"] = "climate";
     doc["service"] = "set_hvac_mode";
     doc["target"]["entity_id"] = entity_id;
     doc["service_data"]["hvac_mode"] = hvac_mode;
-    String payload; serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
 
-// --- NEU: Text senden (fuer input_text und text) ---
+// Text setzen (text.* und input_text.*)
 void HaServiceCaller::CallTextSetValue(String entity_id, String value) {
     if (!HaWebsocketLogic_IsConnected()) return;
     
-    JsonDocument doc(&callerAlloc);
-    doc["id"] = HaWebsocketLogic_GetNextMessageId();
+    JsonDocument doc(HaPsramAlloc());
     doc["type"] = "call_service";
     
     // Die Domaene entscheidet sich nach dem Praefix
@@ -291,7 +257,5 @@ void HaServiceCaller::CallTextSetValue(String entity_id, String value) {
     doc["target"]["entity_id"] = entity_id;
     doc["service_data"]["value"] = value;
     
-    String payload; 
-    serializeJson(doc, payload);
-    HaWebsocketLogic_SendPayload(payload);
+    HaWebsocketLogic_SendRequest(doc);
 }
