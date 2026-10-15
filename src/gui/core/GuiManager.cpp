@@ -5,7 +5,9 @@
 #include "ViewSettings.h"
 #include "ViewQuickSettings.h"
 #include "ViewBootScreen.h"
-#include "ViewPower.h" // NEU
+#include "ViewPower.h"
+#include "ViewPopups.h"
+#include "ViewVideoPip.h"
 #include "LVGL_Driver.h" 
 #include "SharedData.h" 
 #include <WiFi.h>       
@@ -35,6 +37,8 @@ void GuiManager::init() {
     xTaskCreatePinnedToCore(configPreloadTask, "Preload_HA_Config", 8192, NULL, 1, NULL, 0);
 
     ViewPower::init();          // Timer fuer Display-Wakeup bei Alarmen
+    ViewVideoPip::init();       // Video-Overlay auf der obersten Ebene (anfangs verborgen)
+    ViewPopups::init();         // Alarm-Popups danach - sie liegen ueber dem Overlay
     ViewBootScreen::show();     // Vektorgrafiken und Ladesequenz
 }
 
@@ -47,8 +51,20 @@ void GuiManager::switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type) 
         return;
     }
 
+    // Unter der LVGL-Sperre: der Wechsel loescht den alten Bildschirm, waehrend
+    // der Video-Decoder-Task (eigene Task, ebenfalls unter dieser Sperre) noch
+    // in dessen Bildobjekt schreiben koennte. Aufrufe aus LVGL-Callbacks halten
+    // die Sperre bereits; sie ist rekursiv.
+    if (!lvgl_port_lock(portMAX_DELAY)) {
+        return;
+    }
+
+    // Das Vollbild gehoert zur Baby-Ansicht. Wird sie verlassen, ohne den
+    // Vollbildmodus zu beenden (z.B. durch einen Alarm), bliebe vidFSMode
+    // gesetzt: die Hauptschleife ruft dann kein lv_timer_handler() mehr auf,
+    // und die neue Ansicht waere eingefroren.
     if (currentScreen == SCREEN_BABY) {
-        requestBabyStream = false;
+        vidFSMode = false;
     }
 
     if (newScreen == SCREEN_HA) {
@@ -88,6 +104,8 @@ void GuiManager::switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type) 
         lv_scr_load_anim(nextScr, anim_type, 0, 0, true);
         currentScreen = newScreen;
     }
+
+    lvgl_port_unlock();
 }
 
 void GuiManager::gestureEventWrapper(lv_event_t * e) { 

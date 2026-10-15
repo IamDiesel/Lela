@@ -16,7 +16,6 @@
 #include "HaDialogTab.h"
 #include "HaEditToolbar.h"
 #include "HaDialogFolder.h" 
-#include "HeapMonitor.h"
 
 #include <algorithm> 
 
@@ -264,8 +263,6 @@ void ViewHomeAssistant::update() {
     // im loopTask auswerten (sie veraendern Daten, die die Oberflaeche liest).
     HaWebsocketLogic_ProcessPendingResponses();
 
-    // Diagnose: Stand des internen RAMs (siehe HeapMonitor.h).
-    HeapMonitor_Update();
     HaDialogImport::checkPendingEvents();
     HaDialogMedia::update();
 

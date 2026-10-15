@@ -1,5 +1,7 @@
 #include "ViewTopbar.h"
 #include "SharedData.h"
+#include "BabyService.h"
+#include "CrashDiag.h"
 #include <WiFi.h>
 #include <M5Unified.h>
 
@@ -7,6 +9,8 @@ static lv_obj_t * top_bar_obj = nullptr;
 static lv_obj_t * top_label_clock = nullptr;
 static lv_obj_t * top_icon_ble = nullptr;
 static lv_obj_t * top_icon_ha = nullptr;
+static lv_obj_t * top_icon_baby = nullptr;   // laufender Babyphone-Modus
+static lv_obj_t * top_label_audio_warn = nullptr;   // Hinweis nach Absturz
 
 static lv_obj_t * top_icon_bat = nullptr;
 static lv_obj_t * top_icon_charge = nullptr;
@@ -21,6 +25,7 @@ static int s_top_iconBleState = -1;
 static int s_top_wifiStatus = -1;
 static int s_top_batteryPercent = -1;
 static bool s_top_lastCharging = false; 
+static int s_top_babyMode = -1;
 
 static uint32_t s_last_slow_update = 0;
 static int s_cachedWifiStatus = 0;
@@ -31,6 +36,7 @@ void ViewTopbar_Create(lv_obj_t* parent) {
     s_top_wifiStatus = -1; 
     s_top_batteryPercent = -1;
     s_top_lastCharging = false;
+    s_top_babyMode = -1;
     
     s_last_slow_update = 0; 
     s_topbarStatusMsg = "";
@@ -68,6 +74,31 @@ void ViewTopbar_Create(lv_obj_t* parent) {
     lv_obj_set_style_text_font(top_icon_ha, &lv_font_montserrat_24, 0); 
     lv_label_set_text(top_icon_ha, LV_SYMBOL_HOME); 
     lv_obj_align(top_icon_ha, LV_ALIGN_TOP_MID, -100, 20); 
+
+    // Zeigt auf jedem Bildschirm, dass das Babyphone im Hintergrund laeuft -
+    // im Modus "Nur Audio" gibt es sonst keinen sichtbaren Hinweis darauf.
+    top_icon_baby = lv_label_create(top_bar_obj);
+    lv_obj_set_style_text_font(top_icon_baby, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(top_icon_baby, lv_color_hex(0x00A0FF), 0);
+    lv_label_set_text(top_icon_baby, "");
+    lv_obj_align(top_icon_baby, LV_ALIGN_TOP_MID, 270, 20);
+
+    // Nach einem Absturz kann der Ton stumm bleiben, bis das Geraet einmal
+    // stromlos war (siehe CrashDiag_AudioMayBeMuted). Der Zustand aendert
+    // sich waehrend eines Laufs nicht - der Hinweis wird also nur einmal hier
+    // gesetzt. Zwei kurze Zeilen passen rechts in die Kopfleiste.
+    if (CrashDiag_AudioMayBeMuted()) {
+        top_label_audio_warn = lv_label_create(top_bar_obj);
+        lv_obj_set_style_text_font(top_label_audio_warn, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(top_label_audio_warn, lv_color_hex(0xFF8800), 0);
+        lv_obj_set_style_text_align(top_label_audio_warn, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_label_set_text(top_label_audio_warn,
+                          LV_SYMBOL_WARNING " Nach Absturz: Ton evtl. stumm\n"
+                          "Einmal stromlos neu starten");
+        lv_obj_align(top_label_audio_warn, LV_ALIGN_TOP_RIGHT, -16, 18);
+    } else {
+        top_label_audio_warn = nullptr;
+    }
     
     top_icon_bat = lv_label_create(top_bar_obj); 
     lv_obj_set_style_text_font(top_icon_bat, &lv_font_montserrat_24, 0); 
@@ -112,6 +143,21 @@ void ViewTopbar_Update() {
                 s_top_clock_min = timeinfo.tm_min;
             }
         }
+    }
+
+    const BabyMode babyMode = BabyService_GetMode();
+    if (s_top_babyMode != (int)babyMode) {
+        const char* txt = "";
+        switch (babyMode) {
+            case BabyMode::Off:        txt = "";                                  break;
+            case BabyMode::AudioOnly:  txt = LV_SYMBOL_AUDIO;                     break;
+            case BabyMode::Video:      txt = LV_SYMBOL_VIDEO;                     break;
+            case BabyMode::VideoAudio: txt = LV_SYMBOL_VIDEO " " LV_SYMBOL_AUDIO; break;
+        }
+        lv_label_set_text(top_icon_baby, txt);
+        // Neu ausrichten: die Breite haengt vom Text ab (rechts neben dem Akku).
+        lv_obj_align(top_icon_baby, LV_ALIGN_TOP_MID, 270, 20);
+        s_top_babyMode = (int)babyMode;
     }
 
     bool fastBlink = (millis() % 600 < 300);

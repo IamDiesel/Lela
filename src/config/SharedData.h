@@ -17,7 +17,7 @@
 
 enum GraphMode { GRAPH_MODE_PRESSURE = 0, GRAPH_MODE_BLE_RSSI, GRAPH_MODE_WLAN_RSSI, GRAPH_MODE_BLE_INTERVAL, GRAPH_MODE_KIPPY_RSSI };
 
-// NEU: volumeChannel: 0=UI, 1=Alarm, 2=Baby
+// Ton-Auftrag fuer audioTask(). volumeChannel: 0=UI, 1=Alarm, 2=Baby (Mixer-Kanal)
 struct AudioMsg { uint16_t freq; uint32_t duration; uint8_t soundType; uint8_t volumeChannel; };
 
 extern SemaphoreHandle_t bleMutex;
@@ -29,6 +29,23 @@ extern int audioLogIdx;
 extern void addAudioLog(String msg);
 
 extern bool babyAlarmActive;
+
+// Alarm-Quittierung - getrennt von der Stummschaltung im Mixer.
+//
+// Frueher stand hier muteAlarm/muteBaby in Doppelfunktion: Mixer-Stumm UND
+// "Alarm quittiert". Folgen: Wer den Baby-Alarm quittierte, hoerte das Baby
+// nicht mehr; wer den Katzenalarm quittierte, brachte auch einen gleichzeitigen
+// Baby-Alarm zum Schweigen; und jeder neue Alarm hob eine bewusst gesetzte
+// Mixer-Stummschaltung wieder auf.
+//
+// Jetzt gilt:
+//   catAlarmAcked  - Katzen- und Verbindungsalarm quittiert (Ton und Popup aus,
+//                    Alarm bleibt bis zum Zuruecksetzen bestehen)
+//   babyAlarmAcked - Baby-Alarm quittiert
+//   muteAlarm/muteBaby - ausschliesslich Lautstaerke im Mixer
+// Die Quittierung wird nicht gespeichert; ein Neustart beginnt unquittiert.
+extern bool catAlarmAcked;
+extern bool babyAlarmAcked;
 
 extern String wifiSsid;
 extern String wifiPass;
@@ -170,7 +187,6 @@ extern float stdDevInterval;
 extern bool displayIsOff;
 extern int brightnessPercent;
 extern bool mqttEnabled;
-extern volatile bool requestBabyStream;
 extern volatile int babyStreamStatus; 
 extern volatile bool vidFSMode; 
 

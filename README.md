@@ -32,6 +32,8 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * **Power-Management:** Live-Auslesen von Akkustand und Ladezustand über die M5Unified API.
 * **Task-Management:** Parallele Verarbeitung von WebSockets, GUI-Rendering und Audio-Streaming via FreeRTOS.
 * **Live-Screenshot Engine:** Web-Endpunkt zum Auslesen des RAM-Framebuffers und Download als unkomprimiertes `.BMP`-Bild.
+* **Absturz-Diagnose (`CrashDiag`):** Unterscheidet Kalt- und Warmstart, zählt Abstürze seit dem letzten Stromlos-Machen und legt einen Bericht auf MQTT (`lela/diag/boot`) ab. Nach einem Absturz kann die Audio-Ausgabe stumm bleiben, bis das Gerät einmal stromlos war – die Kopfleiste zeigt dann einen Hinweis.
+* **Speicher-Diagnose (`HeapMonitor`):** `[Heap]`-Zeile im Log mit Bildschirm und Babyphone-Zustand (alle 60 s, mit `HEAP_PROFILE` in `DebugFlags.h` alle 10 s). Entscheidend ist der größte DMA-fähige Block (WLAN-Treiber).
 
 ### 1.2 Home Assistant Integration
 * **WebSocket-Verbindung:** Persistenter, bidirektionaler Echtzeitkanal zu Home Assistant (ohne REST-Polling). Ziel ist die HA-IP/Port aus dem Web-Setup; `secrets.h` dient als Rückfall (leeres Setup oder wiederholt nicht erreichbar). Lebenszeichen per Ping, automatischer Neuaufbau mit wachsender Wartezeit, lange Pausen bei ungültigem Token.
@@ -80,15 +82,27 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * **Hold-Logik:** Interpolation fehlender Datenpunkte in festen Zeitintervallen (10s) zur Wahrung der Zeitachsen-Integrität.
 
 ### 1.5 Audio & Video (Babyphone-Modus)
-* **MJPEG-Video-Stream:** Direkter Abgriff, Dekodierung und Anzeige von HTTP-Kamerastreams. Als Quelle kann hierfür beispielsweise ein altes Smartphone mit der App [BabyCam](https://play.google.com/store/apps/details?id=com.arjonasoftware.babycam) genutzt werden.
-* **Hardware-Audio (I2S):** Soundausgabe und Dekodierung von unkomprimierten (PCM/WAV) und komprimierten (AAC) Audio-Streams.
-* **Latenz-Management:** Konfigurierbarer Frame-Drop-Schwellenwert bei schwacher WLAN-Verbindung.
-* **Alarmierung:** Automatischer Screen-Wakeup via MQTT-Trigger.
+* **Kamera-Quelle:** MJPEG-Video über HTTP und unkomprimiertes PCM-Audio (44,1 kHz, 16 Bit, mono) über UDP. Als Quelle kann beispielsweise ein altes Smartphone mit der App [BabyCam](https://play.google.com/store/apps/details?id=com.arjonasoftware.babycam) dienen.
+* **Babyphone-Dienst (`BabyService`):** Video, Ton und Kamerasitzung hängen nicht am Bildschirm, sondern an einem Modus: **Aus / Audio / Video / Video+Audio**. Ein Bildschirmwechsel ändert den Modus nicht. Nach einem Neustart ist der Modus „Aus“.
+  * Umschalten über die QuickSettings (Zeile „Babyphone“), in der Baby-App (Tippen aufs Bild = Video+Audio an/aus, Audio-Knopf = nur Ton) oder per MQTT.
+  * Die Kopfleiste zeigt den laufenden Modus als Symbol rechts neben dem Akku.
+  * Push-to-Talk (Gegensprechen) gibt es nur in der Baby-App; danach läuft der Babyton von selbst weiter.
+  * Bleibt der Babyton 10 s aus, wird der Wiedergabe-Befehl an die Kamera erneuert (z. B. nach einem WLAN-Abbruch).
+* **Video-Overlay (Bild im Bild):** Läuft Video, erscheint es auf Dashboard, Home Assistant und CatMat als verschiebbares Fenster.
+  * **Kurz tippen** öffnet die Baby-App, **halten oder ziehen** verschiebt das Fenster, der **Griff unten rechts** ändert die Größe (Breite 200–800 px, Seitenverhältnis bleibt). Lage und Größe werden gespeichert.
+  * Es blendet sich automatisch aus bei HA-Dialogen, Tastatur, Bearbeiten-Modus, aufgeklappten Auswahllisten, QuickSettings, Alarm-Popups, abgedunkeltem Bildschirm und Screenshot-Modus. In den Einstellungen wird nicht dekodiert, die Verbindung zur Kamera bleibt aber stehen.
+  * Technik: LVGL zeichnet nur Rahmen und Statuszeile; das Bild skaliert der Hardware-Beschleuniger (PPA) direkt in den Bildspeicher, LVGL spart diese Fläche beim Zeichnen aus (`Lvgl_SetReservedArea`).
+  * Einstellungen (Baby-App → Zahnrad): Overlay-Bildrate (1–15 fps, Standard 5), Overlay-Auflösung (Standard: kleinste, die die Kamera meldet) und „Overlay-Lage zurücksetzen“.
+* **Auflösung je Abnehmer:** Die Baby-App nutzt die eingestellte Kamera-Auflösung, das Overlay seine eigene. Ein Wechsel zwischen beiden startet den Kamerastream neu (~3 s).
+* **Latenz-Modus:** Stauen sich Bilder, wird nur das neueste dekodiert – die Anzeige hängt der Realität nicht hinterher.
+* **Sicherheitsventil:** Wird der interne DMA-fähige Speicher knapp (größter Block < 12 KB), pausiert nur das Video („Video pausiert – Speicher knapp“); Ton und Alarme laufen weiter. Hintergrund: Der WLAN-Treiber braucht dort bis zu 7,5 KB am Stück, sonst startet das Gerät neu.
+* **Alarmierung:** Baby-Alarm per MQTT weckt das Display, öffnet die Baby-App und startet Video+Audio.
 
 ### 1.6 BLE Sensorik (Katzen-Matte & Tracker)
 * **BLE-Scanner:** Integriertes GUI zum Suchen und Binden von Bluetooth-MAC-Adressen.
 * **Druck-Auswertung:** Gleitende Durchschnittsberechnung (Sliding Window) mit Tara-Funktion zur Drift-Kompensation des Matten-Sensors.
 * **Lokaler Alarm:** Optische und akustische Warnungen (Custom I2S Töne) bei Limit-Überschreitungen oder Verbindungsabbruch.
+* **Alarme und Mixer:** Lautstärken (Master, UI, Alarm, Baby) im Mixer der QuickSettings. Das Quittieren eines Alarms (erster Druck) ist davon getrennt: Es schaltet Ton und Popup des Alarms ab, nicht den Mixer-Kanal; der zweite Druck setzt den Alarm zurück. Läuft ein Alarm, der auf dem aktuellen Bildschirm keine eigene Anzeige hat, erscheint ein bildschirmfüllendes Popup (auch auf dem HA-Bildschirm).
 
 ---
 
@@ -110,13 +124,13 @@ Der Quellcode ist modular in folgende Hauptbereiche unterteilt:
 * `src/config/`: Systemweite Konstanten, globale Variablen und Zugangsdaten (`secrets.h`).
 * `src/doc/`: Zusätzliche Dokumentationen und Setup-Hinweise.
 * `src/gui/`: Die vollständige LVGL-Benutzeroberfläche.
-  * `core/`: Haupt-Views (Dashboard, Settings, Topbar) und `GuiManager`.
+  * `core/`: Haupt-Views (Dashboard, Settings, Topbar, QuickSettings, Alarm-Popups), Video-Overlay (`ViewVideoPip`) und `GuiManager`.
   * `ha/`: C++ LVGL-Integration für Home Assistant.
     * `HaWidgets/`: Modulare Widget-Klassen (Base, Light, Sensor, Vacuum, Media).
     * `HaDialogs/`: Gekapselte UI-Popups (Edit, Add, Light, Vacuum, ColorPicker) und die `UIHelper`-Factory für sauberen LVGL-Code.
   * `baby/` & `cat/`: Spezialisierte Ansichten für die Video/Audio- und Sensor-Überwachung.
 * `src/ha/`: Logik für die Home Assistant WebSocket-Kommunikation, JSON-Parsing und Config-Management (`HaConfigLogic`).
-* `src/media/`: Audio- und Video-Streaming-Dienste sowie Puffer-Verwaltung.
+* `src/media/`: Babyphone-Dienst (`BabyService`, Modus und Zustand), Video (`VideoLogic`, `VideoDecoder`), Audio (`AudioStreamLogic`) und Kamera-Steuerung (`BabyCamApi`).
 * `src/system/`: Hardwarenahe Logik (BLE-Scanning, MQTT, WLAN-Handling, lokaler Webserver und LVGL-Treiber-Initialisierung).
 
 ---

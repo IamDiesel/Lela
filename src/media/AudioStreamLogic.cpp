@@ -56,6 +56,13 @@ static const uint8_t  CHUNK_SLOTS     = 3;                  // rotierende Puffer
 
 static const size_t   MIC_SAMPLES     = 512;                // ~11,6 ms je Paket
 
+// Kommt so lange kein Paket, wird der Wiedergabe-Befehl an die Kamera erneuert.
+// Die Kamera sendet unkomprimiertes PCM ohne Pause - auch Stille sind Samples.
+// Bleibt der Strom aus, hat sie den Befehl verloren (WLAN-Abbruch, Kamera-App
+// neu gestartet). Frueher blieb das Babyphone dann stumm, bis jemand den Ton
+// aus- und wieder einschaltete; im Hintergrundbetrieb faellt das niemandem auf.
+static const uint32_t AUDIO_SILENCE_REASSERT_MS = 10000;
+
 // M5Unified 0.2.13 kennt keinen Buffer-Release-Callback, deshalb drei Puffer:
 // zwei koennen gleichzeitig in der Kanal-Warteschlange stehen.
 static int16_t* s_chunk[CHUNK_SLOTS] = { nullptr };
@@ -73,6 +80,30 @@ static volatile size_t s_ringHead = 0;   // Schreibposition - gehoert dem RX-Tas
 static volatile size_t s_ringTail = 0;   // Leseposition   - gehoert dem Audio-Task
 static volatile bool   s_ringOverrun = false;
 static bool s_primed = false;            // Vorlauf erreicht? (nur Audio-Task)
+
+// Zeitpunkt des letzten Lebenszeichens der Kamera: letztes UDP-Paket, Start
+// der Wiedergabe oder letzte Erneuerung des Befehls. Beide Tasks schreiben nur
+// millis() hinein - ein Wettlauf aendert den Wert also um Millisekunden.
+static volatile uint32_t s_lastAliveMs = 0;
+
+#if AUDIO_PROFILE
+// Messwerte fuer [AudioProf]. Jeder Zaehler hat genau einen Schreiber (RX-Task
+// bzw. Audio-Task); zurueckgesetzt wird nur vom Audio-Task. Ein dabei
+// verlorenes Paket faellt bei einer Diagnosezeile nicht ins Gewicht.
+static volatile uint32_t s_profPackets   = 0;   // RX-Task
+static volatile uint32_t s_profBytes     = 0;   // RX-Task
+static uint32_t s_profChunks    = 0;            // an den Lautsprecher gegeben
+static uint32_t s_profEmpty     = 0;            // Wiedergabe wollte, Puffer leer
+static uint32_t s_profQueueFull = 0;            // Kanal-Warteschlange voll
+static int      s_profLastVol   = -1;           // zuletzt gesetzte Kanallautstaerke
+static int32_t  s_profPeak      = 0;            // groesster Betrag eines abgespielten Samples
+static uint64_t s_profAbsSum    = 0;            // Summe der Betraege (fuer den Mittelwert)
+static uint32_t s_profSamples   = 0;            // Anzahl abgespielter Samples
+// Kopf des zuletzt empfangenen Pakets: zeigt, ob vor den Samples noch ein
+// Protokollkopf steht (z.B. RTP beginnt mit 0x80).
+static volatile uint8_t  s_profHead[8] = {0};   // RX-Task
+static volatile uint16_t s_profLastLen = 0;     // RX-Task
+#endif
 
 // ------------------------------------------------------------------------------
 // Kommandos
@@ -393,10 +424,21 @@ static void feedSpeaker() {
 
     // Vorlauf abwarten, sonst startet die Wiedergabe sofort im Underrun.
     if (!s_primed) {
-        if (ringUsed() < PREBUFFER_BYTES) return;
+        if (ringUsed() < PREBUFFER_BYTES) {
+#if AUDIO_PROFILE
+            s_profEmpty++;
+#endif
+            return;
+        }
         s_primed = true;
     }
-    if (ringUsed() == 0) { s_primed = false; return; }
+    if (ringUsed() == 0) {
+#if AUDIO_PROFILE
+        s_profEmpty++;
+#endif
+        s_primed = false;
+        return;
+    }
 
     int16_t* buf = s_chunk[s_chunkIdx];
     if (!buf) return;
@@ -405,7 +447,13 @@ static void feedSpeaker() {
 
     // Warteschlange des Kanals voll? Dann NICHT einreihen - playRaw() wuerde
     // sonst blockieren und den Zulieferer ausbremsen.
-    if (M5.Speaker.isPlaying(0) >= 2) { AudioHw_Unlock(); return; }
+    if (M5.Speaker.isPlaying(0) >= 2) {
+#if AUDIO_PROFILE
+        s_profQueueFull++;
+#endif
+        AudioHw_Unlock();
+        return;
+    }
 
     const size_t got = ringRead((uint8_t*)buf, CHUNK_BYTES);
     if (got < 2) { AudioHw_Unlock(); return; }
@@ -425,6 +473,20 @@ static void feedSpeaker() {
     M5.Speaker.playRaw(buf, got / 2, AUDIO_RATE, false, 1, 0);
 
     AudioHw_Unlock();
+
+#if AUDIO_PROFILE
+    s_profChunks++;
+    s_profLastVol = vol;
+    // Pegel der tatsaechlich abgespielten Samples. Liegt er bei 0, kommt von
+    // der Kamera Stille (z.B. Mikrofon der Kamera-App aus) - dann ist am
+    // Tablet nichts kaputt.
+    for (size_t i = 0; i < got / 2; i++) {
+        const int32_t a = (buf[i] < 0) ? -(int32_t)buf[i] : (int32_t)buf[i];
+        if (a > s_profPeak) s_profPeak = a;
+        s_profAbsSum += (uint32_t)a;
+    }
+    s_profSamples += (uint32_t)(got / 2);
+#endif
 
     s_chunkIdx = (uint8_t)((s_chunkIdx + 1) % CHUNK_SLOTS);
 }
@@ -455,7 +517,16 @@ static void audioRxTask(void*) {
         const int size = udp.parsePacket();
         if (size > 0) {
             const int n = udp.read(packet, sizeof(packet));
-            if (n > 0) ringWrite(packet, (size_t)n);
+            if (n > 0) {
+                ringWrite(packet, (size_t)n);
+                s_lastAliveMs = millis();
+#if AUDIO_PROFILE
+                s_profPackets = s_profPackets + 1;
+                s_profBytes   = s_profBytes + (uint32_t)n;
+                s_profLastLen = (uint16_t)n;
+                for (int i = 0; i < 8 && i < n; i++) s_profHead[i] = packet[i];
+#endif
+            }
             // Auch im Erfolgsfall abgeben: bei dichtem Paketstrom wuerde diese
             // Schleife sonst nie den Scheduler erreichen und gleich priorisierte
             // Tasks verhungern lassen.
@@ -465,6 +536,62 @@ static void audioRxTask(void*) {
         }
     }
 }
+
+// ------------------------------------------------------------------------------
+// Ueberwachung des Babyphone-Stroms
+// ------------------------------------------------------------------------------
+// Nur aus dem Besitzer-Task: der Befehl an die Kamera ist synchron und gehoert
+// in die Reihenfolge der I2S-Umschaltungen (siehe BabyCamApi.h).
+static void reassertIfSilent() {
+    const uint32_t now = millis();
+    if (now - s_lastAliveMs < AUDIO_SILENCE_REASSERT_MS) return;
+    s_lastAliveMs = now;   // auch ohne WLAN: nicht in jedem Durchlauf erneut pruefen
+
+    if (WiFi.status() != WL_CONNECTED) return;
+    Serial.println("[Audio] Kein Babyphone-Ton seit 10 s - Wiedergabe-Befehl wird erneuert.");
+    BabyCamApi_SetBabyAudio(true);
+}
+
+#if AUDIO_PROFILE
+// Eine Zeile alle 5 s, solange das Babyphone laeuft. Liest sich von links nach
+// rechts entlang des Weges: Netz -> Jitterpuffer -> Lautsprecher.
+static void logAudioProfile() {
+    static uint32_t lastMs = 0;
+    const uint32_t now = millis();
+    if (lastMs == 0) { lastMs = now; return; }
+    const uint32_t elapsed = now - lastMs;
+    if (elapsed < 5000) return;
+    lastMs = now;
+
+    Serial.printf("[AudioProf] Netz: %lu Pakete, %.1f KB/s | Puffer %u B | "
+                  "Lautsprecher: %lu Haeppchen, leer %lu, voll %lu | "
+                  "Lautstaerke %d/255 (Master %d%s, Baby %d%s) | Zustand %d\n",
+                  (unsigned long)s_profPackets,
+                  s_profBytes / 1.024f / elapsed,
+                  (unsigned)ringUsed(),
+                  (unsigned long)s_profChunks,
+                  (unsigned long)s_profEmpty,
+                  (unsigned long)s_profQueueFull,
+                  s_profLastVol,
+                  volMaster, muteMaster ? " stumm" : "",
+                  volBaby,   muteBaby   ? " stumm" : "",
+                  (int)s_spkState);
+
+    // Zweite Zeile: Inhalt statt Menge. Spitzenpegel und mittlerer Betrag
+    // der Samples (Vollausschlag 32767), Paketgroesse und Paketkopf.
+    Serial.printf("[AudioProf] Signal: Spitze %ld, Mittel %lu | Paket %u B, Kopf %02X %02X %02X %02X %02X %02X %02X %02X | Kanal 0 spielt %d\n",
+                  (long)s_profPeak,
+                  (unsigned long)(s_profSamples ? (s_profAbsSum / s_profSamples) : 0),
+                  (unsigned)s_profLastLen,
+                  s_profHead[0], s_profHead[1], s_profHead[2], s_profHead[3],
+                  s_profHead[4], s_profHead[5], s_profHead[6], s_profHead[7],
+                  (int)M5.Speaker.isPlaying(0));
+
+    s_profPackets = 0; s_profBytes = 0;
+    s_profChunks = 0; s_profEmpty = 0; s_profQueueFull = 0;
+    s_profPeak = 0; s_profAbsSum = 0; s_profSamples = 0;
+}
+#endif
 
 // ------------------------------------------------------------------------------
 // Besitzer-Task
@@ -489,6 +616,7 @@ static void audioTask(void*) {
                 }
                 ringReset();                   // RX-Task schreibt hier noch nicht
                 BabyCamApi_SetBabyAudio(true);
+                s_lastAliveMs = millis();
                 isAudioStreaming = true;
                 break;
 
@@ -527,6 +655,7 @@ static void audioTask(void*) {
                         if (speakerSet(SPK_STREAM)) {
                             ringReset();
                             BabyCamApi_SetBabyAudio(true);
+                            s_lastAliveMs = millis();
                             isAudioStreaming = true;
                         }
                     }
@@ -549,6 +678,7 @@ static void audioTask(void*) {
                     if (speakerSet(SPK_STREAM)) {
                         ringReset();
                         BabyCamApi_SetBabyAudio(true);
+                        s_lastAliveMs = millis();
                         isAudioStreaming = true;
                     } else {
                         speakerFallbackToUI();
@@ -576,7 +706,11 @@ static void audioTask(void*) {
         }
 
         if (isAudioStreaming && s_spkState == SPK_STREAM) {
+            reassertIfSilent();
             feedSpeaker();
+#if AUDIO_PROFILE
+            logAudioProfile();
+#endif
             vTaskDelay(pdMS_TO_TICKS(5));
             continue;
         }

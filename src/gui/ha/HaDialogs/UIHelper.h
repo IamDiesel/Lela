@@ -21,6 +21,11 @@ public:
     //     des Themes (nur der Bearbeiten-Dialog, leicht abgedunkelt)
     static lv_obj_t* createModalOverlay(lv_obj_t* parent, lv_opa_t opa, lv_obj_t** slot = nullptr, bool black = true);
 
+    // true, solange mindestens ein ueber createModalOverlay() angelegter
+    // Dialog offen ist. Das Video-Overlay blendet sich dann aus - es wuerde
+    // sonst ueber den Dialog gezeichnet.
+    static bool isModalOpen();
+
     static lv_obj_t* createLabel(lv_obj_t* parent, const char* text, const lv_font_t* font, int align, int x, int y, uint32_t color = 0xFFFFFFFF);
     static lv_obj_t* createButton(lv_obj_t* parent, int w, int h, int align, int x, int y, uint32_t bg_color, const char* text, lv_event_cb_t cb = nullptr, void* user_data = nullptr);
     static lv_obj_t* createSlider(lv_obj_t* parent, int w, int h, int align, int x, int y, int min_val, int max_val, int val, lv_event_cb_t cb = nullptr, void* user_data = nullptr);

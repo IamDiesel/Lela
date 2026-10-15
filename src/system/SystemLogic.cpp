@@ -5,7 +5,6 @@
 #include "MqttLogic.h"       
 #include "WebSetupLogic.h"   
 #include "BleLogic.h"        
-#include "AudioStreamLogic.h" 
 #include <WiFi.h>
 #include <esp_wifi.h> 
 #include "secrets.h"         
@@ -20,6 +19,10 @@
 #include "ViewHomeAssistant.h" 
 #include "ViewSettings.h"      
 #include "BabyCamApi.h"
+#include "BabyService.h"
+#include "ViewPopups.h"
+#include "ViewVideoPip.h"
+#include "HeapMonitor.h"
 
 #include <time.h> 
 
@@ -29,6 +32,7 @@ void SystemLogic_Init() {
     Audio_Init(); 
     VideoLogic_Init(); 
     BabyCamApi_Init();
+    BabyService_Init();
     
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
@@ -46,36 +50,10 @@ void SystemLogic_Init() {
 }
 
 void SystemLogic_Update() {
-    static ScreenID lastScreen = SCREEN_DASHBOARD;
-    ScreenID currentScreen = gui.getCurrentScreen();
-    
-    if (currentScreen != lastScreen) {
-        if (lastScreen == SCREEN_BABY) { 
-            VideoLogic_Stop(); 
-            AudioStreamLogic_Stop(); 
-        }
-        lastScreen = currentScreen;
-    }
-
-    // V-03: Der Videostart ist bewusst NICHT flankengesteuert.
-    // VideoLogic_Start() ist idempotent und legt nur dann einen Task an, wenn
-    // keiner laeuft. Frueher konnte ein schnelles Stop/Start den Stream dauerhaft
-    // toeten: die Flanke feuerte einmal, der alte Task lief aber noch, also wurde
-    // kein neuer erzeugt - und eine zweite Flanke kam nie.
-    // Der Aufruf in jedem Durchlauf kostet einen Zeigervergleich und holt den
-    // Start automatisch nach, sobald der Vorgaenger sich beendet hat.
-    static bool lastStreamState = false;
-    if (isStreamActive) {
-        VideoLogic_Start();
-        if (!lastStreamState) {
-            AudioStreamLogic_StartBaby(); 
-            lastStreamState = true;
-        }
-    } else if (lastStreamState) {
-        VideoLogic_Stop();
-        AudioStreamLogic_Stop();  
-        lastStreamState = false;
-    }
+    // Babyphone: Video, Audio und Kamerasitzung haengen nicht mehr am
+    // Bildschirm, sondern am Modus des BabyService. Frueher stoppte das
+    // Verlassen der Baby-Ansicht hier beides.
+    BabyService_Update();
 
     WebSetupLogic_Update(); 
 
@@ -128,7 +106,7 @@ void SystemLogic_Update() {
                 if (isArmed && !alarmActive && !disconnectAlarmActive && millis() > cooldownUntil) {
                     if (pWinCount >= WINDOW_SIZE && abs(currentPressure - currentAvg) > thresholdVal) { 
                         alarmActive = true; 
-                        muteAlarm = false; 
+                        catAlarmAcked = false; 
                         wakeDisplay(); 
                         gui.switchScreen(SCREEN_CATMAT, LV_SCR_LOAD_ANIM_NONE); 
                     }
@@ -137,13 +115,20 @@ void SystemLogic_Update() {
         }
     }
     
-    if (!muteAlarm && !isTrackerMode) { 
+    // Alarmtoene. Ob ein Alarm toent, entscheidet allein seine Quittierung;
+    // die Lautstaerke (inkl. Mixer-Stumm) wendet der Ton-Task an. Frueher
+    // stand hier muteAlarm vor allem - ein quittierter Katzenalarm brachte
+    // damit auch einen gleichzeitigen Baby-Alarm zum Schweigen.
+    if (!isTrackerMode) { 
         static uint32_t lastBeep = 0; 
-        if (alarmActive) { 
+        const bool catSounding  = alarmActive           && !catAlarmAcked;
+        const bool discSounding = disconnectAlarmActive && !catAlarmAcked;
+        const bool babySounding = babyAlarmActive       && !babyAlarmAcked;
+        if (catSounding) { 
             if (millis() - lastBeep > 2500) { playCatAlarmI2S(); lastBeep = millis(); } 
-        } else if (disconnectAlarmActive) { 
+        } else if (discSounding) { 
             if (millis() - lastBeep > 3000) { playToneI2S(440, 200, false); playToneI2S(349, 200, false); playToneI2S(261, 500, false); lastBeep = millis(); } 
-        } else if (babyAlarmActive && !muteBaby) {
+        } else if (babySounding) {
             if (millis() - lastBeep > 2500) { playBabyAlarmI2S(); lastBeep = millis(); }
         }
     }
@@ -152,7 +137,7 @@ void SystemLogic_Update() {
     static bool lastDongleAlarmSent = false;
     bool shouldDongleAlarm = false;
 
-    if (dongleAlarmEnabled && alarmActive && !muteAlarm) {
+    if (dongleAlarmEnabled && alarmActive && !catAlarmAcked) {
         shouldDongleAlarm = true;
     }
 
@@ -225,6 +210,10 @@ void SystemLogic_Update() {
         pressureHistory[historyIdx] = valToPush; historyIdx = (historyIdx + 1) % HISTORY_SIZE; if (historyCount < HISTORY_SIZE) historyCount++; requestChartUpdate = true; 
     }
 
+    // Bildschirm erst hier lesen: ein Alarm weiter oben kann ihn in diesem
+    // Durchlauf gewechselt haben, und die Aktualisierung gehoert zur neuen
+    // Ansicht.
+    const ScreenID currentScreen = gui.getCurrentScreen();
     if (currentScreen == SCREEN_DASHBOARD) {
         ViewDashboard::update();
     } else if (currentScreen == SCREEN_BABY) {
@@ -235,5 +224,28 @@ void SystemLogic_Update() {
         ViewHomeAssistant::update(); 
     } else if (currentScreen == SCREEN_SETTINGS) {
         ViewSettings::update();      
+    }
+
+    // Alarm-Popups liegen auf der obersten Ebene und gelten fuer jede Ansicht.
+    ViewPopups::update();
+
+    // Das Video-Overlay danach: es blendet sich aus, sobald ein Popup steht.
+    ViewVideoPip::update();
+
+    // Diagnose des internen RAMs (siehe HeapMonitor.h) - auf jedem Bildschirm,
+    // mit Bildschirm und Babyphone-Zustand als Anlass. Frueher nur in der
+    // HA-Ansicht, damit liessen sich die Betriebszustaende nicht vergleichen.
+    {
+        static const char* const SCREEN_NAMES[] = { "Dashboard", "CatMat", "Baby", "HA", "Einstellungen" };
+        const int idx = (int)currentScreen;
+        char ctx[72];
+        snprintf(ctx, sizeof(ctx), "%s | %s",
+                 (idx >= 0 && idx < 5) ? SCREEN_NAMES[idx] : "Start",
+                 BabyService_Describe());
+#if HEAP_PROFILE
+        HeapMonitor_Update(10000, ctx);
+#else
+        HeapMonitor_Update(60000, ctx);
+#endif
     }
 }

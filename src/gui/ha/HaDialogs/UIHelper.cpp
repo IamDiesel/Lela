@@ -110,8 +110,22 @@ void UIHelper::trackOverlay(lv_obj_t* obj, lv_obj_t** slot) {
     }, LV_EVENT_DELETE, slot);
 }
 
+// Anzahl der lebenden modalen Overlays. Jeder Dialog laeuft ueber
+// createModalOverlay() und loescht sein Overlay beim Schliessen; das
+// DELETE-Ereignis zaehlt wieder herunter - auch wenn der ganze Bildschirm
+// geloescht wird.
+static int s_openModals = 0;
+
+bool UIHelper::isModalOpen() {
+    return s_openModals > 0;
+}
+
 lv_obj_t* UIHelper::createModalOverlay(lv_obj_t* parent, lv_opa_t opa, lv_obj_t** slot, bool black) {
     lv_obj_t* overlay = lv_obj_create(parent);
+    s_openModals++;
+    lv_obj_add_event_cb(overlay, [](lv_event_t*) {
+        if (s_openModals > 0) s_openModals--;
+    }, LV_EVENT_DELETE, nullptr);
     lv_obj_set_size(overlay, SCREEN_W, SCREEN_H);
     if (black) lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(overlay, opa, 0);

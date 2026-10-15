@@ -150,6 +150,9 @@ void CrashDiag_Report() {
     Serial.printf("[CrashDiag] Seit Kaltstart: %lu Starts, %lu Abstuerze\n",
                   (unsigned long)s_state.bootCount,
                   (unsigned long)s_state.panicCount);
+    if (CrashDiag_AudioMayBeMuted()) {
+        Serial.println("[CrashDiag] Audio-Ausgabe evtl. stumm - Geraet einmal stromlos neu starten.");
+    }
     Serial.println("==============================================");
     Serial.flush();
 }
@@ -210,4 +213,8 @@ uint32_t CrashDiag_GetPanicCount() {
 
 bool CrashDiag_WasColdStart() {
     return s_wasColdStart;
+}
+
+bool CrashDiag_AudioMayBeMuted() {
+    return !s_wasColdStart && s_state.panicCount > 0;
 }

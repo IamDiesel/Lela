@@ -81,8 +81,9 @@ static void enqueue(ApiOp op, int32_t a = 0, int32_t b = 0) {
 // ------------------------------------------------------------------------------
 // HTTP-Bausteine
 // ------------------------------------------------------------------------------
-static void sendPost(const char* endpoint, const char* payload) {
-    if (WiFi.status() != WL_CONNECTED) return;
+// Rueckgabe: HTTP-Statuscode, negativ bei Verbindungsfehler, -1000 ohne WLAN.
+static int sendPost(const char* endpoint, const char* payload) {
+    if (WiFi.status() != WL_CONNECTED) return -1000;
 
     HTTPClient http;
     http.setReuse(false);
@@ -91,13 +92,14 @@ static void sendPost(const char* endpoint, const char* payload) {
 
     char url[160];
     snprintf(url, sizeof(url), "http://%s:8080%s", streamIp.c_str(), endpoint);
-    if (!http.begin(url)) return;
+    if (!http.begin(url)) return -1001;
 
     http.addHeader("Content-Type", "application/json");
     http.addHeader("uuid", camUuid);
     http.addHeader("versionApp", "2.48");
-    http.POST(payload);
+    const int code = http.POST(payload);
     http.end();
+    return code;
 }
 
 static void sendGet(const char* endpoint) {
@@ -235,7 +237,9 @@ static void pollStatus() {
 // seinem Heartbeat am Leben, also muss er sie auch beenden. Eine Abmeldung aus
 // dem Video-Task waere 8 s spaeter durch den naechsten Heartbeat widerrufen -
 // und wuerde nebenbei das noch laufende Babyphone-Audio kappen.
-static bool s_registered = false;
+// volatile: geschrieben vom API-Task, gelesen ueber BabyCamApi_IsSessionReady()
+// aus der Hauptschleife.
+static volatile bool s_registered = false;
 
 static void sendOffline() {
     char payload[96];
@@ -294,7 +298,11 @@ static void apiTask(void*) {
             snprintf(payload, sizeof(payload),
                      "{\"deviceName\":\"Lela OS\",\"ip\":\"%s\",\"uuidClient\":\"%s\"}",
                      WiFi.localIP().toString().c_str(), camUuid.c_str());
-            sendPost("/api/v1/client/online", payload);
+            const int code = sendPost("/api/v1/client/online", payload);
+            // Nur die erste Anmeldung einer Sitzung melden, nicht jeden Heartbeat.
+            if (!s_registered) {
+                Serial.printf("[BabyCamApi] Sitzung bei der Kamera angemeldet: HTTP %d\n", code);
+            }
             s_registered = true;
             continue;
         }
@@ -397,6 +405,10 @@ void BabyCamApi_ApplyBestResolution(int reqW, int reqH) {
 // ------------------------------------------------------------------------------
 // Uebernahme in die Oberflaeche - MUSS aus der Hauptschleife gerufen werden
 // ------------------------------------------------------------------------------
+bool BabyCamApi_IsSessionReady() {
+    return isBabyApiActive && s_registered;
+}
+
 void BabyCamApi_Update() {
     if (!s_stgDirty) return;
     s_stgDirty = false;
@@ -419,12 +431,18 @@ void BabyCamApi_SetBabyAudio(bool play) {
     snprintf(payload, sizeof(payload),
              "{\"audioBabyCompressed\":false,\"ip\":\"%s\",\"status\":\"%s\"}",
              WiFi.localIP().toString().c_str(), play ? "PLAY" : "STOP");
-    sendPost("/api/v1/audio/baby/start-stop", payload);
+    const int code = sendPost("/api/v1/audio/baby/start-stop", payload);
+
+    // Eine Zeile je Umschaltung. Ohne sie ist "kein Ton" nicht von "Kamera
+    // hat den Befehl abgelehnt" zu unterscheiden.
+    Serial.printf("[BabyCamApi] Babyphone-Ton %s an %s: HTTP %d\n",
+                  play ? "PLAY" : "STOP", WiFi.localIP().toString().c_str(), code);
 }
 
 void BabyCamApi_SetParentAudio(bool play) {
     char payload[160];
     snprintf(payload, sizeof(payload), "{\"ip\":\"%s\",\"status\":\"%s\"}",
              WiFi.localIP().toString().c_str(), play ? "PLAY" : "STOP");
-    sendPost("/api/v1/audio/parents/start-stop", payload);
+    const int code = sendPost("/api/v1/audio/parents/start-stop", payload);
+    Serial.printf("[BabyCamApi] Gegensprechen %s: HTTP %d\n", play ? "PLAY" : "STOP", code);
 }

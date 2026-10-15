@@ -39,6 +39,37 @@
 #define VIDEO_PROFILE 0
 
 // ------------------------------------------------------------------------------
+// AUDIO_PROFILE - Messzeile [AudioProf] alle 5 Sekunden, solange das
+// Babyphone laeuft
+//
+// Zeigt, wo der Ton verloren geht: Kommen UDP-Pakete der Kamera an (Pakete,
+// KB/s)? Fuellt sich der Jitterpuffer? Werden Haeppchen an den Lautsprecher
+// gegeben, oder laeuft die Wiedergabe leer? Mit welcher Lautstaerke?
+//
+// Erste Pruefung bei "kein Babyphone-Ton". Liegen Pakete und Haeppchen im
+// Soll (~86 KB/s, ~86 Haeppchen/s), die Lautstaerke > 0 und der Pegel
+// ("Spitze") > 0, liegt das Problem hinter M5.Speaker - z.B. nach einem
+// Absturz mit Warmstart (Audio-Chips nicht stromlos, siehe CrashDiag): dann
+// hilft nur Stromlos-Machen.
+//
+// Fuer den Dauerbetrieb AUS - jede Zeile ist eine Ausgabe ueber USB-CDC
+// (siehe VIDEO_PROFILE).
+// ------------------------------------------------------------------------------
+#define AUDIO_PROFILE 0
+
+// ------------------------------------------------------------------------------
+// HEAP_PROFILE - [Heap]-Zeile alle 10 s statt alle 60 s, mit Zusammenhang
+//
+// Die Zeile nennt Bildschirm, Babyphone-Modus und Ziel des Videos, z.B.
+//   [Heap] HA | Video+Audio | Overlay: intern frei ...
+// So laesst sich ablesen, welcher Betriebszustand wie viel internes RAM
+// braucht (Messreihe Overlay, 14.10.2026).
+//
+// Fuer den Dauerbetrieb AUS: dann alle 60 s, ebenfalls mit Zusammenhang.
+// ------------------------------------------------------------------------------
+#define HEAP_PROFILE 0
+
+// ------------------------------------------------------------------------------
 // VIDEO_USE_PPA - Hardware-Skalierung und -Drehung fuer den Vollbildmodus
 //
 // Das Tab5-Panel ist physisch 720x1280 HOCHKANT (M5GFX: memory_width = 720,

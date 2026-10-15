@@ -12,12 +12,50 @@ void lvgl_port_unlock(void) {
     xSemaphoreGiveRecursive(lvgl_mux);
 }
 
+// Ausgesparte Flaeche, siehe Header. Nur von der Hauptschleife geschrieben,
+// nur im Flush (ebenfalls Hauptschleife) gelesen.
+static lv_area_t s_reserved;
+static bool      s_reservedActive = false;
+
+void Lvgl_SetReservedArea(const lv_area_t* area) {
+    if (area) {
+        s_reserved = *area;
+        s_reservedActive = true;
+    } else {
+        s_reservedActive = false;
+    }
+}
+
+// Schreibt den Flush-Puffer, beschnitten auf ein Teilrechteck. M5GFX
+// uebernimmt das Beschneiden selbst (Clip-Rechteck) und rechnet den Versatz im
+// Quellpuffer korrekt mit - die Quelle bleibt der volle Flush-Bereich.
+static void pushClipped(const lv_area_t* area, int w, int h, const uint16_t* data,
+                        int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2) {
+    if (cx1 > cx2 || cy1 > cy2) return;
+    M5.Display.setClipRect(cx1, cy1, cx2 - cx1 + 1, cy2 - cy1 + 1);
+    M5.Display.pushImage(area->x1, area->y1, w, h, data);
+}
+
 static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p) {
     int w = area->x2 - area->x1 + 1;
     int h = area->y2 - area->y1 + 1;
+    const uint16_t* data = (const uint16_t *)&color_p->full;
+
+    lv_area_t hole;
+    const bool clip = s_reservedActive && _lv_area_intersect(&hole, area, &s_reserved);
 
     M5.Display.startWrite();
-    M5.Display.pushImage(area->x1, area->y1, w, h, (uint16_t *)&color_p->full);
+    if (!clip) {
+        M5.Display.pushImage(area->x1, area->y1, w, h, data);
+    } else {
+        // Bis zu vier Streifen um die Aussparung herum: oben, unten (volle
+        // Breite), links und rechts (Hoehe der Aussparung).
+        pushClipped(area, w, h, data, area->x1, area->y1,     area->x2, hole.y1 - 1);
+        pushClipped(area, w, h, data, area->x1, hole.y2 + 1,  area->x2, area->y2);
+        pushClipped(area, w, h, data, area->x1, hole.y1,      hole.x1 - 1, hole.y2);
+        pushClipped(area, w, h, data, hole.x2 + 1, hole.y1,   area->x2, hole.y2);
+        M5.Display.clearClipRect();
+    }
     M5.Display.endWrite();
 
     lv_disp_flush_ready(disp_drv);
@@ -50,14 +88,21 @@ void Lvgl_Init() {
     // SRAM hat weder Cache-Umweg noch Bus-Konkurrenz mit dem Videopfad, der
     // PSRAM ohnehin dauerhaft belastet (Decoderausgabe, Framebuffer).
     //
-    // Kosten: 76 KB von rund 375 KB freiem internen Speicher. Das ist der
-    // knappe Topf (der SDIO-WLAN-Treiber bedient sich daraus), deshalb bleibt
-    // es bei EINEM Puffer statt zweier - ein zweiter braechte ohne DMA im
-    // Flush ohnehin nichts, weil dort synchron gearbeitet wird.
+    // Kosten: 40 KB (16 Zeilen) vom internen Speicher. Das ist der knappe
+    // Topf: der SDIO-WLAN-Treiber braucht daraus fuer jeden Empfangsblock bis
+    // zu 7,5 KB zusammenhaengenden, DMA-faehigen Speicher. Deshalb EIN Puffer
+    // statt zweier - ein zweiter braechte ohne DMA im Flush ohnehin nichts,
+    // weil dort synchron gearbeitet wird.
+    //
+    // Frueher 30 Zeilen (75 KB). Messung 14.10.2026: HA-Bildschirm + Video-
+    // Overlay drueckten den groessten DMA-Block auf 4-14 KB, einmal folgte
+    // "assert failed: sdio_rx_get_buffer". 16 Zeilen geben 35 KB zurueck.
+    // LVGL zeichnet dafuer in mehr, kleineren Streifen; die Gesamtzeit
+    // bestimmt ohnehin der Flush auf das gedrehte Panel (Pixel fuer Pixel).
     //
     // Faellt die Reservierung aus, weichen wir auf PSRAM zurueck: langsamer,
     // aber lauffaehig. Ein Absturz beim Start waere die schlechtere Antwort.
-    static const size_t DRAW_BUF_PX = 1280 * 30;
+    static const size_t DRAW_BUF_PX = 1280 * 16;
 
     static lv_color_t *buf1 = (lv_color_t *)heap_caps_aligned_alloc(
         64, DRAW_BUF_PX * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);

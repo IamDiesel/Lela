@@ -2,28 +2,33 @@
 #include "ViewQuickSettings.h"
 #include "SharedData.h"
 #include "LVGL_Driver.h"
+#include "BabyService.h"
 #include <WiFi.h>
 #include <M5Unified.h>
 
 static lv_obj_t * screen_off_overlay = nullptr;
 
-static void screen_off_click_cb(lv_event_t * e) {
-    // Weckt das Display wieder auf
+// Display wieder an. Gemeinsamer Weg fuer Beruehrung und Alarm.
+static void screenOn() {
     M5.Display.setBrightness((brightnessPercent * 255) / 100);
-    
+
     if (screen_off_overlay != nullptr) {
-        lv_obj_del_async(screen_off_overlay); 
+        lv_obj_del_async(screen_off_overlay);
         screen_off_overlay = nullptr;
     }
+    // Video wieder dekodieren (Audio lief durchgehend weiter).
+    BabyService_SetDisplayOn(true);
+}
+
+static void screen_off_click_cb(lv_event_t * e) {
+    screenOn();
 }
 
 static void alarm_wake_timer_cb(lv_timer_t * timer) {
     if (screen_off_overlay != nullptr) {
         // Wenn ein Alarm reinkommt, waehrend das Display aus ist -> Aufwecken
         if (alarmActive || babyAlarmActive || disconnectAlarmActive) {
-            M5.Display.setBrightness((brightnessPercent * 255) / 100);
-            lv_obj_del_async(screen_off_overlay);
-            screen_off_overlay = nullptr;
+            screenOn();
         }
     }
 }
@@ -47,6 +52,7 @@ void ViewPower::btn_screen_off_event_cb(lv_event_t * e) {
     lv_obj_add_event_cb(screen_off_overlay, screen_off_click_cb, LV_EVENT_PRESSED, NULL);
 
     M5.Display.setBrightness(0);
+    BabyService_SetDisplayOn(false);   // Video nicht mehr dekodieren, Audio laeuft weiter
     ViewQuickSettings::hide(); // Schliesst das Menue im Hintergrund
 }
 

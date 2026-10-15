@@ -18,6 +18,11 @@ void BabyCamApi_Init();
 // (V-05, siehe src/doc/video_refactoring.md 2.18).
 void BabyCamApi_Update();
 
+// true, sobald die Kamerasitzung steht (erster Heartbeat abgesetzt). Erst dann
+// werden Kommandos sicher zugestellt: ohne Sitzung verwirft der API-Task die
+// Warteschlange.
+bool BabyCamApi_IsSessionReady();
+
 // --- Video- und Performance-Einstellungen ---
 void BabyCamApi_SetQuality(int qual);        // 0..100
 void BabyCamApi_SetSpeed(int speed);         // 0 = max fps, 100 = Eco

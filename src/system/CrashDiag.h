@@ -53,3 +53,13 @@ uint32_t CrashDiag_GetPanicCount();
 
 // true, wenn dieser Lauf auf einen Kaltstart folgt (Geraet war stromlos).
 bool CrashDiag_WasColdStart();
+
+// true, wenn seit dem letzten Kaltstart mindestens ein Absturz war.
+//
+// Befund 14.10.2026: Nach einem Absturz kann die Audio-Ausgabe stumm bleiben,
+// bis das Geraet einmal stromlos war - die Audio-Bausteine (Codec, Verstaerker)
+// behalten ueber den Warmstart hinweg ihren Zustand, und die normale
+// Initialisierung holt sie nicht zuverlaessig zurueck. Das gilt auch fuer
+// spaetere Warmstarts (z.B. Upload), bis zum naechsten Kaltstart. Die
+// Oberflaeche zeigt dann einen Hinweis (ViewTopbar).
+bool CrashDiag_AudioMayBeMuted();

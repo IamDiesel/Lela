@@ -113,6 +113,18 @@ static TaskHandle_t s_decTask = nullptr;
 
 static volatile bool s_running = false;   // Laufzeitflag beider Tasks
 
+// Ziel der dekodierten Bilder. Geschrieben vom BabyService (loopTask), gelesen
+// vom Decoder-Task; ein einzelnes Byte, also ohne Sperre konsistent.
+static volatile VideoOutput s_output = VideoOutput::None;
+
+// Video-Overlay. Das Rechteck wird unter der LVGL-Sperre geschrieben und unter
+// ihr gelesen (renderFrame) - so sieht der Decoder nie ein halb gesetztes.
+struct PipRect { int16_t x, y, w, h; };
+static PipRect s_pipRect = { 0, 0, 0, 0 };
+static volatile uint16_t s_pipIntervalMs   = 200;   // 1000 / fps
+static volatile uint32_t s_pipLastDecodeMs = 0;
+static volatile uint32_t s_pipLastFrameMs  = 0;     // 0 = noch nie gezeichnet
+
 // Von der Kamera tatsaechlich geliefert (nicht das, was wir angefordert haben).
 static volatile int s_actualW = 0;
 static volatile int s_actualH = 0;
@@ -847,6 +859,44 @@ static void pushFramePPA(const DecodedFrame& f) {
                         0, 0, 0, z, z,
                         f.width, f.height, (uint16_t*)f.pixels);
 }
+
+// Video-Overlay: das Bild in das Zielrechteck einpassen.
+//
+// Der PPA skaliert in Schritten von 1/16 (Festkomma mit vier Nachkommabits).
+// Der Faktor wird deshalb auf 1/16 ABGERUNDET - so wird das Bild nie groesser
+// als das Rechteck. Was es kleiner bleibt, wird schwarz gefuellt: LVGL zeichnet
+// in dieser Flaeche nicht (Lvgl_SetReservedArea), dort stuende sonst Altes.
+static void pushFramePip(const DecodedFrame& f, const PipRect& r) {
+    if (!s_ppa) s_ppa = new lgfx::PPASrm(&M5.Display, false);
+    if (!s_ppa) return;
+
+    const float zx = (float)r.w / (float)f.width;
+    const float zy = (float)r.h / (float)f.height;
+    float z = (zx < zy) ? zx : zy;
+    z = floorf(z * 16.0f) / 16.0f;
+    if (z <= 0.0f) return;   // Rechteck kleiner als 1/16 des Bildes - unsinnig
+
+    const int dw = (int)(f.width  * z);
+    const int dh = (int)(f.height * z);
+    const int dx = r.x + (r.w - dw) / 2;
+    const int dy = r.y + (r.h - dh) / 2;
+
+    // Raender (nur wenn das Seitenverhaeltnis nicht genau passt)
+    if (dy > r.y)              M5.Display.fillRect(r.x, r.y, r.w, dy - r.y, TFT_BLACK);
+    if (dy + dh < r.y + r.h)   M5.Display.fillRect(r.x, dy + dh, r.w, r.y + r.h - (dy + dh), TFT_BLACK);
+    if (dx > r.x)              M5.Display.fillRect(r.x, dy, dx - r.x, dh, TFT_BLACK);
+    if (dx + dw < r.x + r.w)   M5.Display.fillRect(dx + dw, dy, r.x + r.w - (dx + dw), dh, TFT_BLACK);
+
+    // Zielposition fuer den PPA. LGFX_PPA rechnet die Querformat-Koordinaten
+    // bei gedrehtem Panel nur durch VERTAUSCHEN von x und y in den hochkant
+    // liegenden Bildspeicher um - die Spiegelung der y-Achse fehlt. Ohne
+    // Ausgleich landete ein Bild unten rechts oben rechts (gemessen am Geraet).
+    // Im Vollbild faellt das nicht auf: dort ist dy = 0 und dh = 720, beide
+    // Formeln liefern 0. Deshalb hier die gespiegelte Zeile uebergeben.
+    const int ppaY = PANEL_H - dy - dh;
+    if (ppaY < 0) return;
+    s_ppa->pushImageSRM(dx, ppaY, 0, 0, 0, z, z, f.width, f.height, (uint16_t*)f.pixels);
+}
 #endif
 
 static void pushFrameFast(int x, int y, int w, int h, const uint8_t* pixels) {
@@ -866,8 +916,41 @@ static void pushFrameFast(int x, int y, int w, int h, const uint8_t* pixels) {
 //
 // Bewusst NICHT unter dem Lock: die Dekodierung. Sie dauert ~12 ms und wuerde
 // die Oberflaeche in genau dem Mass ausbremsen (siehe 2.18, Hebel 2).
+// Overlay-Zweig von renderFrame(). Rechteck und Ziel werden unter der Sperre
+// gelesen: blendet die Oberflaeche das Overlay gerade aus (Dialog, Alarm),
+// darf kein Bild mehr ueber sie gemalt werden.
+static void renderPip(const DecodedFrame& f) {
+#if VIDEO_USE_PPA
+    const uint32_t tLock = micros();
+    if (!lvgl_port_lock(100)) {
+        s_statLockUs += (micros() - tLock);
+        return;
+    }
+    s_statLockUs += (micros() - tLock);
+
+    const PipRect r = s_pipRect;
+    if (s_output == VideoOutput::Pip && r.w > 0 && r.h > 0) {
+        const uint32_t tPush = micros();
+        pushFramePip(f, r);
+        s_statPushUs += (micros() - tPush);
+        const uint32_t now = millis();
+        s_pipLastFrameMs = now ? now : 1;   // 0 bedeutet "noch nie"
+    }
+    lvgl_port_unlock();
+#else
+    // Ohne PPA gibt es kein Overlay: der Weg ueber M5GFX ist auf dem
+    // gedrehten Panel zu langsam (siehe VIDEO_USE_PPA in DebugFlags.h).
+    (void)f;
+#endif
+}
+
 static void renderFrame(const DecodedFrame& f) {
     static bool lastFS = false;
+
+    if (s_output == VideoOutput::Pip) {
+        renderPip(f);
+        return;
+    }
 
     if (vidFSMode) {
         // Das Zeichnen ins Bild selbst braucht kein Display - es geht in den
@@ -883,6 +966,14 @@ static void renderFrame(const DecodedFrame& f) {
             return;
         }
         s_statLockUs += (micros() - tLock);
+
+        // Unter der Sperre erneut pruefen: zwischen der Abfrage oben und dem
+        // Lock kann die Baby-Ansicht verlassen worden sein (z.B. Alarm). Ein
+        // Vollbild-Transfer wuerde dann direkt ueber die neue Ansicht malen.
+        if (!vidFSMode || s_output != VideoOutput::BabyView) {
+            lvgl_port_unlock();
+            return;
+        }
 
         if (!lastFS) {
             M5.Display.clear(TFT_BLACK);
@@ -947,6 +1038,18 @@ static void videoDecodeTask(void*) {
             continue;
         }
 
+        // Niemand will ein Bild: Slot zurueck, nicht dekodieren. Der Empfang
+        // laeuft weiter, damit die Anzeige beim Zurueckkehren sofort ein Bild
+        // hat. Die Bildrate gilt dann als 0 - sonst stuende im Overlay oder
+        // in der Baby-Ansicht ein veralteter Wert.
+        if (s_output == VideoOutput::None) {
+            xQueueSend(s_freeQ, &ref.slot, 0);
+            currentFps = 0;
+            fpsStart   = millis();
+            fpsFrames  = 0;
+            continue;
+        }
+
         // Latenzmodus: Steht mehr als ein Bild an, ist das aelteste schon
         // ueberholt. Wir geben seinen Slot zurueck und nehmen das neueste -
         // das kostet Bilder, aber die Anzeige haengt der Realitaet nicht
@@ -961,11 +1064,24 @@ static void videoDecodeTask(void*) {
             }
         }
 
+        // Overlay: gedrosselt dekodieren. Erst NACH dem Latenzmodus, damit
+        // das dekodierte Bild das neueste ist.
+        if (s_output == VideoOutput::Pip) {
+            const uint32_t nowMs = millis();
+            if (nowMs - s_pipLastDecodeMs < s_pipIntervalMs) {
+                xQueueSend(s_freeQ, &ref.slot, 0);
+                continue;
+            }
+            s_pipLastDecodeMs = nowMs;
+        }
+
         // Byte-Reihenfolge zum Ausgabeweg passend waehlen: der PPA schreibt
         // unveraendert in den Framebuffer (RGB), der Weg ueber M5GFX/LVGL
         // erwartet BGR. Muss VOR dem Dekodieren stehen.
 #if VIDEO_USE_PPA
-        VideoDecoder_SetBgrOrder(!vidFSMode);
+        // BGR nur fuer den LVGL-Weg (Baby-Ansicht im Fenster). Vollbild und
+        // Overlay laufen ueber den PPA.
+        VideoDecoder_SetBgrOrder(s_output == VideoOutput::BabyView && !vidFSMode);
 #else
         VideoDecoder_SetBgrOrder(true);
 #endif
@@ -1099,7 +1215,6 @@ void VideoLogic_Init() {
 // ein auslaufender Vorgaenger weg ist.
 void VideoLogic_Start() {
     if (!VideoDecoder_IsReady() || !s_freeQ || !s_fullQ) return;
-    if (!isStreamActive) return;
     if (s_netTask || s_decTask) return;
 
     // Slots zuruecksetzen: alle frei, keine gefuellt.
@@ -1130,20 +1245,59 @@ void VideoLogic_Start() {
     }
 }
 
+// Setzt nur das Laufzeitflag. Die Zustandsflags (isStreamActive) gehoeren dem
+// BabyService - frueher setzte diese Funktion sie als Nebenwirkung zurueck,
+// und wer Video stoppte, aenderte damit unbemerkt den Babyphone-Modus.
 void VideoLogic_Stop() {
-    isStreamActive    = false;
-    requestBabyStream = false;
-
     if (!s_running) return;
     s_running = false;
 
     // Die Tasks beenden sich selbst; sie pruefen s_running in jeder Schleife.
-    // Die Abmeldung bei der Kamera erledigt der Netzwerk-Task beim Verlassen -
-    // hier waere sie ein synchroner HTTP-POST in der Loop-Task und wuerde die
-    // Oberflaeche bis zu 2,5 s blockieren.
+    // Die Abmeldung bei der Kamera erledigt BabyCamApi, sobald die Sitzung
+    // endet - hier waere sie ein synchroner HTTP-POST in der Loop-Task und
+    // wuerde die Oberflaeche bis zu 2,5 s blockieren.
 }
 
-void VideoLogic_TriggerImageLoad() {
-    // Platzhalter: der Stream laeuft kontinuierlich, ein Einzelbildabruf wird
-    // nicht mehr gebraucht. Die Funktion bleibt fuer die Schnittstelle erhalten.
+bool VideoLogic_IsRunning() {
+    return s_netTask != nullptr || s_decTask != nullptr;
+}
+
+void VideoLogic_SetOutput(VideoOutput out) {
+    if (out == VideoOutput::Pip && s_output != VideoOutput::Pip) {
+        // Beim Einblenden sofort ein Bild zeigen, nicht erst nach dem
+        // Drosselintervall - und die Anzeige "Verbindung ..." neu beginnen.
+        s_pipLastDecodeMs = millis() - s_pipIntervalMs;
+        s_pipLastFrameMs  = 0;
+    }
+    s_output = out;
+}
+
+VideoOutput VideoLogic_GetOutput() {
+    return s_output;
+}
+
+void VideoLogic_SetPipRect(int x, int y, int w, int h) {
+    // Sperre: der Decoder liest das Rechteck unter ihr (renderPip). Aus der
+    // Hauptschleife gerufen, die die rekursive Sperre ggf. schon haelt.
+    if (!lvgl_port_lock(portMAX_DELAY)) return;
+    const PipRect r = { (int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h };
+    if (r.x != s_pipRect.x || r.y != s_pipRect.y || r.w != s_pipRect.w || r.h != s_pipRect.h) {
+        // Neues Ziel: "noch kein Bild dort". Sonst gaebe die Oberflaeche die
+        // neue Flaeche frei (Aussparung), bevor der PPA sie bemalt hat.
+        s_pipLastFrameMs = 0;
+    }
+    s_pipRect = r;
+    lvgl_port_unlock();
+}
+
+void VideoLogic_SetPipFps(int fps) {
+    if (fps < 1)  fps = 1;
+    if (fps > 30) fps = 30;
+    s_pipIntervalMs = (uint16_t)(1000 / fps);
+}
+
+uint32_t VideoLogic_MsSinceLastPipFrame() {
+    const uint32_t last = s_pipLastFrameMs;
+    if (last == 0) return UINT32_MAX;
+    return millis() - last;
 }

@@ -4,10 +4,77 @@
 #include "SharedData.h"
 #include "LVGL_Driver.h"
 #include "UIHelper.h"
+#include "BabyService.h"
 #include <M5Unified.h>
 
 static lv_obj_t* quickOverlay = nullptr;
 static lv_obj_t* mixer_container = nullptr;
+
+// Babyphone-Modus: ein Knopf je Modus, Reihenfolge wie BabyMode.
+static const int BABY_MODE_COUNT = 4;
+static_assert((int)BabyMode::VideoAudio == BABY_MODE_COUNT - 1,
+              "Knopfreihenfolge muss der Reihenfolge von BabyMode entsprechen");
+static lv_obj_t* baby_mode_btns[BABY_MODE_COUNT] = { nullptr };
+
+static const uint32_t COLOR_MODE_ACTIVE   = 0x00A0FF;
+static const uint32_t COLOR_MODE_INACTIVE = 0x444444;
+
+// Hebt den Knopf des aktuellen Modus hervor.
+static void refreshBabyModeButtons() {
+    const int active = (int)BabyService_GetMode();
+    for (int i = 0; i < BABY_MODE_COUNT; i++) {
+        if (!baby_mode_btns[i]) continue;
+        lv_obj_set_style_bg_color(baby_mode_btns[i],
+            lv_color_hex(i == active ? COLOR_MODE_ACTIVE : COLOR_MODE_INACTIVE), 0);
+    }
+}
+
+static void baby_mode_btn_cb(lv_event_t* e) {
+    playToneI2S(800, 15, true);
+    const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    BabyService_SetMode((BabyMode)idx);
+    refreshBabyModeButtons();
+}
+
+// Zeile "Babyphone" mit den vier Modi. Gilt sofort und auf jedem Bildschirm;
+// Video ohne Ton laeuft im Hintergrund, bis das Overlay es anzeigt.
+static void create_baby_mode_row(lv_obj_t* parent) {
+    lv_obj_t* lbl = lv_label_create(parent);
+    lv_label_set_text(lbl, "Babyphone");
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xAAAAAA), 0);
+
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_set_size(row, LV_PCT(100), 60);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    static const char* const texts[BABY_MODE_COUNT] = {
+        "Aus",
+        LV_SYMBOL_AUDIO,
+        LV_SYMBOL_VIDEO,
+        LV_SYMBOL_VIDEO " " LV_SYMBOL_AUDIO,
+    };
+
+    for (int i = 0; i < BABY_MODE_COUNT; i++) {
+        lv_obj_t* btn = lv_btn_create(row);
+        lv_obj_set_size(btn, 125, 55);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_GESTURE_BUBBLE);
+        lv_obj_add_event_cb(btn, baby_mode_btn_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+
+        lv_obj_t* l = lv_label_create(btn);
+        lv_label_set_text(l, texts[i]);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_20, 0);
+        lv_obj_center(l);
+
+        baby_mode_btns[i] = btn;
+    }
+    refreshBabyModeButtons();
+}
 
 static void brightnessSliderWrapper(lv_event_t * e) {
     brightnessPercent = lv_slider_get_value(lv_event_get_target(e));
@@ -79,6 +146,7 @@ void ViewQuickSettings::hide() {
         lv_obj_del_async(quickOverlay); 
         quickOverlay = nullptr; 
         mixer_container = nullptr;
+        for (int i = 0; i < BABY_MODE_COUNT; i++) baby_mode_btns[i] = nullptr;
     }
 }
 
@@ -218,6 +286,8 @@ void ViewQuickSettings::toggle(GuiManager* guiManager) {
         if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) lv_obj_clear_flag(c, LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
     }, LV_EVENT_CLICKED, mixer_container);
+
+    create_baby_mode_row(panel);
 
     // Action Buttons
     lv_obj_t * row_btns = lv_obj_create(panel);

@@ -5,7 +5,8 @@
 #include "BleLogic.h"
 #include "LVGL_Driver.h"
 #include "CameraScanner.h" 
-#include "BabyCamApi.h" // <--- WICHTIG: Für den API Call
+#include "BabyCamApi.h"
+#include "BabyService.h"   // Aufloesung der Baby-Ansicht
 #include <WiFi.h>
 #include <Preferences.h> // <--- WICHTIG: Zum Speichern der Auflösung
 
@@ -110,19 +111,10 @@ static void dd_res_global_cb(lv_event_t * e) {
     playToneI2S(800, 100, true);
     char buf[32];
     lv_dropdown_get_selected_str((lv_obj_t*)lv_event_get_target(e), buf, sizeof(buf));
-    currentCamRes = String(buf);
-    
-    Preferences prefs;
-    prefs.begin("catmat", false);
-    prefs.putString("camRes", currentCamRes);
-    prefs.end();
-
-    int xIdx = currentCamRes.indexOf('x');
-    if(xIdx != -1) {
-        int w = currentCamRes.substring(0, xIdx).toInt();
-        int h = currentCamRes.substring(xIdx+1).toInt();
-        BabyCamApi_SetResolution(w, h);
-    }
+    // Aufloesung der Baby-Ansicht. Gesetzt wird sie vom BabyService, sobald
+    // das Video fuer die Baby-Ansicht laeuft (das Overlay hat eine eigene).
+    if (String(buf).indexOf('x') <= 0) return;
+    BabyService_SetBabyResolution(String(buf));
 }
 
 static void showStreamSettingsPopup() {

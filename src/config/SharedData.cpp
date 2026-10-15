@@ -44,7 +44,6 @@ String mqttBabyTopic = SECRET_MQTT_BABY_TOPIC;
 String mqttCameraTriggerTopic = SECRET_MQTT_CAM_TRIGGER;
 volatile bool isBabyArmed = false;
 
-volatile bool requestBabyStream = false;
 volatile int babyStreamStatus = 0; 
 volatile bool vidFSMode = false;
 volatile bool showFps = false; 
@@ -120,6 +119,8 @@ bool isBatteryCharging = false;
 int autoHealedDisconnectCount = 0; 
 
 bool babyAlarmActive = false;
+bool catAlarmAcked = false;
+bool babyAlarmAcked = false;
 
 int32_t rawPressure = 0;
 int32_t taraOffset = 0;
@@ -249,6 +250,21 @@ void Data_Init() {
     muteUI = preferences.getBool("mutU", false);
     muteAlarm = preferences.getBool("mutA", false);
     muteBaby = preferences.getBool("mutB", false);
+
+    // Einmalige Bereinigung nach der Trennung von Quittierung und Mixer (siehe
+    // SharedData.h): Unter der alten Doppelfunktion konnte eine Quittierung
+    // als Mixer-Stumm gespeichert worden sein - dann blieben Alarmton oder
+    // Babyphone dauerhaft still, ohne erkennbaren Grund. Im Zweifel hoerbar.
+    if (!preferences.getBool("muteSplit", false)) {
+        if (muteAlarm || muteBaby) {
+            Serial.println("[Audio] Mixer: Stummschaltung Alarm/Baby einmalig zurueckgesetzt (Umstellung Quittierung).");
+        }
+        muteAlarm = false;
+        muteBaby  = false;
+        preferences.putBool("mutA", false);
+        preferences.putBool("mutB", false);
+        preferences.putBool("muteSplit", true);
+    }
     
     thresholdVal = preferences.getInt("thr", 150);
     taraOffset = preferences.getUInt("off", 0);
@@ -384,10 +400,13 @@ void playBingI2S(uint8_t volChannel) {
     }
 }
 
-void playBabyAlarmI2S() { if(audioQueue != NULL && !muteAlarm) { AudioMsg msg; msg.soundType = 1; msg.volumeChannel = 1; msg.duration=200; xQueueSend(audioQueue, &msg, 0); } }
-void playCatAlarmI2S() { if(audioQueue != NULL && !muteAlarm) { AudioMsg msg; msg.soundType = 2; msg.volumeChannel = 1; msg.duration=100; xQueueSend(audioQueue, &msg, 0); } }
+// Die Lautstaerke (inkl. Mixer-Stumm) wendet audioTask() an - hier wird nur
+// eingereiht. Ob der Alarm ueberhaupt toent (Quittierung), entscheidet der
+// Aufrufer in SystemLogic.
+void playBabyAlarmI2S() { if(audioQueue != NULL) { AudioMsg msg; msg.soundType = 1; msg.volumeChannel = 1; msg.duration=200; xQueueSend(audioQueue, &msg, 0); } }
+void playCatAlarmI2S() { if(audioQueue != NULL) { AudioMsg msg; msg.soundType = 2; msg.volumeChannel = 1; msg.duration=100; xQueueSend(audioQueue, &msg, 0); } }
 
-void fullReset() { alarmActive = false; disconnectAlarmActive = false; muteAlarm = false; isArmed = false; cooldownUntil = millis() + 5000; topbarStatusMsg = ""; }
+void fullReset() { alarmActive = false; disconnectAlarmActive = false; catAlarmAcked = false; isArmed = false; cooldownUntil = millis() + 5000; topbarStatusMsg = ""; }
 void wakeDisplay() { requestWake = true; M5.Display.wakeup(); }
 void sleepDisplay() { requestSleep = true; M5.Display.sleep(); }
 void factoryReset() { preferences.begin("catmat", false); preferences.clear(); preferences.end(); delay(1000); ESP.restart(); }
@@ -415,4 +434,4 @@ namespace SharedData {
         
         preferences.end();
     }
-}
+}

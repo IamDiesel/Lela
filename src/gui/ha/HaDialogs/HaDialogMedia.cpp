@@ -442,4 +442,4 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
         float new_vol = lv_slider_get_value(sl) / 100.0f;
         HaWebsocketLogic_CallMediaVolumeService(cur_media_entity, new_vol);
     }, LV_EVENT_RELEASED, NULL);
-}
+}

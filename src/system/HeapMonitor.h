@@ -19,4 +19,5 @@
 void HeapMonitor_Log(const char* context);
 
 // Periodische Ausgabe (hoechstens alle 'intervalMs'); im Hauptloop aufrufen.
-void HeapMonitor_Update(uint32_t intervalMs = 60000);
+// 'context' erscheint als Anlass in der Zeile (z.B. Bildschirm und Modus).
+void HeapMonitor_Update(uint32_t intervalMs = 60000, const char* context = "periodisch");

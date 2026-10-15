@@ -2,6 +2,7 @@
 #include "SharedData.h"
 #include "SystemLogic.h"
 #include "GuiManager.h"
+#include "BabyService.h"
 #include <WiFi.h>
 #include "secrets.h"
 
@@ -23,8 +24,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         if (msg == "on" || msg == "true" || msg == "1") {
             if (isBabyArmed && !babyAlarmActive) {
                 babyAlarmActive = true;
-                muteBaby = false;
+                babyAlarmAcked  = false;
                 wakeDisplay();
+                // Bei einem Baby-Alarm sofort Bild und Ton - unabhaengig vom
+                // zuvor gewaehlten Modus.
+                BabyService_SetMode(BabyMode::VideoAudio);
                 gui.switchScreen(SCREEN_BABY, LV_SCR_LOAD_ANIM_NONE);
             }
         } else if (msg == "off" || msg == "false" || msg == "0") {
@@ -33,13 +37,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
     else if (t == mqttCameraTriggerTopic) {
         if (msg == "on" || msg == "true" || msg == "1") {
-            isStreamActive = true;
-            requestBabyStream = true;
+            BabyService_SetMode(BabyMode::VideoAudio);
             wakeDisplay();
             gui.switchScreen(SCREEN_BABY, LV_SCR_LOAD_ANIM_NONE);
         } else if (msg == "off" || msg == "false" || msg == "0") {
-            isStreamActive = false;
-            requestBabyStream = false;
+            BabyService_SetMode(BabyMode::Off);
         }
     }
     

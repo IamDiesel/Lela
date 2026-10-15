@@ -4,6 +4,7 @@
 #include "SystemLogic.h" 
 #include "AudioStreamLogic.h"
 #include "BabyCamApi.h"
+#include "BabyService.h"
 #include "ViewTopbar.h"
 #include "ViewBabySettings.h"
 #include <WiFi.h>
@@ -30,8 +31,13 @@ static uint32_t s_lastBtnColor = 0;
 static int s_lastBtnStateForText = -1;
 
 static void view_baby_del_cb(lv_event_t * e) {
-    isBabyApiActive = false; // <--- API schlafen legen
-    
+    // Die Ansicht ist weg - Video und Audio laufen nach dem gewaehlten Modus
+    // weiter (BabyService). Nur Gegensprechen gehoert ausschliesslich hierher:
+    // der PTT-Knopf existiert nicht mehr und kann kein RELEASED mehr liefern.
+    BabyService_SetBabyViewVisible(false);
+    AudioStreamLogic_StopPTT();
+    pttSwipeLock = false;
+
     cam_image_obj = nullptr; cam_touch_overlay = nullptr; lbl_cam_status = nullptr;
     lbl_play_icon = nullptr; btn_audio = nullptr; lbl_audio = nullptr; btn_fs = nullptr;
     lbl_fs = nullptr; lbl_fps = nullptr; fs_black_overlay = nullptr; btn_ptt = nullptr;
@@ -39,16 +45,11 @@ static void view_baby_del_cb(lv_event_t * e) {
     lbl_cam_bat_main = nullptr; lbl_cam_bat_fs = nullptr;
 }
 
+// Knopf und Symbol folgen dem Modus des BabyService, siehe syncModeControls().
 static void btn_audio_event_cb(lv_event_t * e) {
     playToneI2S(800, 100, true); 
     lv_obj_t * btn = (lv_obj_t *)lv_event_get_target(e);
-    if (lv_obj_has_state(btn, LV_STATE_CHECKED)) {
-        lv_label_set_text(lbl_audio, LV_SYMBOL_VOLUME_MAX);
-        if (!isAudioStreaming) AudioStreamLogic_StartBaby();
-    } else {
-        lv_label_set_text(lbl_audio, LV_SYMBOL_MUTE);
-        if (isAudioStreaming) AudioStreamLogic_StopBaby();
-    }
+    BabyService_SetAudio(lv_obj_has_state(btn, LV_STATE_CHECKED));
 }
 
 static void btn_fs_event_cb(lv_event_t * e) {
@@ -103,21 +104,14 @@ static void cam_image_event_cb(lv_event_t * e) {
             return;
         }
 
-        isStreamActive = !isStreamActive; 
-        requestBabyStream = isStreamActive; 
-        
-        if (isStreamActive) {
-            lv_obj_add_flag(lbl_play_icon, LV_OBJ_FLAG_HIDDEN); 
+        // Wie bisher: Abspielen startet Bild UND Ton, Pausieren beendet
+        // beides. Den Ton allein schaltet der Audio-Knopf.
+        if (!BabyMode_HasVideo(BabyService_GetMode())) {
+            BabyService_SetMode(BabyMode::VideoAudio);
             ViewBaby_SetStatus("Verbinde...");
-            if (btn_audio) lv_obj_add_state(btn_audio, LV_STATE_CHECKED);
-            if (lbl_audio) lv_label_set_text(lbl_audio, LV_SYMBOL_VOLUME_MAX);
-            AudioStreamLogic_StartBaby();
         } else {
-            lv_obj_clear_flag(lbl_play_icon, LV_OBJ_FLAG_HIDDEN); 
+            BabyService_SetMode(BabyMode::Off);
             ViewBaby_SetStatus("Pausiert");
-            if (btn_audio) lv_obj_clear_state(btn_audio, LV_STATE_CHECKED);
-            if (lbl_audio) lv_label_set_text(lbl_audio, LV_SYMBOL_MUTE);
-            AudioStreamLogic_StopBaby();
         }
     } 
 }
@@ -139,18 +133,17 @@ static void btn_ptt_event_cb(lv_event_t * e) {
     }
 }
 
+// Erster Druck quittiert den Alarm (Ton und Popup aus), der zweite setzt ihn
+// zurueck. Die Mixer-Lautstaerke des Babyphones bleibt dabei unberuehrt.
 static void btn_mute_event_cb(lv_event_t * e) { 
     playToneI2S(800, 100, true); 
     if (babyAlarmActive) {
-        if (!muteBaby) muteBaby = true; 
-        else { babyAlarmActive = false; muteBaby = false; }
+        if (!babyAlarmAcked) babyAlarmAcked = true; 
+        else { babyAlarmActive = false; babyAlarmAcked = false; }
     } else {
         isBabyArmed = !isBabyArmed;
     }
 }
-
-void ViewBaby_ClearImage() { if (cam_image_obj) lv_img_set_src(cam_image_obj, NULL); }
-
 
 void ViewBaby_SetImage(const void* src) {
     if (gui.getCurrentScreen() != SCREEN_BABY) return; 
@@ -180,16 +173,18 @@ void ViewBaby_SetImage(const void* src) {
                 lv_obj_add_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
             }
         } else {
+            // Der Decoder laesst solche Bilder gar nicht durch (Probe vor dem
+            // Dekodieren). Bleibt als Anzeige, falls sich das je aendert; der
+            // Stream laeuft weiter - ein einzelnes kaputtes Bild ist kein
+            // Grund, den Modus zu wechseln.
             ViewBaby_SetStatus("Fehler: Bildmasse 0x0");
-            ViewBaby_StopStreamOnError();
         }
     }
 }
 
 
 
-void ViewBaby_SetStatus(const char* text) {
-    if (gui.getCurrentScreen() != SCREEN_BABY) return; 
+static void setStatusLabel(const char* text) {
     if (lbl_cam_status) { 
         lv_obj_clear_flag(lbl_cam_status, LV_OBJ_FLAG_HIDDEN); 
         String padded = String("                                                                                ") + LV_SYMBOL_IMAGE + " " + text;
@@ -197,20 +192,49 @@ void ViewBaby_SetStatus(const char* text) {
     }
 }
 
-void ViewBaby_StopStreamOnError() {
-    requestBabyStream = false; isStreamActive = false; 
-    if (gui.getCurrentScreen() != SCREEN_BABY) return;
-    if (lbl_play_icon) lv_obj_clear_flag(lbl_play_icon, LV_OBJ_FLAG_HIDDEN);
-    if (btn_audio) lv_obj_clear_state(btn_audio, LV_STATE_CHECKED);
-    if (lbl_audio) lv_label_set_text(lbl_audio, LV_SYMBOL_MUTE);
-    AudioStreamLogic_StopBaby();
+// Wird auch aus dem Video-Netz-Task gerufen (unter der LVGL-Sperre). Der
+// Stream laeuft inzwischen auch, wenn die Baby-Ansicht nicht sichtbar ist -
+// dann gibt es kein Ziel fuer die Meldung.
+void ViewBaby_SetStatus(const char* text) {
+    if (gui.getCurrentScreen() != SCREEN_BABY) return; 
+    setStatusLabel(text);
+}
+
+// Gleicht Abspielsymbol und Audio-Knopf mit dem Modus des BabyService ab.
+// Der Modus kann sich ausserhalb dieser Ansicht aendern (QuickSettings, MQTT,
+// Alarm); deshalb wird er hier gelesen statt im Klick-Callback gesetzt.
+static void syncModeControls() {
+    const BabyMode m = BabyService_GetMode();
+
+    if (lbl_play_icon) {
+        const bool iconHidden = lv_obj_has_flag(lbl_play_icon, LV_OBJ_FLAG_HIDDEN);
+        if (BabyMode_HasVideo(m) != iconHidden) {
+            if (BabyMode_HasVideo(m)) lv_obj_add_flag(lbl_play_icon, LV_OBJ_FLAG_HIDDEN);
+            else                      lv_obj_clear_flag(lbl_play_icon, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if (btn_audio && lbl_audio) {
+        const bool checked = lv_obj_has_state(btn_audio, LV_STATE_CHECKED);
+        if (BabyMode_HasAudio(m) != checked) {
+            if (BabyMode_HasAudio(m)) {
+                lv_obj_add_state(btn_audio, LV_STATE_CHECKED);
+                lv_label_set_text(lbl_audio, LV_SYMBOL_VOLUME_MAX);
+            } else {
+                lv_obj_clear_state(btn_audio, LV_STATE_CHECKED);
+                lv_label_set_text(lbl_audio, LV_SYMBOL_MUTE);
+            }
+        }
+    }
 }
 
 lv_obj_t* ViewBaby::build() {
     s_lastBtnColor = 0; s_lastBtnStateForText = -1;
-    requestBabyStream = false; isStreamActive = false; 
-    
-    isBabyApiActive = true; // <--- API wecken
+
+    // Der Modus bleibt beim Betreten erhalten - laeuft schon Video oder Ton,
+    // geht es nahtlos weiter. Die Ansicht haelt die Kamerasitzung auch im
+    // Modus "Aus" offen (Akkustand, Einstellungen).
+    BabyService_SetBabyViewVisible(true);
 
     lv_obj_t* scr = lv_obj_create(NULL);
     if (!scr) return nullptr;
@@ -344,6 +368,11 @@ lv_obj_t* ViewBaby::build() {
 
     ViewBabySettings_Create(scr);
 
+    // Bewusst nicht ViewBaby_SetStatus(): waehrend build() ist die Ansicht
+    // noch nicht als aktueller Bildschirm eingetragen.
+    syncModeControls();
+    if (BabyMode_HasVideo(BabyService_GetMode())) setStatusLabel("Verbinde...");
+
     return scr;
 }
 
@@ -377,20 +406,18 @@ void ViewBaby::update() {
     if (lbl_cam_bat_main) lv_label_set_text_fmt(lbl_cam_bat_main, LV_SYMBOL_BATTERY_FULL " %d%%", camBatteryPercent);
     // lbl_cam_bat_fs updaten wir gar nicht mehr, das macht dein VideoOverlay!
 
-    if (btn_audio != nullptr && lbl_audio != nullptr) {
-        bool ui_is_on = lv_obj_has_state(btn_audio, LV_STATE_CHECKED);
-        bool system_is_on = isAudioStreaming;
-        if (ui_is_on && !system_is_on) {
-            lv_obj_clear_state(btn_audio, LV_STATE_CHECKED);
-            lv_label_set_text(lbl_audio, LV_SYMBOL_MUTE);
-        } else if (!ui_is_on && system_is_on) {
-            lv_obj_add_state(btn_audio, LV_STATE_CHECKED);
-            lv_label_set_text(lbl_audio, LV_SYMBOL_VOLUME_MAX);
-        }
-    }
+    syncModeControls();
+
+    // Sicherheitsventil: Video wegen knappen Speichers pausiert. Einmal beim
+    // Eintreten melden; das Fortsetzen meldet der Video-Task selbst
+    // ("Verbinde...").
+    static bool s_lastMemPaused = false;
+    const bool memPaused = BabyService_IsVideoMemoryPaused();
+    if (memPaused && !s_lastMemPaused) setStatusLabel("Video pausiert - Speicher knapp");
+    s_lastMemPaused = memPaused;
 
     bool fastBlink = (millis() % 600 < 300);
-    int curBtnState = babyAlarmActive ? (muteBaby ? 4 : 3) : (isBabyArmed ? 2 : 1);
+    int curBtnState = babyAlarmActive ? (babyAlarmAcked ? 4 : 3) : (isBabyArmed ? 2 : 1);
     uint32_t targetBtnColor = 0x555555; const char* targetBtnText = "";
 
     switch(curBtnState) {

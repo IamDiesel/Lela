@@ -1,6 +1,8 @@
 #include "ViewBabySettings.h"
 #include "SharedData.h"
 #include "BabyCamApi.h"
+#include "BabyService.h"
+#include "ViewVideoPip.h"
 #include <Preferences.h>
 #include <math.h>
 
@@ -18,6 +20,19 @@ static lv_obj_t * slider_speed = nullptr;
 static lv_obj_t * dd_res = nullptr;
 static lv_obj_t * slider_expo = nullptr;
 static lv_obj_t * sw_lowlat = nullptr;
+
+// Video-Overlay (Bild im Bild auf den anderen Bildschirmen). Lage und Groesse
+// werden direkt am Overlay per Ziehen eingestellt (siehe ViewVideoPip).
+static lv_obj_t * dd_pip_fps    = nullptr;
+static lv_obj_t * dd_pip_res    = nullptr;
+
+// Auswahl der Overlay-Bildrate. Reihenfolge = Reihenfolge der Dropdown-Texte.
+static const int  PIP_FPS_VALUES[] = { 1, 2, 3, 5, 8, 10, 15 };
+static const int  PIP_FPS_COUNT    = sizeof(PIP_FPS_VALUES) / sizeof(PIP_FPS_VALUES[0]);
+static const char PIP_FPS_OPTIONS[] = "1 fps\n2 fps\n3 fps\n5 fps\n8 fps\n10 fps\n15 fps";
+
+// Erster Eintrag der Overlay-Aufloesung: kleinste, die die Kamera anbietet.
+static const char PIP_RES_AUTO[] = "Automatisch";
 
 // Belichtung hat bisher keinen Platz in SharedData - sie wird nur hier
 // gebraucht und ueberlebt den Neustart in den Preferences.
@@ -71,22 +86,32 @@ static void settings_action_cb(lv_event_t * e) {
     }
 }
 
+// Aufloesung der Baby-Ansicht. Gesetzt wird sie vom BabyService, sobald das
+// Video laeuft und die Baby-Ansicht der Abnehmer ist (das Overlay hat eine
+// eigene Aufloesung).
 static void dd_res_cb(lv_event_t * e) {
     char buf[32];
     lv_dropdown_get_selected_str(dd_res, buf, sizeof(buf));
-    String res = String(buf);
-    currentCamRes = res; 
-    
-    Preferences prefs;
-    prefs.begin("catmat", false);
-    prefs.putString("camRes", currentCamRes);
-    prefs.end();
+    if (String(buf).indexOf('x') <= 0) return;   // Platzhalter "(warte auf Kamera)"
+    BabyService_SetBabyResolution(String(buf));
+}
 
-    int xIdx = res.indexOf('x');
-    if(xIdx != -1) {
-        int w = res.substring(0, xIdx).toInt();
-        int h = res.substring(xIdx+1).toInt();
-        BabyCamApi_SetResolution(w, h);
+// --- Video-Overlay ---------------------------------------------------------
+static void dd_pip_cb(lv_event_t * e) {
+    lv_obj_t* dd = lv_event_get_target(e);
+    const uint16_t sel = lv_dropdown_get_selected(dd);
+    playToneI2S(800, 100, true);
+
+    if (dd == dd_pip_fps) {
+        if (sel < PIP_FPS_COUNT) BabyService_SetPipFps(PIP_FPS_VALUES[sel]);
+    } else if (dd == dd_pip_res) {
+        if (sel == 0) {
+            BabyService_SetPipResolution("");
+        } else {
+            char buf[32];
+            lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
+            BabyService_SetPipResolution(String(buf));
+        }
     }
 }
 
@@ -145,6 +170,30 @@ static lv_obj_t* create_setting_slider(lv_obj_t* parent, const char* name, lv_ob
     lv_obj_clear_flag(*slider_ptr, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_user_data(*slider_ptr, lbl_val);
     lv_obj_add_event_cb(*slider_ptr, slider_step5_cb, LV_EVENT_ALL, NULL);
+    return cont;
+}
+
+// Beschriftung oben, Auswahlliste darunter - in der Breite eines Viertels
+// der Zeile, damit vier Einstellungen nebeneinander passen.
+static lv_obj_t* create_setting_dropdown(lv_obj_t* parent, const char* name, const char* options, lv_obj_t** dd_ptr) {
+    lv_obj_t* cont = lv_obj_create(parent);
+    lv_obj_set_size(cont, 205, 80);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(cont, 0, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
+    lv_obj_set_style_pad_all(cont, 0, 0);
+
+    lv_obj_t* lbl = lv_label_create(cont);
+    lv_label_set_text(lbl, name);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 5, 0);
+
+    *dd_ptr = lv_dropdown_create(cont);
+    lv_obj_set_size(*dd_ptr, 195, 40);
+    lv_obj_align(*dd_ptr, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_dropdown_set_options(*dd_ptr, options);
+    lv_obj_clear_flag(*dd_ptr, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(*dd_ptr, dd_pip_cb, LV_EVENT_VALUE_CHANGED, NULL);
     return cont;
 }
 
@@ -231,7 +280,7 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
 
     // --- 3. MAIN SETTINGS MODAL ---
     settings_modal = lv_obj_create(settings_overlay);
-    lv_obj_set_size(settings_modal, 900, 600);
+    lv_obj_set_size(settings_modal, 900, 690);   // 690: Platz fuer die Overlay-Zeile
     lv_obj_center(settings_modal);
     lv_obj_set_style_bg_color(settings_modal, lv_color_hex(0x222222), 0);
     lv_obj_set_style_border_color(settings_modal, lv_color_hex(0x555555), 0);
@@ -293,6 +342,21 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
     lv_obj_add_event_cb(btn_rec, [](lv_event_t* e){
         playToneI2S(800, 100, true);
         BabyCamApi_RecordVideo();
+    }, LV_EVENT_CLICKED, NULL);
+
+    // ZEILE 3c: Video-Overlay auf den anderen Bildschirmen
+    lv_obj_t* row3c = create_transparent_row(settings_modal, 840, 80);
+    create_setting_dropdown(row3c, "Overlay-Bildrate",   PIP_FPS_OPTIONS, &dd_pip_fps);
+    create_setting_dropdown(row3c, "Overlay-Aufloesung", PIP_RES_AUTO,    &dd_pip_res);
+
+    lv_obj_t* btn_pip_reset = lv_btn_create(row3c);
+    lv_obj_set_size(btn_pip_reset, 400, 60);
+    lv_obj_t* lbl_pip_reset = lv_label_create(btn_pip_reset);
+    lv_label_set_text(lbl_pip_reset, LV_SYMBOL_REFRESH "  Overlay-Lage zuruecksetzen");
+    lv_obj_center(lbl_pip_reset);
+    lv_obj_add_event_cb(btn_pip_reset, [](lv_event_t* e){
+        playToneI2S(800, 100, true);
+        ViewVideoPip::resetLayout();
     }, LV_EVENT_CLICKED, NULL);
 
     // ZEILE 4: Action Buttons (Front/Main & Beenden)
@@ -367,6 +431,33 @@ void ViewBabySettings_Show() {
 
     lv_dropdown_set_options(dd_res, opts.c_str());
     lv_dropdown_set_selected(dd_res, selIdx);
+
+    // --- Video-Overlay ---
+    int fpsIdx = 0;
+    for (int i = 0; i < PIP_FPS_COUNT; i++) {
+        if (PIP_FPS_VALUES[i] <= BabyService_GetPipFps()) fpsIdx = i;
+    }
+    lv_dropdown_set_selected(dd_pip_fps, fpsIdx);
+
+    // Aufloesungen der Kamera (oder die zuletzt bekannte Liste), davor
+    // "Automatisch". Eine gespeicherte, die die Kamera nicht mehr anbietet,
+    // faellt auf "Automatisch" zurueck - genau das tut auch der BabyService.
+    const String pipList = BabyService_GetResolutionOptions();
+    const String pipSet  = BabyService_GetPipResolutionSetting();
+    String pipOpts = PIP_RES_AUTO;
+    int pipSel = 0, idx = 1, start = 0;
+    while (pipList.length() > 0 && start <= (int)pipList.length()) {
+        int end = pipList.indexOf('\n', start);
+        if (end < 0) end = pipList.length();
+        const String entry = pipList.substring(start, end);
+        start = end + 1;
+        if (entry.length() == 0) continue;
+        pipOpts += "\n" + entry;
+        if (entry == pipSet) pipSel = idx;
+        idx++;
+    }
+    lv_dropdown_set_options(dd_pip_res, pipOpts.c_str());
+    lv_dropdown_set_selected(dd_pip_res, pipSel);
     
     // Komplettes Overlay einblenden und sicherstellen, dass es ganz oben liegt
     lv_obj_clear_flag(settings_overlay, LV_OBJ_FLAG_HIDDEN);
@@ -377,4 +468,4 @@ void ViewBabySettings_Update() {
     // LEER! Die UI-Updates wurden aus der Loop verbannt.
     // Das verhinderte das Dropdown daran, offen zu bleiben, 
     // weil das Parent ständig über die Dropdown-Liste gezeichnet wurde.
-}
+}
