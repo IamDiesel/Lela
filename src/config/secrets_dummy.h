@@ -38,3 +38,6 @@
 
 // Audio Stream
 #define SECRET_BABY_STREAM_URL "http://192.168.1.100:1984/api/stream.aac?src=baby_audio_esp"
+
+// Kamera-Kennung fuer die Babyphone-API (Sitzungsanmeldung)
+#define SECRET_CAM_UUID "YOUR_CAMERA_UUID"

@@ -147,12 +147,13 @@ Die Versionen von LVGL, M5GFX und M5Unified sind **bewusst exakt festgelegt**: a
 
 * **`lvgl/lvgl`** (`8.3.11`): Grafik-Engine, konfiguriert über die lokale `lv_conf.h` (Speicher im PSRAM).
 * **`m5stack/M5GFX`** (`0.2.19`) und **`m5stack/M5Unified`** (`0.2.13`): Hardware-Abstraktion für Display, Touch, Akku und I2S-Audio.
-* **`tobozo/LGFX_PPA`** (`^0.2.2`): Hardware-Bildverarbeitung (PPA) des ESP32-P4 für das Video.
-* **`bblanchon/ArduinoJson`** (`^7.0.4`, aktuell 7.4.3): JSON-Parsing, große Dokumente mit PSRAM-Allocator (`HaPsramAllocator`).
-* **`gilmaimon/ArduinoWebsockets`** (`^0.5.4`): Home Assistant WebSocket.
-* **`knolleary/PubSubClient`** (`^2.8`): MQTT.
-* **`earlephilhower/ESP8266Audio`** (Git): I2S-Audioausgabe (MP3/AAC/WAV).
-* **`bertmelis/USBHostSerial`** (Git): USB-CDC zum BLE-Coprozessor (T-Dongle S3).
+* **`tobozo/LGFX_PPA`** (`0.2.2`): Hardware-Bildverarbeitung (PPA) des ESP32-P4 für das Video.
+* **`bblanchon/ArduinoJson`** (`7.4.3`): JSON-Parsing, große Dokumente mit PSRAM-Allocator (`HaPsramAllocator`).
+* **`gilmaimon/ArduinoWebsockets`** (`0.5.4`): Home Assistant WebSocket.
+* **`knolleary/PubSubClient`** (`2.8.0`): MQTT.
+* **`bertmelis/USBHostSerial`** (Git, Commit `3608e9a`, Version 0.2.0): USB-CDC zum BLE-Coprozessor (T-Dongle S3).
+
+Seit v2.0.0 sind **alle** Bibliotheken exakt gepinnt (Git-Bibliotheken auf einen Commit), damit ein Neubau auch später dieselben Stände zieht. Die Babyphone-Audioausgabe läuft direkt über M5Unified; die frühere Abhängigkeit `ESP8266Audio` war ungenutzt und ist entfernt.
 
 ---
 
@@ -165,16 +166,20 @@ Die Versionen von LVGL, M5GFX und M5Unified sind **bewusst exakt festgelegt**: a
 4. In der neuen `secrets.h` den **Home Assistant Long-Lived Access Token** eintragen. *(Diesen erhält man in Home Assistant unter Profil -> Sicherheit -> Langlebige Zugangs-Token).*
 
 ### 5.2 Workarounds & Bugfixes anwenden
-Aufgrund spezifischer Abhängigkeiten im Espressif/PlatformIO Ökosystem für den ESP32-P4 müssen vor dem ersten Kompilieren zwei manuelle Anpassungen vorgenommen werden:
+Aufgrund spezifischer Abhängigkeiten im Espressif/PlatformIO Ökosystem für den ESP32-P4 ist vor dem ersten Kompilieren **eine** manuelle Anpassung nötig (einmal je Rechner):
 
 1. **Python Click-Modul Downgrade (PlatformIO Bug):**
-   Öffne das VS Code Terminal und führe folgenden Befehl aus, um das Modul auf eine kompatible Version zu setzen:
+   Das `esptool` dieser Plattform verträgt sich nicht mit `click` ab Version 8.2 – der Upload bricht dann mit `TypeError: ... get_metavar() missing 1 required positional argument: 'ctx'` ab. Im VS Code Terminal:
    
-       C:\Users\<DeinNutzername>\.platformio\penv\Scripts\pip.exe install "click==8.1.7"
+       C:\Users\<DeinNutzername>\.platformio\penv\Scripts\pip.exe install "click==8.1.8"
    
-2. **ESP8266Audio PDM-Kompilierungsfehler:**
-   Damit die Audio-Bibliothek auf dem P4-Chip fehlerfrei kompiliert, muss nach dem ersten Laden der Bibliotheken eine fehlerhafte PDM-Datei gelöscht werden. Navigiere im Dateibaum zu:
-   `.pio/libdeps/esp32p4_m5stack/ESP8266Audio/src/AudioOutputPDM.cpp` und lösche diese Datei.
+   (Jede 8.1.x-Version funktioniert.)
+
+Automatisch beim Build und **ohne** Handarbeit:
+* `tools/patch_m5gfx.py` (in `extra_scripts`): schaltet in M5GFX die DMA2D-Nutzung des DSI-Panels ab (`use_dma2d = false`), da sich der 2D-DMA-Controller auf Silizium v1.3 sonst aufhängt. Legt beim ersten Lauf eine `.orig`-Sicherung an.
+* `src/system/Dma2dGuard.c` mit `-Wl,--wrap=dma2d_hal_…_reset_channel`: ersetzt das unbegrenzte Warten im Kanal-Reset des Treibers durch eines mit Zeitlimit.
+
+Die frühere Anpassung „`AudioOutputPDM.cpp` löschen“ entfällt seit v2.0.0 (Bibliothek `ESP8266Audio` entfernt).
 
 ### 5.3 Kompilieren
 Nach den Vorbereitungen kann das Projekt regulär über PlatformIO gebaut (`Build`) und per USB geflasht (`Upload`) werden. Das PSRAM und die Custom-Partition (`default_16MB.csv`) sind bereits in der `.ini` vorkonfiguriert.
