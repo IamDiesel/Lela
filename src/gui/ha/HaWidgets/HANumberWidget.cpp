@@ -1,5 +1,6 @@
 #include "HANumberWidget.h"
 #include "HaTheme.h"
+#include "UiSound.h"
 #include "UiTheme.h"
 #include "HaWebsocketLogic.h"
 
@@ -7,6 +8,7 @@ HANumberWidget::HANumberWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     : HAWidget(parent, tab_idx, type, entity, x, y, w, h, name, mdi_icon, c_on, c_off) {
     
     slider = lv_slider_create(container);
+    UiSound_AttachSlider(slider);   // Klick beim Anfassen/Loslassen wie in den Einstellungen
     lv_obj_set_size(slider, lv_pct(80), 10);
     lv_obj_align(slider, LV_ALIGN_CENTER, 0, 10);
     

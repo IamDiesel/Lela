@@ -26,6 +26,13 @@ void AudioStreamLogic_ApplyConfig();
 // true, wenn die eingestellte Tonquelle Gegensprechen kann (nur BabyCam/UDP).
 bool AudioStreamLogic_SupportsPTT();
 
+// Diagnose: Teil der Audio-Kette zuruecksetzen, ohne das Geraet stromlos zu
+// machen (Theorien siehe AudioCodecTab5.h; kind = AudioResetKind). Laeuft im
+// Besitzer-Task: Lautsprecher aus, Reset, Lautsprecher im vorherigen Zustand
+// wieder an, danach ein Testton. Waehrend des Gegensprechens wirkungslos.
+// Registerauszug vorher/nachher auf der seriellen Konsole.
+void AudioStreamLogic_ResetAudio(uint8_t kind);
+
 // ------------------------------------------------------------------------------
 // Zugriffsschutz fuer die I2S-Hardware
 // ------------------------------------------------------------------------------

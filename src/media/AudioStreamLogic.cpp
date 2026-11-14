@@ -34,6 +34,7 @@
 #include "BabyCamApi.h"
 #include "AudioSourceTypes.h"
 #include "AudioSourceHttp.h"
+#include "AudioCodecTab5.h"
 #include <M5Unified.hpp>
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -141,9 +142,13 @@ enum AudioCmd : uint8_t {
     CMD_START_PTT,
     CMD_STOP_PTT,
     CMD_RESTART_BABY,   // neue Quellen-Einstellung: laufende Wiedergabe neu starten
+    CMD_RESET_CODEC,    // Diagnose: Teil der Audio-Kette zuruecksetzen (AudioCodecTab5)
 };
 
 static QueueHandle_t s_cmdQ   = nullptr;
+// Art des Resets fuer CMD_RESET_CODEC (AudioResetKind). Die Queue traegt nur
+// das Kommando; geschrieben vom UI unmittelbar vor dem Senden.
+static volatile uint8_t s_resetKind = 0;
 static TaskHandle_t  s_audio  = nullptr;
 static TaskHandle_t  s_rx     = nullptr;
 
@@ -768,6 +773,72 @@ static void stopBabyStream() {
     if (s_cfgActive.source == AUDIO_SRC_BABYCAM_UDP) BabyCamApi_SetBabyAudio(false);
 }
 
+// Diagnose-Hoertest (AudioResetKind::SoundTest): feste Abstaende, damit sich
+// jedes Geraeusch einem Schritt zuordnen laesst. Blockiert den Besitzer-Task
+// fuer ~8 s - nur zur Fehlersuche.
+static void runSoundTest(SpkState before) {
+    static constexpr uint32_t STEP_MS = 1500;
+    const uint32_t t0 = millis();
+    auto step = [t0](const char* what) {
+        Serial.printf("[Hoertest] +%4lu ms: %s\n", (unsigned long)(millis() - t0), what);
+    };
+    vTaskDelay(pdMS_TO_TICKS(STEP_MS));            // Abstand zum Tastenklick
+    step("1 Lautsprecher AUS (Verstaerker aus)");
+    speakerSet(SPK_OFF);
+    vTaskDelay(pdMS_TO_TICKS(STEP_MS));
+    step("2 Lautsprecher AN (Codec-Init, Verstaerker an)");
+    if (!speakerSet(before == SPK_STREAM ? SPK_STREAM : SPK_UI)) speakerFallbackToUI();
+    vTaskDelay(pdMS_TO_TICKS(STEP_MS));
+    step("3 Klick (wie Tastenton)");
+    playToneI2S(800, 15, true);
+    vTaskDelay(pdMS_TO_TICKS(STEP_MS));
+    step("4 Ton 1 kHz, 300 ms");
+    playToneI2S(1000, 300, false);
+    vTaskDelay(pdMS_TO_TICKS(STEP_MS));
+    step("5 Klick (wie Tastenton)");
+    playToneI2S(800, 15, true);
+}
+
+// Diagnose "Erster Ton" (AudioResetKind::FirstTone): Lautsprecher neu starten
+// (M5Unified initialisiert dabei den Codec) und danach sechs kurze Pieptoene
+// zu festen Zeiten nach dem Neustart. Die Zahl der hoerbaren Pieptoene zeigt,
+// wie lange der Codec im stummen Zustand nach der Initialisierung noch Ton
+// ausgibt.
+static void runFirstTone(SpkState before) {
+    static constexpr uint32_t AT_MS[] = { 0, 150, 400, 800, 1500, 3000 };
+    vTaskDelay(pdMS_TO_TICKS(1500));               // Abstand zum Tastenklick
+    speakerSet(SPK_OFF);
+    if (!speakerSet(before == SPK_STREAM ? SPK_STREAM : SPK_UI)) speakerFallbackToUI();
+    const uint32_t t0 = millis();                  // Zeitpunkt der Codec-Initialisierung
+    Serial.println("[ErsterTon] Lautsprecher neu gestartet (Codec initialisiert).");
+    int n = 1;
+    for (uint32_t at : AT_MS) {
+        const uint32_t now = millis() - t0;
+        if (at > now) vTaskDelay(pdMS_TO_TICKS(at - now));
+        Serial.printf("[ErsterTon] Piep %d bei +%lu ms (1 kHz, 60 ms)\n", n++, (unsigned long)(millis() - t0));
+        playToneI2S(1000, 60, false);
+    }
+}
+
+// Diagnose-Frequenztest (AudioResetKind::ToneSweep): gleiche Tonausgabe wie
+// alle Toene (playToneI2S, Kanal Alarm), nur Frequenz und Dauer variieren.
+// Der Lautsprecher wird NICHT umgeschaltet.
+static void runToneSweep() {
+    struct ToneStep { uint16_t hz; uint16_t ms; };
+    static constexpr ToneStep STEPS[] = {
+        { 150, 300 }, { 400, 300 }, { 800, 300 }, { 1600, 300 }, { 3200, 300 }, { 6400, 300 },
+        { 800, 15 }, { 150, 15 },
+    };
+    const uint32_t t0 = millis();
+    vTaskDelay(pdMS_TO_TICKS(1500));               // Abstand zum Tastenklick
+    for (const ToneStep& s : STEPS) {
+        Serial.printf("[Frequenztest] +%5lu ms: %u Hz, %u ms\n",
+                      (unsigned long)(millis() - t0), (unsigned)s.hz, (unsigned)s.ms);
+        playToneI2S(s.hz, s.ms, false);
+        vTaskDelay(pdMS_TO_TICKS(1000 + s.ms));
+    }
+}
+
 // ------------------------------------------------------------------------------
 // Besitzer-Task
 // ------------------------------------------------------------------------------
@@ -804,6 +875,48 @@ static void audioTask(void*) {
                 stopBabyStream();
                 startBabyStream();             // Lautsprecher bleibt im Strom-Zustand
                 break;
+
+            case CMD_RESET_CODEC: {
+                // Halbduplex: waehrend des Gegensprechens gehoert der I2S-Port
+                // dem Mikrofon - dann nicht eingreifen.
+                if (isPTTActive) {
+                    Serial.println("[Audio] Codec-Reset waehrend Gegensprechen ignoriert.");
+                    break;
+                }
+                const SpkState before = s_spkState;
+                const AudioResetKind kind = (AudioResetKind)s_resetKind;
+                if (kind == AudioResetKind::SoundTest) {   // kein Reset, nur Hoertest
+                    runSoundTest(before);
+                    break;
+                }
+                if (kind == AudioResetKind::ToneSweep) {   // kein Reset, nur Frequenztest
+                    runToneSweep();
+                    break;
+                }
+                if (kind == AudioResetKind::FirstTone) {   // kein Reset, nur Hoertest
+                    runFirstTone(before);
+                    break;
+                }
+                AudioCodec_Dump("vor Reset");
+                if (AudioCodec_NeedsClock(kind)) {
+                    // Reset bei laufendem Takt: Lautsprecher muss an sein.
+                    if (s_spkState == SPK_OFF) speakerSet(SPK_UI);
+                    AudioHw_Lock(portMAX_DELAY);
+                    AudioCodec_Reset(kind);
+                    AudioHw_Unlock();
+                    speakerSet(SPK_OFF);           // danach frisch initialisieren
+                } else {
+                    speakerSet(SPK_OFF);           // geordneter Teardown
+                    AudioHw_Lock(portMAX_DELAY);
+                    AudioCodec_Reset(kind);
+                    AudioHw_Unlock();
+                }
+                // begin() schreibt die Betriebswerte und gibt den Codec frei.
+                if (!speakerSet(before == SPK_STREAM ? SPK_STREAM : SPK_UI)) speakerFallbackToUI();
+                AudioCodec_Dump("nach Reset");
+                playToneI2S(1000, 400, false);     // Testton: hoerbar = Codec wieder da
+                break;
+            }
 
             case CMD_START_PTT: {
                 if (isPTTActive) break;
@@ -1002,6 +1115,11 @@ void AudioStreamLogic_StopPTT()   { post(CMD_STOP_PTT);   }
 void AudioStreamLogic_ApplyConfig() {
     captureConfig();
     post(CMD_RESTART_BABY);
+}
+
+void AudioStreamLogic_ResetAudio(uint8_t kind) {
+    s_resetKind = kind;
+    post(CMD_RESET_CODEC);
 }
 
 bool AudioStreamLogic_SupportsPTT() {

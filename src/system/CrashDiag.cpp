@@ -7,6 +7,9 @@
 #include "SharedData.h"
 #include <esp_system.h>
 #include <esp_attr.h>
+#include <esp_sleep.h>
+#include <Preferences.h>
+#include <esp_rom_sys.h>
 
 // Magic zur Gueltigkeitspruefung des RTC-Blocks. Nach einem Kaltstart enthaelt
 // der RTC-Speicher Zufallswerte, die Magic stimmt dann nicht mehr.
@@ -33,6 +36,31 @@ static bool s_rtcLostWithoutPoweron = false;
 static bool s_published             = false;
 static esp_reset_reason_t s_reason = ESP_RST_UNKNOWN;
 
+// Automatischer Kaltstart (ColdRestart): Grund des Warmstarts davor und der
+// daraus gebildete Text fuer Bericht und Diagnose-Seite.
+static bool s_autoCold = false;
+
+// Roher Reset-Grund des Chips (ROM, wie "rst:0x.." im Boot-Log) und der Text
+// fuer Bericht und Diagnose-Seite: "<Grund> [rst 0x..]" bzw. nach einem
+// automatischen Kaltstart "<Grund des Warmstarts> [rst 0x..], danach stromlos".
+static uint32_t s_romReason = 0;
+static char     s_reasonText[80] = "";
+
+// Uebergabe ueber den Stromausfall hinweg (NVS, siehe SaveForColdRestart).
+static const char*    CARRY_NS    = "crashdiag";
+static const char*    CARRY_KEY   = "carry";
+static const uint32_t CARRY_MAGIC = 0xC01D0001;
+
+typedef struct {
+    uint32_t       magic;
+    uint32_t       reason;       // esp_reset_reason() des Warmstarts
+    uint32_t       bootCount;    // Zaehler zum Zeitpunkt des Warmstarts
+    uint32_t       panicCount;
+    uint32_t       romReason;    // roher Reset-Grund (ROM) des Warmstarts
+    uint32_t       planned;      // 1 = gewollter Neustart (kein Absturz)
+    CrashDiagState prev;         // Kontext des Laufs vor dem Neustart
+} CrashDiagCarry;
+
 // Kopie des vorherigen Laufs. Wird in CrashDiag_Init() gesichert, weil der
 // RTC-Block dort fuer den neuen Lauf zurueckgesetzt wird, der Bericht aber
 // erst spaeter ausgegeben werden kann.
@@ -53,6 +81,13 @@ static const char* resetReasonToText(esp_reset_reason_t reason) {
         case ESP_RST_BROWNOUT:  return "Brownout (Spannungseinbruch)";
         case ESP_RST_DEEPSLEEP: return "Aufwachen aus Deep Sleep";
         case ESP_RST_SDIO:      return "SDIO-Reset";
+        // Reset ueber die USB-Schnittstelle des Chips - so setzt esptool den
+        // Tab5 nach dem Hochladen zurueck ("Hard resetting via RTS pin"). Das
+        // ist KEIN Reset-Knopf: die Peripherie bleibt unter Strom.
+        case ESP_RST_USB:       return "USB-Reset (z.B. nach Upload)";
+        case ESP_RST_JTAG:      return "JTAG-Reset";
+        case ESP_RST_PWR_GLITCH:return "Spannungs-Glitch";
+        case ESP_RST_CPU_LOCKUP:return "CPU-Lockup";
         default:                return "Unbekannt";
     }
 }
@@ -67,10 +102,46 @@ static bool isCrashReason(esp_reset_reason_t reason) {
 }
 
 // ------------------------------------------------------------------
+// Uebergabe nach einem automatischen Kaltstart (ColdRestart) uebernehmen.
+// Der Eintrag wird in jedem Fall geloescht: er gilt nur fuer genau diesen Start.
+// ------------------------------------------------------------------
+static void applyCarryOver() {
+    Preferences prefs;
+    if (!prefs.begin(CARRY_NS, false)) return;
+    if (!prefs.isKey(CARRY_KEY)) { prefs.end(); return; }
+
+    CrashDiagCarry carry;
+    const bool ok = prefs.getBytesLength(CARRY_KEY) == sizeof(carry)
+                 && prefs.getBytes(CARRY_KEY, &carry, sizeof(carry)) == sizeof(carry)
+                 && carry.magic == CARRY_MAGIC;
+    prefs.remove(CARRY_KEY);
+    prefs.end();
+    if (!ok) return;
+
+    // Die Hardware war stromlos (s_wasColdStart bleibt), die Vorgeschichte
+    // stammt aber aus dem Warmstart davor.
+    s_autoCold         = true;
+    s_prev             = carry.prev;
+    s_state.bootCount  = carry.bootCount + 1;
+    s_state.panicCount = carry.panicCount;
+    // Blieb die Versorgung an (USB), kam das Geraet nur aus dem Tiefschlaf.
+    const char* after = (s_reason == ESP_RST_DEEPSLEEP) ? "danach nur Tiefschlaf (USB?)"
+                                                        : "danach stromlos";
+    if (carry.planned) {
+        snprintf(s_reasonText, sizeof(s_reasonText), "Neustart (gewollt), %s", after);
+    } else {
+        snprintf(s_reasonText, sizeof(s_reasonText), "%s [rst 0x%X], %s",
+                 resetReasonToText((esp_reset_reason_t)carry.reason),
+                 (unsigned)carry.romReason, after);
+    }
+}
+
+// ------------------------------------------------------------------
 // Initialisierung und Bericht des vorherigen Laufs
 // ------------------------------------------------------------------
 void CrashDiag_Init() {
-    s_reason = esp_reset_reason();
+    s_reason    = esp_reset_reason();
+    s_romReason = (uint32_t)esp_rom_get_reset_reason(0);
 
     // Zwei unabhaengige Signale:
     //  - rtcValid: haelt der RTC-Block noch gueltige Daten? Er ueberlebt einen
@@ -117,6 +188,11 @@ void CrashDiag_Init() {
     s_state.lastFullscreen   = 0;
     s_state.lastFps          = 0;
 
+    applyCarryOver();
+    if (!s_autoCold) {
+        snprintf(s_reasonText, sizeof(s_reasonText), "%s [rst 0x%X]",
+                 resetReasonToText(s_reason), (unsigned)s_romReason);
+    }
     s_initDone = true;
 }
 
@@ -127,9 +203,17 @@ void CrashDiag_Report() {
     }
 
     Serial.println("==============================================");
-    Serial.printf("[CrashDiag] Reset-Grund: %s\n", resetReasonToText(s_reason));
+    Serial.printf("[CrashDiag] Reset-Grund: %s\n", CrashDiag_ResetReasonText());
 
-    if (s_wasColdStart) {
+    if (s_autoCold) {
+        Serial.println("[CrashDiag] AUTOMATISCHER KALTSTART (ColdRestart) - Audio-Chips waren stromlos.");
+        Serial.printf("[CrashDiag] Lauf vor dem Warmstart: %lu.%03lu s | Video: %s | Vollbild: %s | %u fps\n",
+                      (unsigned long)(s_prev.lastUptimeMs / 1000),
+                      (unsigned long)(s_prev.lastUptimeMs % 1000),
+                      s_prev.lastStreamActive ? "AN" : "aus",
+                      s_prev.lastFullscreen   ? "AN" : "aus",
+                      (unsigned)s_prev.lastFps);
+    } else if (s_wasColdStart) {
         Serial.println("[CrashDiag] KALTSTART - keine Vorgeschichte, Zaehler auf null.");
         if (s_rtcLostWithoutPoweron) {
             Serial.println("[CrashDiag] Hinweis: RTC-Block verloren, Grund war aber kein");
@@ -169,12 +253,13 @@ static void publishReportOnce() {
     if (s_published || !s_initDone) return;
     if (!mqttEnabled || !mqttClient.connected()) return;
 
-    char payload[224];
+    char payload[256];
     snprintf(payload, sizeof(payload),
-             "{\"reason\":\"%s\",\"cold\":%d,\"prev_ms\":%lu,\"video\":%d,"
+             "{\"reason\":\"%s\",\"cold\":%d,\"auto_cold\":%d,\"prev_ms\":%lu,\"video\":%d,"
              "\"fs\":%d,\"fps\":%u,\"boots\":%lu,\"crashes\":%lu}",
-             resetReasonToText(s_reason),
+             CrashDiag_ResetReasonText(),
              s_wasColdStart ? 1 : 0,
+             s_autoCold ? 1 : 0,
              (unsigned long)s_prev.lastUptimeMs,
              s_prev.lastStreamActive ? 1 : 0,
              s_prev.lastFullscreen   ? 1 : 0,
@@ -209,6 +294,55 @@ void CrashDiag_Update() {
 
 uint32_t CrashDiag_GetPanicCount() {
     return s_state.panicCount;
+}
+
+const char* CrashDiag_ResetReasonText() {
+    return s_initDone ? s_reasonText : resetReasonToText(s_reason);
+}
+
+bool CrashDiag_WasAutoColdRestart() {
+    return s_autoCold;
+}
+
+void CrashDiag_SaveForColdRestart(bool planned) {
+    CrashDiagCarry carry;
+    carry.magic      = CARRY_MAGIC;
+    carry.bootCount  = s_state.bootCount;
+    carry.panicCount = s_state.panicCount;
+    carry.planned    = planned ? 1 : 0;
+    if (planned) {
+        // Aus dem laufenden Betrieb: dieser Lauf ist der "vorherige".
+        carry.reason            = (uint32_t)ESP_RST_SW;
+        carry.romReason         = 0;
+        carry.prev              = s_state;
+        carry.prev.lastUptimeMs = millis();
+    } else {
+        // Beim Start nach einem Absturz: der abgestuerzte Lauf.
+        carry.reason    = (uint32_t)s_reason;
+        carry.romReason = s_romReason;
+        carry.prev      = s_prev;
+    }
+
+    Preferences prefs;
+    prefs.begin(CARRY_NS, false);
+    prefs.putBytes(CARRY_KEY, &carry, sizeof(carry));
+    prefs.end();
+}
+
+void CrashDiag_TriggerCrash() {
+    Serial.println("[CrashDiag] Absturz wird absichtlich ausgeloest (Test).");
+    Serial.flush();
+    // volatile: der Compiler darf den Zugriff weder entfernen noch umstellen.
+    volatile uint32_t* const nowhere = reinterpret_cast<volatile uint32_t*>(0);
+    *nowhere = 0xDEADBEEF;
+    abort();   // falls die Adresse wider Erwarten beschreibbar war
+}
+
+void CrashDiag_DeepSleepRestart() {
+    Serial.println("[CrashDiag] Neustart ueber 1 s Tiefschlaf (Test).");
+    Serial.flush();
+    esp_sleep_enable_timer_wakeup(1000000ULL);
+    esp_deep_sleep_start();
 }
 
 bool CrashDiag_WasColdStart() {

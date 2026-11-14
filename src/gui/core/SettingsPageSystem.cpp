@@ -6,6 +6,11 @@
 #include "SettingsUi.h"
 #include "UiTheme.h"
 #include "HaTheme.h"
+#include "CrashDiag.h"
+#include "ColdRestart.h"
+#include "AudioStreamLogic.h"
+#include "DebugFlags.h"
+#include "AudioCodecTab5.h"
 #include "SharedData.h"
 #include <M5Unified.h>
 #include <Preferences.h>
@@ -103,10 +108,12 @@ static void stopScreenshot(lv_event_t*) {
 
 // Neustart mit Rueckfrage im Knopf selbst: erstes Tippen fragt, zweites
 // (innerhalb von 4 s) startet neu. Kein Dialog, der den Ablauf unterbricht.
+// Mit kurzer Stromlos-Phase (ColdRestart_RestartCold): nach einem Warmstart
+// bliebe der Lautsprecher stumm.
 static void rebootClicked(lv_event_t*) {
     if (s_rebootArmedMs != 0 && millis() - s_rebootArmedMs < 4000) {
         playToneI2S(800, 100, true);
-        ESP.restart();
+        ColdRestart_RestartCold("Einstellungen");
     }
     playToneI2S(600, 80, true);
     s_rebootArmedMs = millis();
@@ -140,7 +147,7 @@ void SettingsSystem_Build(lv_obj_t* parent) {
     } else {
         addButton(r.obj, "Starten", Btn::Tonal, openPage, (void*)(uintptr_t)SettingsPage::Screenshot);
     }
-    r = row(card, "Neustart");
+    r = row(card, "Neustart", "Kurz stromlos (ca. 3 s), damit der Ton sicher geht");
     s_btnReboot = addButton(r.obj, "Neu starten", Btn::Danger, rebootClicked);
 
     refreshSystem();
@@ -180,6 +187,27 @@ void SettingsSystem_Update() {
 enum DiagField : uint8_t { D_MAT, D_INTERVAL, D_KIPPY, D_WIFI, D_MQTT, D_PROXY, D_ALARM, D_COUNT };
 static lv_obj_t* s_diag[D_COUNT] = { nullptr };
 
+#if DIAG_TEST_TOOLS
+// Testwerkzeuge (DebugFlags.h). Der Absturz-Knopf fragt im Knopf selbst nach
+// (zweimal tippen innerhalb von 4 s), wie der Neustart unter System.
+static lv_obj_t* s_btnCrash = nullptr;
+static uint32_t  s_crashArmedMs = 0;
+
+// user_data = AudioResetKind. Der Testton folgt aus dem Audio-Task.
+static void audioResetClicked(lv_event_t* e) {
+    AudioStreamLogic_ResetAudio((uint8_t)(uintptr_t)lv_event_get_user_data(e));
+}
+
+static void crashClicked(lv_event_t*) {
+    if (s_crashArmedMs != 0 && millis() - s_crashArmedMs < 4000) {
+        CrashDiag_TriggerCrash();
+    }
+    playToneI2S(600, 80, true);
+    s_crashArmedMs = millis();
+    lv_label_set_text(lv_obj_get_child(s_btnCrash, 0), "Wirklich abstuerzen?");
+}
+#endif
+
 void SettingsDiag_Build(lv_obj_t* parent) {
     memset(s_diag, 0, sizeof(s_diag));
     lv_obj_t* pg = page(parent);
@@ -197,6 +225,50 @@ void SettingsDiag_Build(lv_obj_t* parent) {
 
     card = section(pg, "ALARM");
     s_diag[D_ALARM] = addValue(row(card, "Mattenalarm"), "");
+
+    // Letzter Start: Kalt- oder Warmstart und Reset-Grund (CrashDiag).
+    card = section(pg, "START",
+                   "Warmstart: Audio-Chip und Verstaerker waren nicht stromlos.");
+    char start[96];
+    snprintf(start, sizeof(start), "%s, %s", CrashDiag_WasColdStart() ? "Kaltstart" : "Warmstart",
+             CrashDiag_ResetReasonText());
+    addValue(row(card, "Letzter Start"), start);
+    snprintf(start, sizeof(start), "%lu", (unsigned long)CrashDiag_GetPanicCount());
+    addValue(row(card, "Abstuerze seit Kaltstart"), start);
+
+#if DIAG_TEST_TOOLS
+    card = section(pg, "TESTWERKZEUGE",
+                   "Nur zur Fehlersuche (DebugFlags.h: DIAG_TEST_TOOLS). Registerauszug des "
+                   "Audio-Chips vor und nach dem Reset im seriellen Monitor.");
+    // Je Theorie ein Knopf (AudioCodecTab5.h). Danach ertoent ein Testton.
+    struct AudioReset { const char* title; const char* desc; AudioResetKind kind; };
+    static const AudioReset RESETS[] = {
+        { "Codec ES8388",        "Register und Ablaufsteuerung",           AudioResetKind::Codec  },
+        { "I2S im ESP32-P4",     "Peripherie, Takt und Pins",              AudioResetKind::I2s    },
+        { "Mikrofon-ADC ES7210", "Teilt die Takt-Leitungen",               AudioResetKind::MicAdc },
+        { "Verstaerker NS4150B", "SPK_EN 200 ms aus, Pin neu",             AudioResetKind::Amp    },
+        { "USB-Pads GPIO26/27",  "DOUT/BCLK von der USB-PHY loesen",       AudioResetKind::UsbPads },
+        { "Codec ES8388 mit Takt", "Ruhezustand bei laufendem Takt, VMID entladen", AudioResetKind::CodecClocked },
+        { "Pad-Hold GPIO26-30",  "Eingefrorene I2S-Pads freigeben",        AudioResetKind::PadHold },
+        { "I2S-Leitungen messen", "Kein Reset: Pegel an MCLK/BCLK/LRCK/DOUT im Monitor", AudioResetKind::LineCheck },
+        { "Hoertest",            "Je 1,5 s: Lautsprecher aus, an, Klick, 1-kHz-Ton, Klick", AudioResetKind::SoundTest },
+        { "Erster Ton",          "Lautsprecher neu, dann 6 Pieptoene bei 0/0,15/0,4/0,8/1,5/3 s", AudioResetKind::FirstTone },
+        { "Frequenztest",        "Je 1 s: 150 bis 6400 Hz (300 ms), dann 800 und 150 Hz kurz", AudioResetKind::ToneSweep },
+        { "Alles nacheinander",  "USB-Pads, I2S, ES7210, ES8388, Verstaerker", AudioResetKind::All },
+    };
+    Row r;
+    for (const AudioReset& a : RESETS) {
+        r = row(card, a.title, a.desc);
+        addButton(r.obj, "Zuruecksetzen", Btn::Tonal, audioResetClicked, (void*)(uintptr_t)a.kind);
+    }
+    r = row(card, "Aus- und Einschalten", "Kurz stromlos, Wiedereinschalten nach ca. 3 s (am Akku)");
+    addButton(r.obj, "Stromlos", Btn::Tonal, [](lv_event_t*) { ColdRestart_Now("Diagnose", ColdRestartReport::None); });
+    r = row(card, "Neustart ueber Tiefschlaf", "1 s Tiefschlaf: schaltet den HP-Bereich des Chips ab");
+    addButton(r.obj, "Tiefschlaf", Btn::Tonal, [](lv_event_t*) { CrashDiag_DeepSleepRestart(); });
+    r = row(card, "Absturz ausloesen", "Schreibzugriff auf Adresse 0 - zweimal tippen");
+    s_crashArmedMs = 0;
+    s_btnCrash = addButton(r.obj, "Absturz", Btn::Danger, crashClicked);
+#endif
 
     refreshDiag();
 }
@@ -228,6 +300,13 @@ static void refreshDiag() {
 }
 
 void SettingsDiag_Update() {
+#if DIAG_TEST_TOOLS
+    // Rueckfrage des Absturz-Knopfs zuruecknehmen.
+    if (s_crashArmedMs != 0 && millis() - s_crashArmedMs >= 4000 && s_btnCrash) {
+        s_crashArmedMs = 0;
+        lv_label_set_text(lv_obj_get_child(s_btnCrash, 0), "Absturz");
+    }
+#endif
     static uint32_t last = 0;
     if (millis() - last < 1000 && last != 0) return;
     last = millis();

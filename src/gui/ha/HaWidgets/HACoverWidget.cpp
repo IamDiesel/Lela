@@ -1,5 +1,6 @@
 #include "HACoverWidget.h"
 #include "HaTheme.h"
+#include "UiSound.h"
 #include "UiTheme.h"
 #include "HaWebsocketLogic.h"
 
@@ -8,6 +9,7 @@ HACoverWidget::HACoverWidget(lv_obj_t* parent, int tab_idx, String type, String 
     
     // --- DER SLIDER FUER DIE EXAKTE POSITION ---
     slider = lv_slider_create(container);
+    UiSound_AttachSlider(slider);   // Klick beim Anfassen/Loslassen wie in den Einstellungen
     lv_obj_set_size(slider, lv_pct(85), 15);
     lv_obj_align(slider, LV_ALIGN_CENTER, 0, -10);
     lv_slider_set_range(slider, 0, 100);

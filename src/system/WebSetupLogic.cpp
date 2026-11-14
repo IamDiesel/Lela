@@ -8,6 +8,7 @@
 #include <M5Unified.h> // NEU: Für den Display-Zugriff
 #include "WifiNetworks.h"
 #include "WifiConnect.h"
+#include "ColdRestart.h"
 #include "secrets.h"
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
@@ -500,7 +501,7 @@ void WebSetupLogic_Init() {
         server.send(200, "text/html", html);
 
         delay(2000);
-        ESP.restart();
+        ColdRestart_WarmRestart("Web-Setup gespeichert");
     });
 
     // --- GEMERKTES WLAN VERGESSEN (Auswahlliste im Setup) ---
@@ -536,11 +537,20 @@ static void endSetup() {
     webSetupMode = 0;
     Serial.printf("[Setup] Web-Setup beendet (Modus %d).\n", mode);
     if (mode == 1) {
-        // Eigenes Setup-WLAN abbauen und zurueck in den Stationsbetrieb.
+        // Eigenes Setup-WLAN abbauen und direkt in den Stationsbetrieb wechseln
+        // (Gegenstueck zu WiFi.mode(WIFI_AP) beim Start).
+        //
+        // NICHT softAPdisconnect(true): Im reinen AP-Betrieb faellt der Modus
+        // damit auf WIFI_OFF, und Arduino 3.x baut dabei den ganzen WLAN-Stack
+        // ab (esp_wifi_deinit, Netifs zerstoert, esp_hosted_deinit = SDIO-
+        // Verbindung zum C6 getrennt). Das anschliessende Wieder-Hochfahren
+        // fuehrte zum Absturz (gemeldet 14.11.). softAPdisconnect(false) leert
+        // nur die AP-Konfiguration; der Moduswechsel AP -> STA laeuft ueber
+        // esp_wifi_set_mode, der WLAN-Stack bleibt stehen.
         // Die Anmeldung im Heimnetz uebernimmt SystemLogic (wifiStarted = false
         // -> WifiConnect_Begin), wie beim Einschalten des WLANs.
         dnsServer.stop();
-        WiFi.softAPdisconnect(true);
+        WiFi.softAPdisconnect(false);
         WiFi.mode(WIFI_STA);
         WifiConnect_Reset();
         wifiStarted = false;

@@ -38,7 +38,8 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * **Task-Management:** Parallele Verarbeitung von WebSockets, GUI-Rendering und Audio-Streaming via FreeRTOS.
 * **Live-Screenshot Engine:** Web-Endpunkt zum Auslesen des RAM-Framebuffers und Download als unkomprimiertes `.BMP`-Bild.
 * **TLS im PSRAM (`TlsMemory`):** mbedTLS legt seine Puffer (je Verbindung mehrere 10 KB) im PSRAM statt im knappen internen RAM an. Das interne RAM bleibt für den SDIO-WLAN-Treiber frei; HTTPS (Kartenkacheln) und Video laufen so parallel.
-* **Absturz-Diagnose (`CrashDiag`):** Unterscheidet Kalt- und Warmstart, zählt Abstürze seit dem letzten Stromlos-Machen und legt einen Bericht auf MQTT (`lela/diag/boot`) ab. Nach einem Absturz kann die Audio-Ausgabe stumm bleiben, bis das Gerät einmal stromlos war – die Kopfleiste zeigt dann einen Hinweis.
+* **Absturz-Diagnose (`CrashDiag`):** Unterscheidet Kalt- und Warmstart, zählt Abstürze seit dem letzten Stromlos-Machen und legt einen Bericht auf MQTT (`lela/diag/boot`) ab. Bleibt nach einem Warmstart ohne Stromlos-Phase der Ton evtl. stumm, zeigt die Kopfleiste einen Hinweis (siehe 1.9).
+* **Kaltstart nach Absturz (`ColdRestart`):** Schaltet nach einem Absturz und beim Neustart über die Einstellungen kurz stromlos (ca. 3 s), damit der Lautsprecher nicht stumm bleibt – siehe [1.9 Audio-Fix](#19-audio-fix-stummer-lautsprecher-nach-warmstart).
 * **Speicher-Diagnose (`HeapMonitor`):** `[Heap]`-Zeile im Log mit Bildschirm und Babyphone-Zustand (alle 60 s, mit `HEAP_PROFILE` in `DebugFlags.h` alle 10 s). Entscheidend ist der größte DMA-fähige Block (WLAN-Treiber).
 
 ### 1.2 Home Assistant Integration
@@ -164,7 +165,10 @@ Zeigt Entitäten mit Koordinaten (`device_tracker`, `person`, Sensoren mit `lati
 * **Aufbau:** Bestehende Topbar oben, links eine Seitenleiste mit fünf Bereichen (Katzenmatte, Babyphone, Verbindungen, Anzeige, System) – farbige Symbol-Kacheln wie auf dem Dashboard, darunter ein Live-Status („Matte verbunden“, „WLAN – MQTT“). Rechts Karten mit Zeilen: Titel, Beschreibung oder Status-Chip, Bedienelement.
 * **Unterseiten statt Popups:** Kamera-Verbindung (inkl. BabyCam-Suche), Tonquelle, WLAN-Netz, Web-Setup (QR-Code), Bluetooth-Suche für Matte/Kippy, Diagnose und Bildschirmfoto öffnen sich in der Inhaltsfläche, mit „‹ Bereich“ zurück und „Verwerfen/Übernehmen“. Die Bildschirmtastatur schiebt das Eingabefeld in den sichtbaren Bereich.
 * **WLAN-Netz:** Gemerkte Netze direkt verbinden oder vergessen; neues Netz per Suche („In der Nähe“) oder von Hand. Der Wechsel meldet sich ohne Neustart neu an (`WifiConnect_SwitchTo`); gemerkt wird ein Netz erst nach erfolgreicher Verbindung.
-* **Neustart** mit Rückfrage im Knopf (zweimal tippen), **Bildschirmfoto im Browser** als sichtbares Werkzeug unter System.
+* **Neustart** mit Rückfrage im Knopf (zweimal tippen), kurz stromlos damit der Ton sicher geht (siehe 1.9), **Bildschirmfoto im Browser** als sichtbares Werkzeug unter System.
+* **Diagnose:** Live-Werte (Bluetooth, Netzwerk, Alarm) und der letzte Start (Kalt-/Warmstart, Reset-Grund, Abstürze seit Kaltstart). Mit `DIAG_TEST_TOOLS` (DebugFlags.h) zusätzlich Reset-Knöpfe für die Audio-Kette – Codec ES8388, I2S im ESP32-P4, Mikrofon-ADC ES7210, Verstärker NS4150B, USB-Pads GPIO26/27 oder alles nacheinander (`AudioCodecTab5`, Registerauszug vorher/nachher im seriellen Monitor, danach Testton) – und „Absturz auslösen“ (zweimal tippen).
+* **Tastentöne (`UiSound`):** Alle Bedienelemente klicken einheitlich – Einstellungen, Schnelleinstellungen, Baby-Einstellungen und HA-Dialoge. Regler klicken beim Anfassen und beim Loslassen, während des Schiebens bleiben sie still (wie bei iOS/Android; Lautstärkeregler spielen beim Loslassen eine Hörprobe).
+* **Start-Jingle (`BootJingle`):** „Mrrp? + Spieluhr“ – ein kurzer Kätzchen-Gruß (Ton steigt mit Schnurr-Triller an und fällt fragend ab), dann antwortet eine Spieluhr (E6, G6, Schlussklang C6 + G6). Sinus mit wenigen Obertönen und Hüllkurven statt Rechteck; einmal als PCM berechnet (1,4 s, 24 kHz, 67 KB PSRAM, wenige ms) und mit einem `playRaw()` auf dem UI-Kanal gespielt.
 * **Farbschema (`UiTheme`):** Dunkel, Hell oder Automatisch (07–20 Uhr hell). Farben werden nach Rolle abgefragt (Hintergrund, Karte, Text, Akzent …); beim Wechsel wird die Ansicht einmal neu aufgebaut. Alarmfarben, Kachelfarben, HA-Zustandsfarben und Kartenkacheln bleiben gleich.
   * Stand: Alle Ansichten nutzen das Schema (Einstellungen, Dashboard, Schnelleinstellungen, Baby-App, Katzenmatte, HA-App samt Widgets und Dialogen), jeweils mit der Topbar im Schema.
   * **HA-App (`HaTheme`):** Kacheln im hellen Schema: „an“ leicht in der Widget-Farbe getönt, „aus“ neutral grau. Widget-Farben werden als Dunkel-Wert gespeichert (`color_on`/`color_off` wie bisher, keine Migration); im hellen Schema gilt die Gegenfarbe – für die 23 Palettenfarben und die Standardfarben der Widget-Typen als festes Paar (bunte Farben mit Kontrast ≥ 3:1 auf Weiß), für alle anderen berechnet. Die Farbwahl zeigt die Gegenfarbe als Streifen unter jeder Kachel.
@@ -172,6 +176,37 @@ Zeigt Entitäten mit Koordinaten (`device_tracker`, `person`, Sensoren mit `lati
   * Sofort neu aufgebaut werden Einstellungen, Dashboard und Katzenmatte; Baby-App und HA-App übernehmen einen Wechsel beim nächsten Öffnen (ein Neuaufbau dort würde laufende Streams bzw. die HA-Ansicht unterbrechen).
   * Signalfarben (Kippy nah/mittel/fern, HA-Tracker zuhause/unterwegs) laufen über die Rollen OK/Hinweis/Gefahr, damit sie auch auf hellem Grund lesbar bleiben.
 * **Technik:** Nur die sichtbare Seite existiert als LVGL-Objekte; gemeinsame Stile (`SettingsUi`) statt Einzelstilen je Objekt; flach (keine Schatten, Verläufe, Animationen), weil jeder volle Neuaufbau auf dem Tab5 0,3–0,5 s kostet.
+
+### 1.9 Audio-Fix: stummer Lautsprecher nach Warmstart
+**Problem.** Nach einem Warmstart – Absturz, Software-Neustart, Upload oder Tiefschlaf – kann der Lautsprecher stumm bleiben: keine Start-Melodie, keine Tastentöne, kein Babyphone-Ton. Die Software merkt davon nichts (`M5.Speaker.begin()` gelingt, Töne werden „gespielt“). Erst der seitliche Reset-Knopf oder Stromlos-Machen holt den Ton zurück. Das Problem tritt laut M5Stack-Forum auch mit dem reinen M5Unified-Lautsprecher-Beispiel auf, betrifft also das Tab5 selbst.
+
+**Was über die Ursache bekannt ist** (Untersuchung mit den Diagnose-Werkzeugen, siehe unten):
+* Codec ES8388, Mikrofon-ADC ES7210 und Verstärker NS4150B hängen an `AUDIO_VDD`, einem Regler ohne Abschaltung – sie bleiben bei jedem Reset unter Strom.
+* Ein Warmstart setzt nur den ESP32-P4 zurück. IO-Expander (`SPK_EN`, `LCD_RST`) und Audio-Chips behalten ihren Zustand.
+* Registerauszüge von Codec, Expandern, I2S, Takt und Pads sind im guten und im stummen Zustand **identisch**; MCLK, BCLK, LRCK und DOUT schalten in beiden Zuständen.
+* Ohne Erfolg: Codec-Reset (mit und ohne Takt), I2S-Neustart, ES7210-Reset, Verstärker aus/an, USB-Pads, Pad-Hold, Tiefschlaf.
+* Der Reset-Knopf hilft, obwohl der Codec dabei unter Strom bleibt. Das Klemmende sitzt deshalb vermutlich im ESP32-P4 selbst (ein Teil, den ein Software-Reset nicht zurücksetzt, z. B. der Audio-Takt) – **ungemessen, Ursache offen**.
+
+**Lösung: kurz stromlos statt warm (`ColdRestart`).** Das Gerät schaltet sich selbst über `PWROFF_PULSE` (Expander U7) ab und lässt sich von der Echtzeituhr RX8130 wieder einschalten (`M5.Power.timerSleep`). Danach ist der Ton zuverlässig da.
+* **Wecken nach ca. 3 s:** Der Sekunden-Zähler des RX8130 weckt das Tab5 nicht, nur der Minuten-Wecker (vergleicht Stunde:Minute). Deshalb wird die Uhr vor dem Abschalten auf `hh:mm:57` gestellt und der Wecker auf die nächste Minute. Die Verschiebung steht im NVS (`coldrst/shift`) und wird beim nächsten Start wieder abgezogen (eigene Kalenderrechnung ohne Zeitzone; danach `setSystemTimeFromRtc()`, NTP korrigiert ohnehin). 3 s statt 2 als Reserve: Käme der Wecker, bevor das Gerät aus ist, bliebe es bis zum nächsten Tag aus.
+* **Absturz erkennen:** Bei Panic und `esp_restart()` meldet die Hardware gleichermaßen „Software-Reset“; ESP-IDF unterscheidet über einen „Hint“, den der Panic-/Watchdog-Handler vor dem Reset in ein Always-on-Register schreibt (`esp_reset_reason()` → PANIC / TASK_WDT / INT_WDT). Zusätzlich muss der RTC-Block von `CrashDiag` gültig sein: Nach Einschalten und Reset-Knopf meldet der Chip nämlich ebenfalls „Watchdog“ (`rst 0x7`, CORE_MWDT), der RTC-Block ist dann aber verloren.
+* **Schleifenschutz:** höchstens zwei automatische Kaltstarts in Folge (`coldrst/row`), nach 60 s Laufzeit zurückgesetzt.
+* **Diagnose bleibt erhalten:** Grund und Laufkontext werden vor dem Abschalten im NVS gesichert (`crashdiag/carry`). „Letzter Start“ (Einstellungen › System › Diagnose) und MQTT (`auto_cold: 1`) zeigen dann z. B. „Kaltstart, PANIC / Exception [rst 0xC], danach stromlos“; `rst` ist der rohe Reset-Code des Chips.
+
+| Ereignis | Verhalten | Ton danach |
+|---|---|---|
+| Absturz, Watchdog, CPU-Lockup | automatisch kurz stromlos (ca. 3 s) | da |
+| Einstellungen › System › Neustart | kurz stromlos (`ColdRestart_RestartCold`) | da |
+| Web-Setup speichern, Werkseinstellungen | schneller Warmstart (`ColdRestart_WarmRestart`) | evtl. stumm |
+| Reset-Knopf, Einschalten | normaler Start, kein zusätzlicher Kaltstart | da |
+| Upload über USB | normaler Start (am Kabel bliebe die Versorgung ohnehin an) | evtl. stumm |
+| Am USB-Kabel (Laden) | Versorgung bleibt evtl. an → Rückfall Tiefschlaf („danach nur Tiefschlaf (USB?)“) | evtl. stumm |
+
+**Bluescreen beim Warmstart:** kein Absturz. Der Bildstrom (MIPI-DSI) bricht ab, das Display bleibt aber an, weil `LCD_RST` am Expander den Warmstart überdauert – ohne Signal zeigt es Blau. Beim kurzen Stromlos-Schalten wird das Display vorher ausgeschaltet; beim Reset-Knopf werden die Expander zurückgesetzt (schwarz statt blau).
+
+**Diagnose-Werkzeuge** (`DIAG_TEST_TOOLS` in `DebugFlags.h`, Einstellungen › System › Diagnose): Reset-Knöpfe für die Audio-Kette (`AudioCodecTab5`), Registerauszug bei jedem Start, Leitungsmessung, Hörtest, „Erster Ton“, Frequenztest, „Stromlos“ (Kaltstart von Hand), „Absturz auslösen“ (zweimal tippen) und `[Ton]`-Zeilen im Log. Vor einem Release `DIAG_TEST_TOOLS` auf 0 setzen; `ColdRestart` gehört nicht dazu und bleibt aktiv.
+
+**Dateien:** `src/system/ColdRestart.*` (Stromlos-Neustart, Uhr-Trick, Schleifenschutz), `src/system/CrashDiag.*` (Reset-Grund, RTC-Block, Übergabe über den Stromausfall), Aufruf in `main.cpp` direkt nach `M5.begin()`. Ausführliche Untersuchung mit Wahrheitstabelle: Projekt-Notiz `audio_warmstart_2026-11-14.md`.
 
 ---
 
@@ -193,7 +228,7 @@ Der Quellcode ist modular in folgende Hauptbereiche unterteilt:
 * `src/config/`: Systemweite Konstanten, globale Variablen und Zugangsdaten (`secrets.h`).
 * `src/doc/`: Zusätzliche Dokumentationen und Setup-Hinweise.
 * `src/gui/`: Die vollständige LVGL-Benutzeroberfläche.
-  * `core/`: Haupt-Views (Dashboard, Settings, Topbar, QuickSettings, Alarm-Popups), Video-Overlay (`ViewVideoPip`) und `GuiManager`; Farbschema `UiTheme`, Einstellungs-Bausteine `SettingsUi` und die Seiten `SettingsPage*.cpp`.
+  * `core/`: Haupt-Views (Dashboard, Settings, Topbar, QuickSettings, Alarm-Popups), Video-Overlay (`ViewVideoPip`) und `GuiManager`; Farbschema `UiTheme`, Tastentöne `UiSound`, Einstellungs-Bausteine `SettingsUi` und die Seiten `SettingsPage*.cpp`.
   * `map/`: Wiederverwendbare Kartenansicht `MapView` (Kacheln, Marker, Wege, Ausschnitt) ohne HA-Bezug.
   * `ha/`: C++ LVGL-Integration für Home Assistant; Farben im Schema über `HaTheme` (Kachel-Rollen, Paletten-Gegenfarben).
     * `HaWidgets/`: Modulare Widget-Klassen (Base, Light, Sensor, Vacuum, Media, Map).
@@ -201,7 +236,7 @@ Der Quellcode ist modular in folgende Hauptbereiche unterteilt:
   * `baby/` & `cat/`: Spezialisierte Ansichten für die Video/Audio- und Sensor-Überwachung.
 * `src/ha/`: Logik für die Home Assistant WebSocket-Kommunikation, JSON-Parsing und Config-Management (`HaConfigLogic`), Positionsverlauf der Karte (`HaTrackHistory`).
 * `src/map/`: Kartenkacheln: Projektion (`MapProjection`), PNG-Dekoder (`MapPngDecoder`), Flash-Speicher (`MapTileStore`) und Abruf-Dienst (`MapTileService`, Konstanten in `MapTileConfig.h`).
-* `src/media/`: Babyphone-Dienst (`BabyService`, Modus und Zustand), Video (`VideoLogic`, `VideoDecoder`), Audio (`AudioStreamLogic`) und Kamera-Steuerung (`BabyCamApi`).
+* `src/media/`: Babyphone-Dienst (`BabyService`, Modus und Zustand), Video (`VideoLogic`, `VideoDecoder`), Audio (`AudioStreamLogic`, Start-Jingle `BootJingle`, Codec-Diagnose `AudioCodecTab5`) und Kamera-Steuerung (`BabyCamApi`).
 * `src/system/`: Hardwarenahe Logik (BLE-Scanning, MQTT, WLAN-Handling, lokaler Webserver und LVGL-Treiber-Initialisierung).
 
 ---

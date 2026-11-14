@@ -2,6 +2,7 @@
 #include "HaWebsocketLogic.h"
 #include "HaTheme.h"
 #include "UiTheme.h"
+#include "UiSound.h"
 
 // Farben der Bausteine: Alle Farbangaben der Aufrufer sind DUNKEL-WERTE (so
 // war die HA-App gestaltet) und werden hier auf das aktuelle Schema
@@ -47,6 +48,7 @@ lv_obj_t* UIHelper::createButton(lv_obj_t* parent, int w, int h, int align, int 
     if (cb) {
         lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
     }
+    UiSound_AttachClick(btn);   // nach dem Aufrufer: dessen eigener Ton gewinnt
     return btn;
 }
 
@@ -98,6 +100,7 @@ lv_obj_t* UIHelper::createSlider(lv_obj_t* parent, int w, int h, int align, int 
     lv_obj_set_style_bg_color(slider, HaTheme::track(), LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider, UiTheme::c().accent, LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider, UiTheme::c().accent, LV_PART_KNOB);
+    UiSound_AttachSlider(slider);   // Klick beim Anfassen/Loslassen wie in den Einstellungen
     
     if (cb) {
         lv_obj_add_event_cb(slider, cb, LV_EVENT_VALUE_CHANGED, user_data);
@@ -119,6 +122,7 @@ lv_obj_t* UIHelper::createDropdown(lv_obj_t* parent, int w, int h, int align, in
     if (cb) {
         lv_obj_add_event_cb(dd, cb, LV_EVENT_VALUE_CHANGED, user_data);
     }
+    UiSound_AttachClick(dd);
     return dd;
 }
 
@@ -157,6 +161,7 @@ lv_obj_t* UIHelper::createCheckbox(lv_obj_t* parent, const char* text, const lv_
     if (cb) {
         lv_obj_add_event_cb(cb_obj, cb, LV_EVENT_VALUE_CHANGED, user_data);
     }
+    UiSound_AttachClick(cb_obj);
     return cb_obj;
 }
 

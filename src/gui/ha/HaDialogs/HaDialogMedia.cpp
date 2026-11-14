@@ -1,5 +1,6 @@
 #include "HaDialogMedia.h"
 #include "HaTheme.h"
+#include "UiSound.h"
 #include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "HaWebsocketLogic.h"
@@ -434,6 +435,7 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
     lv_slider_set_range(cur_media_slider, 0, 100);
     lv_obj_set_size(cur_media_slider, 500, 25);
     lv_obj_align(cur_media_slider, LV_ALIGN_TOP_MID, 0, y_offset + 30);
+    UiSound_AttachSlider(cur_media_slider);
     lv_slider_set_value(cur_media_slider, (int)(vol * 100), LV_ANIM_OFF); 
     lv_obj_clear_flag(cur_media_slider, LV_OBJ_FLAG_GESTURE_BUBBLE);
 

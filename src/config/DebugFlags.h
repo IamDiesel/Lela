@@ -185,3 +185,15 @@
 // (.pio/libdeps ist ein Build-Artefakt).
 // Tritt Displayflackern auf: Panel_DSI.cpp.orig zurueckkopieren.
 // ==============================================================================
+
+// ------------------------------------------------------------------------------
+// DIAG_TEST_TOOLS - Testwerkzeuge auf der Seite Einstellungen > System > Diagnose
+//
+//  * "Audio-Chip zuruecksetzen": Codec-Reset ohne Stromlos-Machen (siehe
+//    AudioCodecTab5.h), mit Registerauszug vorher/nachher auf der Konsole.
+//  * "Absturz ausloesen": absichtlicher Absturz (CrashDiag_TriggerCrash), um
+//    die Absturz-Behandlung reproduzierbar zu testen.
+//
+// Nur zur Fehlersuche. Fuer den Dauerbetrieb auf 0 - dann fehlt der Abschnitt.
+// ------------------------------------------------------------------------------
+#define DIAG_TEST_TOOLS 1

@@ -67,6 +67,8 @@
 #include "GuiManager.h"
 #include "UiTheme.h"
 #include "HaTheme.h"
+#include "DebugFlags.h"
+#include "AudioCodecTab5.h"
 #include "AudioStreamLogic.h"
 #include "WebSetupLogic.h" 
 #include "VideoLogic.h"    
@@ -74,6 +76,8 @@
 #include "BleLogic.h"
 #include "ViewBootScreen.h"
 #include "CrashDiag.h"   // Absturz-Diagnose ueber Neustarts (Experiment E-1)
+#include "ColdRestart.h" // Kaltstart statt Warmstart (stummer Lautsprecher)
+#include "BootJingle.h"  // Start-Jingle "Mrrp? + Spieluhr"
 #include "WifiConnect.h"
 
 
@@ -83,49 +87,6 @@ extern void ViewBaby_ExitFS();
 
 extern lv_obj_t * splash_status_label; 
 
-// ==============================================================
-// NON-BLOCKING AUDIO STATE MACHINE (Ersetzt den fehlerhaften Task)
-// ==============================================================
-static const uint16_t boot_melody_freqs[] = {262, 330, 392, 523, 659, 784};
-static const uint32_t boot_melody_durations[] = {100, 100, 100, 100, 100, 400};
-static int current_note = 0;
-static uint32_t note_start_time = 0;
-static bool melody_playing = false;
-
-void updateBootMelody() {
-    if (!melody_playing) return;
-
-    // Auch die Bootmelodie fasst den Lautsprecher an. Sobald AudioStreamLogic
-    // initialisiert ist, gilt dessen Schloss fuer jeden Zugriff.
-    // Siehe src/doc/video_refactoring.md, 2.18.
-    if (!AudioHw_SpeakerUsable()) { melody_playing = false; return; }
-
-    uint32_t now = millis();
-    if (current_note >= 6) {
-        melody_playing = false;
-        return;
-    }
-
-    if (note_start_time == 0) {
-        if (AudioHw_Lock(50)) {
-            M5.Speaker.tone(boot_melody_freqs[current_note], boot_melody_durations[current_note], 1, true);
-            AudioHw_Unlock();
-        }
-        note_start_time = now;
-    } else {
-        // 10ms Pause zwischen den Toenen fuer saubere Trennung
-        if (now - note_start_time >= boot_melody_durations[current_note] + 10) {
-            current_note++;
-            if (current_note < 6) {
-                if (AudioHw_Lock(50)) {
-                    M5.Speaker.tone(boot_melody_freqs[current_note], boot_melody_durations[current_note], 1, true);
-                    AudioHw_Unlock();
-                }
-                note_start_time = now;
-            }
-        }
-    }
-}
 
 // Zeitmarke im Log: wo die Bootzeit bleibt (Messung Startzeit, 2026-11).
 static void bootMark(const char* phase) {
@@ -170,6 +131,11 @@ void setup() {
     
     auto cfg = M5.config();
     M5.begin(cfg);
+
+    // Nach einem Absturz (Panic, Watchdog) sofort kurz stromlos
+    // schalten - sonst bleibt der Lautsprecher stumm. Kehrt dann nicht zurueck.
+    // Braucht die Uhr und die Expander aus M5.begin(), siehe ColdRestart.h.
+    ColdRestart_Init();
     delay(10); // ANTI-BLOCK: Massiv gekuerzt von 500ms
     Serial.println("[AUDIO] Erzwinge I2S Hardware-Reset...");
     M5.Speaker.end();
@@ -223,15 +189,19 @@ void setup() {
         int uiVol = (int)( (muteMaster ? 0 : volMaster/100.0f) * (muteUI ? 0 : volUI/100.0f) * 255.0f );
         M5.Speaker.setChannelVolume(1, uiVol);
         
-        // Starte die State-Machine anstelle des abstuerzenden FreeRTOS Tasks
-        melody_playing = true;
-        current_note = 0;
-        note_start_time = 0;
+        // Start-Jingle berechnen; gespielt wird er aus loop() (BootJingle.h).
+        BootJingle_Start();
     }
 
     // Absturzbericht erst hier: vorher ist der USB-CDC-Port noch nicht
     // enumeriert und die Ausgabe ginge verloren.
     CrashDiag_Report();
+#if DIAG_TEST_TOOLS
+    // Zustand der Audio-Kette direkt nach dem Start - zum Vergleich Kaltstart /
+    // Reset-Knopf (Ton geht) gegen Absturz / Neustart (Ton stumm).
+    // Siehe AudioCodecTab5.h.
+    AudioCodec_Dump(CrashDiag_WasColdStart() ? "Start: Kaltstart" : "Start: Warmstart");
+#endif
 
     M5.Display.setRotation(1); 
     M5.Display.setSwapBytes(true);
@@ -301,7 +271,8 @@ void setup() {
 void loop() {
     M5.update(); 
     CrashDiag_Update();   // Lebenszeichen fuer die Absturz-Diagnose
-    updateBootMelody();
+    ColdRestart_Update(); // Schleifenschutz nach stabiler Laufzeit zuruecksetzen
+    BootJingle_Update();
     
     // BOOTSCREEN-DAUER: Auf 1,2 Sekunden verkuerzt (passend zur Startmelodie)
     bool nativeSplashActive = (millis() - startTime < 1200);

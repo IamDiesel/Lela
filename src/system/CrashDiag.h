@@ -54,6 +54,40 @@ uint32_t CrashDiag_GetPanicCount();
 // true, wenn dieser Lauf auf einen Kaltstart folgt (Geraet war stromlos).
 bool CrashDiag_WasColdStart();
 
+// Reset-Grund dieses Starts als Klartext mit rohem Chip-Code, z.B.
+// "PANIC / Exception [rst 0xC]". Nach einem automatischen Kaltstart der Grund
+// des Warmstarts davor: "... [rst 0x..], danach stromlos". Fuer Diagnose-Seite,
+// Bericht und MQTT.
+const char* CrashDiag_ResetReasonText();
+
+// Loest absichtlich einen Absturz aus (Schreibzugriff auf Adresse 0 ->
+// "Store access fault", Reset-Grund PANIC). Nur fuer Tests der Absturz-
+// Behandlung (Diagnose, DIAG_TEST_TOOLS). Kehrt nicht zurueck.
+//
+// Bewusst keine Division durch null: Der ESP32-P4 ist ein RISC-V, und dort
+// loest eine Ganzzahl-Division durch null KEINE Ausnahme aus (Ergebnis -1).
+[[noreturn]] void CrashDiag_TriggerCrash();
+
+// Neustart ueber 1 s Tiefschlaf: Anders als esp_restart() wird dabei der
+// HP-Bereich des ESP32-P4 (CPU, Peripherie, Pads) abgeschaltet; Always-on-
+// Bereich, IO-Expander und Audio-Chips bleiben. Test, ob der stumme
+// Lautsprecher am HP-Bereich haengt (DIAG_TEST_TOOLS). Kehrt nicht zurueck.
+[[noreturn]] void CrashDiag_DeepSleepRestart();
+
+// Vor einem Kaltstart ueber ColdRestart aufrufen: sichert Grund, Laufkontext
+// und Zaehler im NVS, weil der RTC-Speicher den Stromausfall nicht ueberlebt.
+// CrashDiag_Init() uebernimmt sie beim naechsten Start; Bericht, MQTT und
+// "Letzter Start" zeigen dann:
+//   planned = false  Absturz beim Start erkannt: Grund und Kontext des
+//                    abgestuerzten Laufs ("PANIC / Exception [rst 0x..],
+//                    danach stromlos")
+//   planned = true   gewollter Neustart aus dem laufenden Betrieb: Kontext
+//                    dieses Laufs ("Neustart (gewollt), danach stromlos")
+void CrashDiag_SaveForColdRestart(bool planned);
+
+// true, wenn dieser Start ein automatischer Kaltstart nach einem Warmstart war.
+bool CrashDiag_WasAutoColdRestart();
+
 // true, wenn seit dem letzten Kaltstart mindestens ein Absturz war.
 //
 // Befund 14.10.2026: Nach einem Absturz kann die Audio-Ausgabe stumm bleiben,
@@ -62,4 +96,13 @@ bool CrashDiag_WasColdStart();
 // Initialisierung holt sie nicht zuverlaessig zurueck. Das gilt auch fuer
 // spaetere Warmstarts (z.B. Upload), bis zum naechsten Kaltstart. Die
 // Oberflaeche zeigt dann einen Hinweis (ViewTopbar).
+//
+// Befund 14.11.2026: Auch ein Software-Neustart (System > Neustart) waehrend
+// laufendem Babyphone-Ton laesst den Ton stumm - ohne Hinweis, weil kein
+// Absturz. Der Reset-Knopf des Tab5 holt ihn zurueck. Untersuchung siehe
+// AudioCodecTab5.h (Codec-Reset in der Diagnose).
+//
+// Seit 14.11.2026 schaltet ColdRestart nach solchen Warmstarts automatisch kurz
+// stromlos. Der Hinweis bleibt fuer die Faelle ohne Kaltstart (Upload am USB,
+// Schleifenschutz, Uhr nicht lesbar).
 bool CrashDiag_AudioMayBeMuted();

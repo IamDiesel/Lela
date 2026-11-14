@@ -4,6 +4,7 @@
 
 #include "SettingsUi.h"
 #include "UiTheme.h"
+#include "UiSound.h"      // Tastentoene
 #include <string.h>
 
 namespace SettingsUi {
@@ -383,6 +384,13 @@ static void noGesture(lv_obj_t* o) {
     lv_obj_clear_flag(o, LV_OBJ_FLAG_GESTURE_BUBBLE);
 }
 
+// Tastenton wie in den uebrigen Ansichten, zentral fuer alle Bedienelemente der
+// Bausteine (UiSound). Wird NACH dem Callback der Seite angehaengt: spielt die
+// Seite selbst einen eigenen Ton, gewinnt dieser.
+static void addClickTone(lv_obj_t* o) {
+    UiSound_AttachClick(o);
+}
+
 // ------------------------------------------------------------------------------
 // Tastatur
 // ------------------------------------------------------------------------------
@@ -477,6 +485,7 @@ void header(lv_obj_t* pg, const char* title, const char* sub, const char* backTe
         text(b, LV_SYMBOL_LEFT, &s_back);
         text(b, backText, &s_back);
         if (backCb) lv_obj_add_event_cb(b, backCb, LV_EVENT_CLICKED, nullptr);
+        addClickTone(b);
     }
     text(h, title, &s_title);
     if (sub) text(h, sub, &s_sub);
@@ -546,6 +555,7 @@ Row linkRow(lv_obj_t* card, const char* label, const char* desc, const char* val
     lv_obj_t* chev = text(r.obj, LV_SYMBOL_RIGHT, &s_desc);
     lv_obj_set_style_text_font(chev, &lv_font_montserrat_20, 0);
     if (cb) lv_obj_add_event_cb(r.obj, cb, LV_EVENT_CLICKED, userData);
+    addClickTone(r.obj);
     if (valueLabel) *valueLabel = v;
     return r;
 }
@@ -633,6 +643,7 @@ lv_obj_t* addSwitch(const Row& r, bool on, lv_event_cb_t cb, void* userData) {
     noGesture(sw);
     if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
     if (cb) lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, userData);
+    addClickTone(sw);
     return sw;
 }
 
@@ -646,6 +657,7 @@ lv_obj_t* addDropdown(const Row& r, const char* options, uint16_t selected, lv_e
     noGesture(dd);
 
     if (cb) lv_obj_add_event_cb(dd, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    addClickTone(dd);   // Oeffnen der Liste; die Auswahl darin meldet VALUE_CHANGED
     return dd;
 }
 
@@ -658,6 +670,7 @@ lv_obj_t* addSlider(const Row& r, int min, int max, int value, lv_event_cb_t cb,
     lv_slider_set_value(sl, value, LV_ANIM_OFF);
     noGesture(sl);
     if (cb) lv_obj_add_event_cb(sl, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    UiSound_AttachSlider(sl);
 
     lv_obj_t* pill = text(r.obj, "", &s_pill);
     if (valueLabel) *valueLabel = pill;
@@ -682,6 +695,7 @@ lv_obj_t* addTextarea(const Row& r, const char* t, const char* placeholder, lv_c
     if (placeholder) lv_textarea_set_placeholder_text(ta, placeholder);
     noGesture(ta);
     lv_obj_add_event_cb(ta, textareaEvent, LV_EVENT_ALL, digitsOnly ? (void*)1 : nullptr);
+    addClickTone(ta);
     return ta;
 }
 
@@ -700,6 +714,7 @@ lv_obj_t* addButton(lv_obj_t* parent, const char* t, Btn kind, lv_event_cb_t cb,
     lv_label_set_text(l, t);
     lv_obj_center(l);
     if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, userData);
+    addClickTone(b);
     return b;
 }
 
@@ -746,6 +761,7 @@ lv_obj_t* segmented(lv_obj_t* parent, const char* const* items, uint8_t count, u
         lv_obj_center(l);
         if (i == selected) lv_obj_add_state(it, LV_STATE_CHECKED);
         lv_obj_add_event_cb(it, segItemClicked, LV_EVENT_CLICKED, nullptr);
+        addClickTone(it);
     }
     if (cb) lv_obj_add_event_cb(seg, cb, LV_EVENT_VALUE_CHANGED, userData);
     return seg;

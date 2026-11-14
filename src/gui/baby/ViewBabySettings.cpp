@@ -5,6 +5,7 @@
 #include "ViewVideoPip.h"
 #include "CamResolutionUi.h"
 #include "SettingsUi.h"   // gemeinsame Stile der Bedienelemente (Farbschema)
+#include "UiSound.h"      // Klick der Regler (Anfassen/Loslassen)
 #include "UiTheme.h"
 #include <Preferences.h>
 #include <math.h>
@@ -162,6 +163,7 @@ static lv_obj_t* create_setting_slider(lv_obj_t* parent, const char* name, lv_ob
     SettingsUi::styleSlider(*slider_ptr);
     lv_obj_set_size(*slider_ptr, 360, 8); // schmal wie in den Einstellungen; Knopf greift weiter
     lv_obj_set_ext_click_area(*slider_ptr, 20);
+    UiSound_AttachSlider(*slider_ptr);
     lv_obj_align(*slider_ptr, LV_ALIGN_BOTTOM_MID, 0, -10); // Sauberer Abstand nach unten
     lv_obj_clear_flag(*slider_ptr, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_user_data(*slider_ptr, lbl_val);
@@ -186,6 +188,7 @@ static lv_obj_t* create_setting_dropdown(lv_obj_t* parent, const char* name, con
 
     *dd_ptr = lv_dropdown_create(cont);
     SettingsUi::styleDropdown(*dd_ptr);
+    UiSound_AttachClick(*dd_ptr);
     lv_obj_set_style_text_font(*dd_ptr, &lv_font_montserrat_16, 0);
     lv_obj_set_style_pad_ver(*dd_ptr, 10, 0);
     lv_obj_set_size(*dd_ptr, 195, 40);
@@ -211,6 +214,7 @@ static lv_obj_t* create_setting_switch(lv_obj_t* parent, const char* name, lv_ob
     
     *sw_ptr = lv_switch_create(cont);
     SettingsUi::styleSwitch(*sw_ptr);
+    UiSound_AttachClick(*sw_ptr);
     lv_obj_align(*sw_ptr, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_clear_flag(*sw_ptr, LV_OBJ_FLAG_GESTURE_BUBBLE); 
     lv_obj_add_event_cb(*sw_ptr, settings_action_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -332,6 +336,7 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
 
     dd_res = lv_dropdown_create(cont_dd);
     SettingsUi::styleDropdown(dd_res);
+    UiSound_AttachClick(dd_res);
     lv_obj_set_style_text_font(dd_res, &lv_font_montserrat_16, 0);
     lv_obj_set_style_pad_ver(dd_res, 10, 0);
     lv_obj_set_size(dd_res, 360, 40);

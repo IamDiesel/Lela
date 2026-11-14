@@ -6,6 +6,8 @@
 #include <WiFi.h>
 #include <math.h>
 #include "WifiNetworks.h"
+#include "DebugFlags.h"
+#include "ColdRestart.h"
 
 SemaphoreHandle_t bleMutex = NULL;
 volatile bool isStreamActive = false; 
@@ -351,7 +353,17 @@ void audioTask(void *pvParameters) {
             else if (msg.volumeChannel == 1) volFactor = effMaster * effAlarm;
             else if (msg.volumeChannel == 2) volFactor = effMaster * effBaby;
 
-            if (volFactor <= 0.01f) continue; 
+            if (volFactor <= 0.01f) {
+                // Kanal stumm (Mixer) - einmal je 10 s melden, sonst stumm verworfen.
+                static uint32_t s_lastMuteLog = 0;
+                if (millis() - s_lastMuteLog > 10000) {
+                    s_lastMuteLog = millis();
+                    Serial.printf("[Ton] Verworfen: Kanal %d stumm (Master %d%%%s, UI %d%%%s, Alarm %d%%%s).\n",
+                                  msg.volumeChannel, volMaster, muteMaster ? " stumm" : "",
+                                  volUI, muteUI ? " stumm" : "", volAlarm, muteAlarm ? " stumm" : "");
+                }
+                continue;
+            }
 
             // Der Lautsprecher gehoert dem Audio-Besitzer-Task
             // (AudioStreamLogic). Waehrend PTT ist er abgeschaltet - das
@@ -370,7 +382,14 @@ void audioTask(void *pvParameters) {
                 if (AudioHw_SpeakerUsable() && AudioHw_Lock(25)) { haveHw = true; break; }
                 vTaskDelay(pdMS_TO_TICKS(25));
             }
-            if (!haveHw) continue;
+            if (!haveHw) {
+                static uint32_t s_lastHwLog = 0;
+                if (millis() - s_lastHwLog > 10000) {
+                    s_lastHwLog = millis();
+                    Serial.println("[Ton] Verworfen: Lautsprecher 1,5 s nicht verfuegbar (abgeschaltet/belegt).");
+                }
+                continue;
+            }
 
             // Nach dem Schloss erneut pruefen: zwischen Pruefung und Schloss
             // kann der Besitzer-Task den Lautsprecher abgeschaltet haben.
@@ -384,6 +403,19 @@ void audioTask(void *pvParameters) {
 
             int toneVol = (int)(volFactor * 255.0f);
             if (toneVol > 255) toneVol = 255;
+#if DIAG_TEST_TOOLS
+            // Fehlersuche Tastentoene: jeder gespielte Ton mit Art, Kanal und
+            // wirksamer Lautstaerke (0-255). Hoechstens 5 Zeilen je Sekunde.
+            {
+                static uint32_t s_logWindow = 0;
+                static uint8_t  s_logCount  = 0;
+                if (millis() - s_logWindow > 1000) { s_logWindow = millis(); s_logCount = 0; }
+                if (s_logCount++ < 5) {
+                    Serial.printf("[Ton] Art %d, Kanal %d, Lautstaerke %d/255\n",
+                                  msg.soundType, msg.volumeChannel, toneVol);
+                }
+            }
+#endif
             M5.Speaker.setChannelVolume(1, toneVol);
 
             if (msg.soundType == 0) M5.Speaker.tone(msg.freq, msg.duration, 1, true); 
@@ -445,7 +477,7 @@ void factoryReset() {
     preferences.end();
     WifiNetworks_Clear();   // gemerkte WLAN-Netze samt Passwoertern
     delay(1000);
-    ESP.restart();
+    ColdRestart_WarmRestart("Werkseinstellungen");
 }
 
 namespace SharedData {
