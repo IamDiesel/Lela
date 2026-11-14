@@ -25,15 +25,18 @@ static const uint32_t LOAD_TIMEOUT_MS = 15000;
 //   i  = entity_id         n  = Anzeigename        ic = Icon (falls gesetzt)
 //   o  = Optionen (select/input_select) bzw. HVAC-Modi (climate)
 //   mn/mx/st = Grenzen und Schrittweite (number, text, climate)
+//   g  = 1, wenn die Entitaet Koordinaten hat (latitude) - Kartenwidget
 //
-// Die Domains entsprechen der Typauswahl im Hinzufuegen-Dialog. Die Liste
+// Die Domains entsprechen der Typauswahl im Hinzufuegen-Dialog, dazu 'zone'
+// (Zonen fuer das Kartenwidget). Die Liste
 // ist auf 1500 Eintraege begrenzt; HA kappt Template-Ausgaben ohnehin bei
 // 256 KB, und 1500 Eintraege bleiben sicher darunter.
 static const char CATALOG_TEMPLATE[] = R"JINJA(
-{%- set d = ['light','switch','input_boolean','media_player','vacuum','select','input_select','number','input_number','text','input_text','cover','climate','fan','input_button','button','scene','script','automation','sensor','binary_sensor','weather','person','device_tracker'] -%}
+{%- set d = ['light','switch','input_boolean','media_player','vacuum','select','input_select','number','input_number','text','input_text','cover','climate','fan','input_button','button','scene','script','automation','sensor','binary_sensor','weather','person','device_tracker','zone'] -%}
 [{%- for s in (states | selectattr('domain','in',d) | list)[:1500] -%}
 {"i":{{ s.entity_id | to_json }},"n":{{ s.name | to_json }}
 {%- if s.attributes.icon is defined %},"ic":{{ s.attributes.icon | to_json }}{% endif -%}
+{%- if s.attributes.latitude is defined %},"g":1{% endif -%}
 {%- if s.domain in ['select','input_select'] %},"o":{{ s.attributes.options | default([]) | list | to_json }}
 {%- elif s.domain in ['number','input_number','text','input_text'] %},"mn":{{ s.attributes.min | default(0) | to_json }},"mx":{{ s.attributes.max | default(100) | to_json }},"st":{{ s.attributes.step | default(1) | to_json }}
 {%- elif s.domain == 'climate' %},"o":{{ s.attributes.hvac_modes | default([]) | list | to_json }},"mn":{{ s.attributes.min_temp | default(7) | to_json }},"mx":{{ s.attributes.max_temp | default(35) | to_json }},"st":{{ s.attributes.target_temp_step | default(0.5) | to_json }}
@@ -204,7 +207,7 @@ uint32_t HaEntityCatalog::GetVersion() {
     return s_version;
 }
 
-std::vector<String> HaEntityCatalog::Search(const String& query, size_t maxResults) {
+std::vector<String> HaEntityCatalog::Search(const String& query, size_t maxResults, bool onlyWithLocation) {
     std::vector<String> hits;
     String q = query;
     q.trim();
@@ -214,6 +217,7 @@ std::vector<String> HaEntityCatalog::Search(const String& query, size_t maxResul
     if (!lock.ok() || !s_catalog) return hits;
 
     for (JsonObjectConst e : s_list) {
+        if (onlyWithLocation && !(e["g"] | 0)) continue;
         const char* id   = e["i"];
         const char* name = e["n"];
         if (containsIgnoreCase(id, q.c_str()) || containsIgnoreCase(name, q.c_str())) {

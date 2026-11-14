@@ -27,11 +27,17 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 
 ### 1.1 Netzwerk & System-Infrastruktur
 * **WLAN-Management:** Automatische Verbindungs- und Reconnect-Logik. Fallback in den Access-Point-Modus (`Lela-Setup`), falls keine Zugangsdaten vorliegen.
+* **WLAN-Start (`WifiConnect`):**
+  * **Ablauf (gemessen):** ~2,9 s Hochfahren des WLAN-Chips (ESP32-C6 über ESP-Hosted), ~3 s Suchen und Anmelden, 1,5–2,5 s DHCP.
+  * **Beschleunigung:** Optional feste IP – DHCP entfällt, gemessen 7,9 s statt 9–10 s bis zum Dashboard. Ein Kanal-Hinweis (mit und ohne BSSID) brachte nichts: Das Anmelden dauert so oder so 3,0 s; er wurde wieder entfernt.
+  * **Protokoll:** Jedes WLAN-Ereignis mit Zeitstempel und Anmeldeverfahren (`[WLAN] +x ms …`).
+* **Bootscreen:** Wartet nur auf das WLAN (Home Assistant verbindet sich erst beim Öffnen der HA-App). Die Katze folgt dem Ladebalken. Sobald das WLAN steht, läuft sie im gleichen Tempo die Reststrecke bis zum Ende und setzt sich, auch wenn der Start sehr schnell ist.
 * **Webserver & Captive Portal:** Integriertes HTML-Setup-Portal zur Konfiguration von WLAN, MQTT, Home Assistant IP und Kamera-Streams.
 * **Zeitsynchronisation:** Automatischer NTP-Abgleich (CET/CEST) für korrekte Graphen- und Systemzeiten.
 * **Power-Management:** Live-Auslesen von Akkustand und Ladezustand über die M5Unified API.
 * **Task-Management:** Parallele Verarbeitung von WebSockets, GUI-Rendering und Audio-Streaming via FreeRTOS.
 * **Live-Screenshot Engine:** Web-Endpunkt zum Auslesen des RAM-Framebuffers und Download als unkomprimiertes `.BMP`-Bild.
+* **TLS im PSRAM (`TlsMemory`):** mbedTLS legt seine Puffer (je Verbindung mehrere 10 KB) im PSRAM statt im knappen internen RAM an. Das interne RAM bleibt für den SDIO-WLAN-Treiber frei; HTTPS (Kartenkacheln) und Video laufen so parallel.
 * **Absturz-Diagnose (`CrashDiag`):** Unterscheidet Kalt- und Warmstart, zählt Abstürze seit dem letzten Stromlos-Machen und legt einen Bericht auf MQTT (`lela/diag/boot`) ab. Nach einem Absturz kann die Audio-Ausgabe stumm bleiben, bis das Gerät einmal stromlos war – die Kopfleiste zeigt dann einen Hinweis.
 * **Speicher-Diagnose (`HeapMonitor`):** `[Heap]`-Zeile im Log mit Bildschirm und Babyphone-Zustand (alle 60 s, mit `HEAP_PROFILE` in `DebugFlags.h` alle 10 s). Entscheidend ist der größte DMA-fähige Block (WLAN-Treiber).
 
@@ -39,9 +45,16 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * **WebSocket-Verbindung:** Persistenter, bidirektionaler Echtzeitkanal zu Home Assistant (ohne REST-Polling). Ziel ist die HA-IP/Port aus dem Web-Setup; `secrets.h` dient als Rückfall (leeres Setup oder wiederholt nicht erreichbar). Lebenszeichen per Ping, automatischer Neuaufbau mit wachsender Wartezeit, lange Pausen bei ungültigem Token.
 * **Live-Zustände (`HaEntitySync`):** `subscribe_entities` mit Filter auf die platzierten Entitäten (Widgets, Ordnerkinder, Bedingungen) – in Blöcken zu 16, beim Start vollständiger Zustand inkl. Attribute, danach nur Änderungen. Nur die von der Oberfläche benötigten Attribute werden geparst. Vor jedem Neuaufbau werden die alten Abos abgemeldet.
 * **Speichereffizienz (`HaEntityCache`):** Je Entität ein JSON-Abbild im PSRAM; das knappe interne RAM bleibt für WLAN (ESP-Hosted/SDIO) frei.
+* **Schneller Start der HA-App:**
+  * **Letzter Stand:** Beim Verlassen der App bleiben die Zustände erhalten und werden im Flash gesichert (`/ha_states.json`, nur bei Änderung). Beim Booten werden sie geladen. Die App zeichnet so sofort in den richtigen Farben; die Live-Daten übermalen danach nur, was sich geändert hat.
+  * **Schutz vor veralteten Werten:** Bedienungen, die auf einem Wert aufbauen (Thermostat +/− und Modus), warten, bis die Entität wieder live ist.
+  * **Aufbau:** Nur der aktive Tab wird sofort angelegt, die übrigen stückweise im Hintergrund (20 ms je Durchlauf), Nachbartabs zuerst. Bei Tabwechsel oder Bearbeiten wird ein Tab sofort vollständig angelegt. Der Positionsverlauf der Karte lädt erst danach.
+  * **Nur Geändertes zeichnen:** Jede Entität hat einen Änderungszähler; ein Widget wird nur aktualisiert, wenn sich seine Entitäten geändert haben (Ordner: ihre Kinder, Karte: ihre Tracker). Ordner setzen ihre Sichtbarkeit nur bei Änderung. So bleiben die Bilder klein und Eingaben gehen nicht verloren.
+  * **Messzeilen:** `[Boot]`, `[HA-Start]` und mit `PERF_PROFILE` in `DebugFlags.h` auch `[Perf]` (Zeichenzeit großer Bildaufbauten).
 * **Entitätsliste (`HaEntityCatalog`):** Für Suche und Hinzufügen wird bei Bedarf eine kompakte Liste aller wählbaren Entitäten per einmaligem Template geladen (nicht beim Start).
 * **Dienst-Steuerung:** Steuerung von Schaltern, Tasten, Lichtern (inkl. RGB/W-Farbwahl und Helligkeit), Mediaplayern sowie **Saugrobotern** (inkl. Saugstufen-Auswahl und Lokalisierung).
-* **Lovelace-Parser:** Import bestehender Home Assistant Dashboards (Lovelace JSON) in native C++ LVGL-Widgets.
+* **Rückmeldung beim Antippen:** Schalter und Lichter zeigen nach dem Antippen einen Zwischenstand (Symbol halbdurchsichtig), bis HA den neuen Zustand meldet. Andere Meldungen in der Zwischenzeit ändern nichts. Kommt binnen 5 s keine Änderung (Misserfolg), erscheint wieder der tatsächliche Zustand. Aktionstasten (Skripte, Szenen, Buttons) quittieren 1,5 s bzw. bis zur Zustandsänderung.
+* **Lovelace-Parser:** Import bestehender Home Assistant Dashboards (Lovelace JSON) in native C++ LVGL-Widgets. Karten (`type: map`) werden mit `entities`, `default_zoom` und `hours_to_show` übernommen (siehe 1.7).
 
 | HA Entitäts-Typ (Domain) | Status | Verwendete C++ Klasse | Kurze Beschreibung & UI-Verhalten |
 | --- | --- | --- | --- |
@@ -55,6 +68,7 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 | `climate` | ✅ **Fertig** | `HAClimateWidget` | **Das Thermostat.** 2x1 Widget. Zeigt Ist- und Soll-Temperatur groß an. Bietet Plus/Minus-Tasten zur Einstellung und einen Button zum Durchschalten des Modus (Heizen, Kühlen, Auto). |
 | `vacuum` | ✅ **Fertig** | `HAVacuumWidget` | **Die Staubsaugersteuerung.** 2x1 Widget. Extra Tasten für Start, Stop, Pause und Rückkehr zur Ladestation (Dock). |
 | `media_player` | ✅ **Fertig** | `HAMediaWidget` | **Die Mediensteuerung.** 2x1 Widget. Play/Pause-Funktion, Lautstärke-Slider und ggf. Tasten für Vor/Zurück oder Quellenauswahl. |
+| `device_tracker`, `person`, `zone` (Karte) | ✅ **Fertig** | `HAMapWidget` | **Die Karte.** Frei skalierbar (Standard 520x340). OpenStreetMap-Karte mit Trackern, Zonen und Wegverlauf; Antippen öffnet das Vollbild. Details siehe 1.7. |
 | `fan` | ❌ *Offen* | *Fehlt noch* | **Ventilatoren.** Müsste idealerweise als 2x1 Widget gebaut werden (Kombination aus On/Off, Geschwindigkeits-Slider und Schwenk-Button). |
 | `lock` | ❌ *Offen* | *Fehlt noch* | **Smarte Türschlösser.** Fällt aktuell in den Standard-Topf. Bräuchte ein eigenes Widget mit einer Sicherheitsabfrage ("Wirklich öffnen?"), um versehentliche Klicks zu vermeiden. |
 | `alarm_control_panel` | ❌ *Offen* | *Fehlt noch* | **Alarmanlagen.** Würde ein Fullscreen-Overlay mit einem Ziffernblock (PIN-Pad) erfordern, um die Anlage (un)scharf zu schalten. |
@@ -104,6 +118,38 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 * **Lokaler Alarm:** Optische und akustische Warnungen (Custom I2S Töne) bei Limit-Überschreitungen oder Verbindungsabbruch.
 * **Alarme und Mixer:** Lautstärken (Master, UI, Alarm, Baby) im Mixer der QuickSettings. Das Quittieren eines Alarms (erster Druck) ist davon getrennt: Es schaltet Ton und Popup des Alarms ab, nicht den Mixer-Kanal; der zweite Druck setzt den Alarm zurück. Läuft ein Alarm, der auf dem aktuellen Bildschirm keine eigene Anzeige hat, erscheint ein bildschirmfüllendes Popup (auch auf dem HA-Bildschirm).
 
+### 1.7 Karten-Widget (Tracker, Zonen, Wegverlauf)
+Zeigt Entitäten mit Koordinaten (`device_tracker`, `person`, Sensoren mit `latitude`/`longitude`) als farbige Marker mit Initialen und `zone.*` als Zonenkreis auf einer OpenStreetMap-Karte – wie die HA-Kartenkarte.
+
+* **Hinzufügen und Import:**
+  * Im Bearbeiten-Modus über „Hinzufügen“ → Typ „Karte“ (Vorschläge nur für Entitäten mit Koordinaten).
+  * Der HA-Import übernimmt `type: map` mit `entities`, `default_zoom` (bis 20) und `hours_to_show`.
+  * Karten sind in Ordnern nicht möglich.
+* **Reiter „Karte“ im Bearbeiten-Dialog:**
+  * Tracker hinzufügen oder entfernen.
+  * Weglänge (Aus, 5 min bis 24 h) und max. Zoomstufe beim Einpassen (12–20).
+  * „Veraltet nach Funkstille“ (Aus, 5–60 min, Standard 10).
+  * Festen Ausschnitt zurücksetzen.
+* **Vollbild (Karte antippen):**
+  * **Bedienung:** +/− zoomen (Stufe 20 ist zweifach vergrößert). Ziehen verschiebt die Karte (neu gezeichnet beim Loslassen). „Alle“ passt wieder automatisch ein.
+  * **Springe zu …** zentriert auf einen Tracker oder eine Zone.
+  * **Antippen eines Markers** zeigt Name, Zustand, Genauigkeit und „Aktualisiert vor …“.
+  * **Wischgesten** sind abgefangen: Kein versehentlicher App-Wechsel und keine QuickSettings.
+  * **Beim Schließen mit X** übernimmt das Widget den Ausschnitt (Zoom und Mitte) und speichert ihn. Nach „Alle“ passt es wieder automatisch ein.
+* **Wegverlauf:**
+  * **Darstellung:** Linie in der Trackerfarbe, ältere Teile blasser und schmaler. Im Vollbild zusätzlich die Messpunkte.
+  * **Laden (`HaTrackHistory`):** Beim Öffnen des HA-Bildschirms je Tracker in Zeitabschnitten über `history/history_during_period`. Die Länge eines Abschnitts richtet sich nach der gemessenen Datenrate (~256 KB je Antwort, höchstens 5 min, 4 MB je Tracker).
+  * **Lücken nachladen:** Nach einem Wiederverbinden oder beim Zurückkehren wird nur die Zeit seit dem Verbindungsende geladen.
+  * **Live-Punkte** kommen aus dem laufenden Abo, ohne zusätzlichen Abruf.
+  * **Reduktion:** Ein neuer Punkt erst ab halber GPS-Genauigkeit Abstand.
+* **Funkstille:** Meldet ein Tracker länger nichts oder liefert er keine Position (z. B. außer Reichweite), erscheint er **halbdurchsichtig** an der letzten bekannten Position. Sein Weg wird dort unterbrochen statt quer verbunden. Die Infobox zeigt „Zuletzt gesehen vor …“.
+* **Tipp:** Für die Karte den `device_tracker` einer Integration verwenden, nicht Diagnose-Sensoren mit großen Attributen. Das Log meldet Entitäten mit mehr als 4 KB je Zustand (`[HA-Verlauf] Tipp: …`).
+* **Kacheln (`MapTileService`):**
+  * Über HTTPS von `tile.openstreetmap.org`, mit eigenem User-Agent und Quellenhinweis gemäß OSM Tile Usage Policy.
+  * Abruf nur für sichtbare Kacheln, in einer Hintergrund-Task mit niedriger Priorität, die sich im Leerlauf beendet.
+  * **Zwischenspeicher:** 56 dekodierte Kacheln im PSRAM; dazu im Flash (`/tiles`, max. 2 MB, mindestens 7 Tage gültig), sodass sie nach einem Neustart sofort da sind.
+  * Bei knappem DMA-Speicher pausiert der Abruf („Karte pausiert – Speicher knapp“). Video und WLAN haben Vorrang.
+
 ---
 
 ## 2. Hardware-Voraussetzungen
@@ -125,11 +171,13 @@ Der Quellcode ist modular in folgende Hauptbereiche unterteilt:
 * `src/doc/`: Zusätzliche Dokumentationen und Setup-Hinweise.
 * `src/gui/`: Die vollständige LVGL-Benutzeroberfläche.
   * `core/`: Haupt-Views (Dashboard, Settings, Topbar, QuickSettings, Alarm-Popups), Video-Overlay (`ViewVideoPip`) und `GuiManager`.
+  * `map/`: Wiederverwendbare Kartenansicht `MapView` (Kacheln, Marker, Wege, Ausschnitt) ohne HA-Bezug.
   * `ha/`: C++ LVGL-Integration für Home Assistant.
-    * `HaWidgets/`: Modulare Widget-Klassen (Base, Light, Sensor, Vacuum, Media).
+    * `HaWidgets/`: Modulare Widget-Klassen (Base, Light, Sensor, Vacuum, Media, Map).
     * `HaDialogs/`: Gekapselte UI-Popups (Edit, Add, Light, Vacuum, ColorPicker) und die `UIHelper`-Factory für sauberen LVGL-Code.
   * `baby/` & `cat/`: Spezialisierte Ansichten für die Video/Audio- und Sensor-Überwachung.
-* `src/ha/`: Logik für die Home Assistant WebSocket-Kommunikation, JSON-Parsing und Config-Management (`HaConfigLogic`).
+* `src/ha/`: Logik für die Home Assistant WebSocket-Kommunikation, JSON-Parsing und Config-Management (`HaConfigLogic`), Positionsverlauf der Karte (`HaTrackHistory`).
+* `src/map/`: Kartenkacheln: Projektion (`MapProjection`), PNG-Dekoder (`MapPngDecoder`), Flash-Speicher (`MapTileStore`) und Abruf-Dienst (`MapTileService`, Konstanten in `MapTileConfig.h`).
 * `src/media/`: Babyphone-Dienst (`BabyService`, Modus und Zustand), Video (`VideoLogic`, `VideoDecoder`), Audio (`AudioStreamLogic`) und Kamera-Steuerung (`BabyCamApi`).
 * `src/system/`: Hardwarenahe Logik (BLE-Scanning, MQTT, WLAN-Handling, lokaler Webserver und LVGL-Treiber-Initialisierung).
 
@@ -194,7 +242,8 @@ Wenn das Gerät zum ersten Mal startet (oder sein konfiguriertes WLAN nicht find
 2. Verbinde ein Smartphone oder einen PC mit diesem Netzwerk.
 3. Rufe im Browser `http://192.168.4.1` auf.
 4. Über die Weboberfläche können nun alle Zugangsdaten eingetragen werden:
-   * Lokales WLAN
+   * Lokales WLAN – mit „Passwort anzeigen“ und einer Auswahlliste **gespeicherter Netze**. Jedes Netz, mit dem sich das Gerät erfolgreich verbunden hat, wird samt Passwort gemerkt (bis zu 8, NVS-Bereich `wifinets`). Die Auswahl füllt SSID und Passwort; „Ausgewähltes Netz vergessen“ entfernt einen Eintrag. Die Werkseinstellung löscht alle.
+   * Optional eine **feste IP-Adresse** (IP, Gateway, Subnetzmaske, DNS) statt DHCP. Der Start ist damit ca. 2 s schneller. Die Adresse vorher im Router fest für das Gerät reservieren. Ungültige Angaben werden nicht übernommen (es bleibt bei DHCP).
    * IP und Port von Home Assistant
    * MQTT-Broker Credentials
    * Stream-URLs für Video & Audio (z. B. aus der BabyCam-App)

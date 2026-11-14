@@ -24,6 +24,10 @@ static void configPreloadTask(void* parameter) {
     // Initialisiert LittleFS und laedt ha_config.json direkt in den PSRAM.
     // Läuft im Hintergrund, blockiert nicht die UI.
     HaConfigLogic::Init();
+
+    // Letzte bekannte HA-Zustaende: die HA-App zeichnet damit sofort richtig
+    // statt erst grau und dann ein zweites Mal (siehe HaEntityCache.h).
+    HaEntityCache::LoadSnapshot();
     
     // Task ist fertig und beendet sich selbst (gibt seinen Arbeitsspeicher wieder frei)
     vTaskDelete(NULL);

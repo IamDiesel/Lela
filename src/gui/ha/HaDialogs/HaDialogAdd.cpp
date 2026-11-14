@@ -28,6 +28,74 @@ void HaDialogAdd::resetState() {
     target_folder = nullptr;
 }
 
+// Typ "map": Kartenwidget. Das Eingabefeld sucht dann einen ersten Tracker
+// (nur Entitaeten mit Koordinaten); zone.home kommt automatisch dazu. Weitere
+// Tracker im Bearbeiten-Dialog, Reiter "Karte".
+static const char* const MAP_TYPE = "map";
+
+static bool isMapTypeSelected() {
+    if (!dd_widget_type) return false;
+    char buf[32];
+    lv_dropdown_get_selected_str(dd_widget_type, buf, sizeof(buf));
+    return String(buf) == MAP_TYPE;
+}
+
+static void updateMapPreview(const String& input) {
+    if (HaDialogAdd::target_folder) {
+        lv_label_set_text(lbl_preview, "Karten koennen nicht in einen Ordner gelegt werden.");
+        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0xE74C3C), 0);
+        return;
+    }
+    String text;
+    if (input.indexOf('.') > 0) {
+        const String name = HaWebsocketLogic_GetEntityName(input);
+        text = "Karte mit " + (name.length() ? name : input) + " + Zuhause\nWeitere Tracker: Bearbeiten > Reiter Karte";
+    } else {
+        text = "Karte: ersten Tracker suchen (z.B. lola)\nZuhause (zone.home) kommt automatisch dazu";
+    }
+    lv_label_set_text(lbl_preview, text.c_str());
+    lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0x3498DB), 0);
+}
+
+// Legt das Kartenwidget an (Enter im Hinzufuegen-Dialog bei Typ "map").
+// Groesse wie beim Import (3 x 2 Raster). Der Titel bleibt leer - er laesst
+// sich im Reiter "Anzeige" setzen.
+static void createMapWidget(const String& input) {
+    if (HaDialogAdd::target_folder) {
+        // Karten in Ordnern werden nicht unterstuetzt (kein Takt fuer Ordnerkinder).
+        playToneI2S(300, 200, true);
+        return;
+    }
+
+    HAWidgetDef def;
+    def.type = MAP_TYPE;
+    def.entity_id = "";
+    def.x = 20; def.y = 20;
+    def.w = 520; def.h = 340;
+    def.map_max_zoom = 18;
+    def.map_hours = 0.0f;
+    String first = input;
+    first.toLowerCase();
+    if (first.indexOf('.') > 0 && first != "zone.home") def.map_entities.push_back(first);
+    def.map_entities.push_back("zone.home");
+
+    uint16_t act_tab = lv_tabview_get_tab_act(ViewHomeAssistant::tabview);
+    if (act_tab >= HaConfigLogic::dashboards.size()) act_tab = 0;
+    ViewHomeAssistant::currentActiveTab = act_tab;
+
+    // Wie bei allen Widgets: erst ungespeicherte Layout-Aenderungen uebernehmen.
+    ViewHomeAssistant::captureActiveTabLayout();
+    HaConfigLogic::dashboards[act_tab].widgets.push_back(def);
+    HaConfigLogic::Save();
+    HaWebsocketLogic_UpdateTrackedEntities();
+    ViewHomeAssistant::pendingHaReload = true;   // Neuaufbau loescht auch diesen Dialog
+
+    add_widget_overlay = nullptr;
+    lbl_preview = nullptr;
+    roller_search = nullptr;
+    HaDialogAdd::target_folder = nullptr;
+}
+
 static void updateAddWidgetPreview() {
     if (!lbl_preview || !dd_widget_type || !ta_widget_entity) return;
     
@@ -37,6 +105,11 @@ static void updateAddWidgetPreview() {
     
     String input_txt = String(lv_textarea_get_text(ta_widget_entity));
     input_txt.trim();
+
+    if (e_type == MAP_TYPE) {
+        updateMapPreview(input_txt);
+        return;
+    }
     
     if (input_txt.length() == 0 && e_type != "folder") {
         lv_label_set_text(lbl_preview, "Vorschau: ...");
@@ -113,7 +186,8 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
         "text\ninput_text\n"
         "cover\nclimate\nfan\n"
         "input_button\nbutton\nscene\nscript\nautomation\n"
-        "sensor\nbinary_sensor\nweather\nperson\ndevice_tracker\n"
+"sensor\nbinary_sensor\nweather\nperson\ndevice_tracker\n"
+        "map\n"
         "folder" 
     );
     lv_obj_set_width(dd_widget_type, 600);
@@ -144,6 +218,13 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
         lv_roller_get_selected_str(roller_search, buf, sizeof(buf));
         String selected = String(buf);
         int dotIdx = selected.indexOf('.');
+        if (isMapTypeSelected()) {
+            // Karte: Typ bleibt "map", die volle Entity-ID kommt ins Feld.
+            lv_textarea_set_text(ta_widget_entity, selected.c_str());
+            lv_obj_add_flag(roller_search, LV_OBJ_FLAG_HIDDEN);
+            updateAddWidgetPreview();
+            return;
+        }
         if (dotIdx != -1) {
             // Typauswahl auf die Domain der gewaehlten Entitaet stellen. Sonst
             // wuerde aus "sensor.temp_wz" bei eingestelltem "light" die ID
@@ -174,7 +255,8 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
         
         if(code == LV_EVENT_VALUE_CHANGED) {
             updateAddWidgetPreview();
-            UIHelper::showEntitySuggestions(roller_search, nullptr, String(lv_textarea_get_text(ta_widget_entity)));
+            UIHelper::showEntitySuggestions(roller_search, nullptr, String(lv_textarea_get_text(ta_widget_entity)),
+                                            isMapTypeSelected());
         }
     }, LV_EVENT_ALL, kb);
     
@@ -197,6 +279,11 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
             String e_type = String(buf);
             String input_txt = String(lv_textarea_get_text(ta_widget_entity));
             input_txt.trim();
+
+            if (e_type == MAP_TYPE) {
+                createMapWidget(input_txt);
+                return;
+            }
             
             String e_id = ViewHomeAssistant::generateEntityId(e_type, input_txt);
             String friendly_name = input_txt;

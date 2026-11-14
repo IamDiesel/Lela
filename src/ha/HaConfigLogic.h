@@ -58,6 +58,25 @@ struct HAWidgetDef {
     float slider_max = 100.0f;
     float slider_step = 1.0f;
 
+    // --- KARTE (type "map") ---
+    // Entitaeten mit Koordinaten (Attribute latitude/longitude): device_tracker,
+    // person, Sensoren mit Position; zone.* erscheinen als Zonenkreis.
+    // map_max_zoom: hoechste Zoomstufe beim Einpassen (wie HA default_zoom).
+    // map_hours:    Laenge des angezeigten Weges in Stunden (wie HA
+    //               hours_to_show), 0 = kein Weg.
+    std::vector<String> map_entities;
+    int map_max_zoom = 16;
+    float map_hours = 0.0f;
+    // map_stale_min: Funkstille in Minuten, ab der ein Tracker als veraltet
+    //               gilt und sein Weg unterbrochen wird (0 = aus).
+    int map_stale_min = 10;
+    // Fester Ausschnitt (aus dem Vollbild uebernommen); map_fixed = false:
+    // automatisch alle Tracker einpassen.
+    bool   map_fixed = false;
+    double map_lat = 0;
+    double map_lon = 0;
+    int    map_view_zoom = 0;
+
     // Sichtbarkeitsbedingungen und Ordner-Kinder
     String conditions_type = "AND"; // Entweder "AND" oder "OR"
     std::vector<HACondition> conditions;

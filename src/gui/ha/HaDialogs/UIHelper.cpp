@@ -136,11 +136,11 @@ lv_obj_t* UIHelper::createModalOverlay(lv_obj_t* parent, lv_opa_t opa, lv_obj_t*
     return overlay;
 }
 
-void UIHelper::showEntitySuggestions(lv_obj_t* roller, lv_obj_t* anchor, const String& query) {
+void UIHelper::showEntitySuggestions(lv_obj_t* roller, lv_obj_t* anchor, const String& query, bool onlyWithLocation) {
     if (!roller) return;
 
     std::vector<String> hits;
-    if (query.length() >= 2) hits = HaWebsocketLogic_SearchEntities(query, 5);
+    if (query.length() >= 2) hits = HaWebsocketLogic_SearchEntities(query, 5, onlyWithLocation);
 
     if (hits.empty()) {
         lv_obj_add_flag(roller, LV_OBJ_FLAG_HIDDEN);

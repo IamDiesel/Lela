@@ -24,6 +24,7 @@ enum class HaWidgetKind : uint8_t {
     Select,        // "select"
     Number,        // "number"
     Folder,        // "folder"       Container mit bedingt sichtbaren Kindern
+    Map,           // "map"          Karte mit Trackern (Kartenkacheln: src/map)
     Unknown        // alles andere (wird als Light-Widget dargestellt)
 };
 
@@ -40,5 +41,6 @@ inline HaWidgetKind HaWidgetKindFromString(const String& type) {
     if (type == "select")       return HaWidgetKind::Select;
     if (type == "number")       return HaWidgetKind::Number;
     if (type == "folder")       return HaWidgetKind::Folder;
+    if (type == "map")          return HaWidgetKind::Map;
     return HaWidgetKind::Unknown;
 }

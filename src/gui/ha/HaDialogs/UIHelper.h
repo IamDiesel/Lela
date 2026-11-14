@@ -49,5 +49,6 @@ public:
     // sucht ab 2 Zeichen in der Entitaetsliste, fuellt 'roller' mit bis zu 5
     // Treffern und blendet ihn ein - sonst aus. Mit 'anchor' wird der Roller
     // direkt unter diesem Eingabefeld platziert.
-    static void showEntitySuggestions(lv_obj_t* roller, lv_obj_t* anchor, const String& query);
+    // onlyWithLocation: nur Entitaeten mit Koordinaten (Kartenwidget).
+    static void showEntitySuggestions(lv_obj_t* roller, lv_obj_t* anchor, const String& query, bool onlyWithLocation = false);
 };

@@ -93,6 +93,11 @@ void HAClimateWidget::btn_event_cb(lv_event_t * e) {
     HAClimateWidget* w = (HAClimateWidget*)lv_event_get_user_data(e);
     lv_obj_t* btn = lv_event_get_target(e);
 
+    // +/- und Moduswechsel bauen auf dem angezeigten Wert auf. Stammt er nur
+    // aus dem letzten Stand (HA-App gerade geoeffnet, Live-Daten noch nicht
+    // da), wuerde ein Druck einen veralteten Wert verstellen - abwarten.
+    if (!HaWebsocketLogic_IsEntityLive(w->getEntityId())) return;
+
     // Temperatur verstellen
     if (btn == w->btn_plus || btn == w->btn_minus) {
         float step = HaWebsocketLogic_GetStep(w->getEntityId());

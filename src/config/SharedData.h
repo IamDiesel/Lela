@@ -49,6 +49,13 @@ extern bool babyAlarmAcked;
 
 extern String wifiSsid;
 extern String wifiPass;
+// Feste IP statt DHCP (Web-Setup). Aus oder ungueltig = DHCP. Spart beim
+// Start die DHCP-Phase (1,5-2,5 s, siehe WifiConnect.h).
+extern bool   staticIpEnabled;
+extern String staticIp;
+extern String staticGateway;
+extern String staticSubnet;
+extern String staticDns;     // leer = Gateway
 extern String mqttBroker;
 extern int mqttPort;
 extern String mqttUser;

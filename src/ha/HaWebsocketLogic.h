@@ -86,7 +86,7 @@ inline String HaWebsocketLogic_GetEntityIcon(String id) {
 }
 // Laedt die Liste aller Entitaeten, falls noch nicht vorhanden (nicht blockierend).
 inline void HaWebsocketLogic_RequestEntityCatalog() { HaEntityCatalog::RequestLoad(); }
-inline std::vector<String> HaWebsocketLogic_SearchEntities(String q, size_t maxResults = 5) { return HaEntityCatalog::Search(q, maxResults); }
+inline std::vector<String> HaWebsocketLogic_SearchEntities(String q, size_t maxResults = 5, bool onlyWithLocation = false) { return HaEntityCatalog::Search(q, maxResults, onlyWithLocation); }
 
 // Liste der abonnierten Entitaeten neu aufbauen und Abos nachziehen.
 inline void HaWebsocketLogic_UpdateTrackedEntities() {
@@ -94,6 +94,13 @@ inline void HaWebsocketLogic_UpdateTrackedEntities() {
     HaEntitySync::RequestResync();
 }
 inline int HaWebsocketLogic_GetBattery(String id) { return HaEntityCache::GetBattery(id); }
+inline bool HaWebsocketLogic_GetLocation(String id, double& lat, double& lon, float& accuracyM) { return HaEntityCache::GetLocation(id, lat, lon, accuracyM); }
+inline float HaWebsocketLogic_GetZoneRadius(String id) { return HaEntityCache::GetZoneRadius(id); }
+inline uint32_t HaWebsocketLogic_GetLastUpdated(String id) { return HaEntityCache::GetLastUpdated(id); }
+// Zustand stammt aus der laufenden Verbindung (nicht nur letzter Stand).
+inline bool HaWebsocketLogic_IsEntityLive(String id) { return HaEntityCache::IsLive(id); }
+// Aenderungszaehler einer Entitaet (siehe HaEntityCache::GetEntityVersion).
+inline uint32_t HaWebsocketLogic_GetEntityVersion(String id) { return HaEntityCache::GetEntityVersion(id); }
 
 inline std::vector<String> HaWebsocketLogic_GetOptions(String id) { return HaEntityCache::GetOptions(id); }
 inline float HaWebsocketLogic_GetMin(String id) { return HaEntityCache::GetMin(id); }

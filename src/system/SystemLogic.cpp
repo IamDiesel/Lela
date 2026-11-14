@@ -23,16 +23,23 @@
 #include "ViewPopups.h"
 #include "ViewVideoPip.h"
 #include "HeapMonitor.h"
+#include "TlsMemory.h"
+#include "MapTileService.h"
+#include "WifiConnect.h"
 
 #include <time.h> 
 
 int cameraRefreshMs = 300; 
 
 void SystemLogic_Init() {
+    // Vor jeder TLS-Verbindung: mbedTLS-Speicher ins PSRAM (siehe TlsMemory.h).
+    TlsMemory_UsePsram();
+
     Audio_Init(); 
     VideoLogic_Init(); 
     BabyCamApi_Init();
     BabyService_Init();
+    MapTileService_Init();
     
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
@@ -64,14 +71,22 @@ void SystemLogic_Update() {
     calcMultiplex(); 
     if (webSetupMode > 0 || pendingWebSetupMode > 0) return; 
 
-    if (!wifiEnabled && wifiStarted) { WiFi.disconnect(true, false); wifiStarted = false; timeSynced = false; }
+    if (!wifiEnabled && wifiStarted) {
+        WiFi.disconnect(true, false);
+        WifiConnect_Reset();
+        wifiStarted = false;
+        timeSynced = false;
+    }
     
     if (wifiEnabled && !wifiStarted && !isTrackerMode && effPrioWifi > 0) { 
-        WiFi.begin(wifiSsid.c_str(), wifiPass.c_str()); 
+        WifiConnect_Begin(wifiSsid, wifiPass); 
         WiFi.setTxPower(WIFI_POWER_19_5dBm); 
         esp_wifi_set_ps(WIFI_PS_NONE);
         wifiStarted = true; 
     }
+
+    // Erste WLAN-Verbindung protokollieren (Dauer, Kanal, Feldstaerke).
+    WifiConnect_Update();
 
     static bool ntpConfigured = false;
     if (WiFi.status() == WL_CONNECTED && !ntpConfigured) {
@@ -82,6 +97,10 @@ void SystemLogic_Update() {
         ntpConfigured = false;
         timeSynced = false;
     }
+
+    // Kartenkacheln: derzeit nur der Messlauf (MAP_PROFILE). Vor BleLogic, das
+    // die Schleife waehrend eines BLE-Einrichtungsscans vorzeitig beendet.
+    MapTileService_Update();
 
     if (BleLogic_Update()) return;
     MqttLogic_Update(); 

@@ -20,6 +20,7 @@
 #include "HaLovelaceParser.h"
 #include "HaEntitySync.h"
 #include "HaEntityCatalog.h"
+#include "HaTrackHistory.h"
 #include "HaPsramAllocator.h"
 #include "HeapMonitor.h"
 #include "HaConfigLogic.h"
@@ -71,6 +72,7 @@ static portMUX_TYPE          haTaskMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Nur HA_WS_Task
 static uint32_t s_nextConnectAt = 0;
+static uint32_t s_startedAt = 0;      // HaWebsocketLogic_Start (nur fuer das Log)
 static uint32_t s_reconnectDelay = RECONNECT_MIN_MS;
 static uint32_t s_authRetryDelay = AUTH_RETRY_MIN_MS;
 static uint8_t  s_failCount = 0;
@@ -258,6 +260,7 @@ void onMessageCallback(WebsocketsMessage message) {
     // --- Abos und Entitaetskatalog verwalten ihre IDs selbst ---
     if (HaEntitySync::HandleMessage(type, msgId, success, payload)) return;
     if (HaEntityCatalog::HandleMessage(type, msgId, success, payload)) return;
+    if (HaTrackHistory::HandleMessage(type, msgId, success, payload)) return;
 
     // Ereignisse ohne Empfaenger, z. B. eines gerade abgemeldeten Abos.
     if (type == "event" || type == "pong") return;
@@ -287,11 +290,12 @@ void onMessageCallback(WebsocketsMessage message) {
         s_failCount = 0;
         s_reconnectDelay = RECONNECT_MIN_MS;
         s_authRetryDelay = AUTH_RETRY_MIN_MS;
-        Serial.println("[HA] Angemeldet.");
+        Serial.printf("[HA] Angemeldet (%lu ms nach Start der HA-App).\n", (unsigned long)(millis() - s_startedAt));
 
         // Neue Verbindung (Start oder Reconnect): alle Abos neu anlegen.
         HaEntitySync::OnAuthenticated();
         HaEntityCatalog::OnAuthenticated();
+        HaTrackHistory::OnAuthenticated();
     }
     else if (type == "auth_invalid") {
         // Nicht hier schliessen: wir stecken mitten in haClient.poll().
@@ -385,6 +389,7 @@ static void haWsTask(void *pvParameters) {
                 if (isHaAuthenticated) {
                     HaEntitySync::Tick();
                     HaEntityCatalog::Tick();
+                    HaTrackHistory::Tick();
                 }
                 serviceConnection();
                 vTaskDelay(pdMS_TO_TICKS(2));
@@ -421,6 +426,13 @@ static void haWsTask(void *pvParameters) {
     // er diese Daten anfasst.
     HaEntitySync::Reset();
     HaEntityCatalog::Clear();
+    // Letzter Stand fuer den naechsten Start der HA-App (auch nach Neustart).
+    // Unter der Prioritaet der Oberflaeche (loopTask, 1, derselbe Kern): das
+    // Flash-Schreiben soll den gerade entstehenden Bildschirm nicht bremsen.
+    vTaskPrioritySet(NULL, tskIDLE_PRIORITY);
+    HaEntityCache::SaveSnapshot();
+    // Wege bleiben (PSRAM) - beim Zurueckkehren wird nur die Luecke geladen.
+    HaTrackHistory::OnDisconnected();
 
     portENTER_CRITICAL(&haTaskMux);
     haTaskHandle = NULL;
@@ -433,10 +445,12 @@ static void haWsTask(void *pvParameters) {
 // Start / Stop
 // ------------------------------------------------------------------------------
 void HaWebsocketLogic_Start() {
+    s_startedAt = millis();
     if (haClientMutex == NULL) haClientMutex = xSemaphoreCreateRecursiveMutex();
     if (s_mailboxMutex == NULL) s_mailboxMutex = xSemaphoreCreateMutex();
     HaEntityCache::Init();
     HaEntityCatalog::Init();
+    HaTrackHistory::Init();
 
     // Laeuft der Task noch (auch wenn Stop() ihn gerade beenden wollte), wird
     // er einfach weiterverwendet. Frueher wartete Start() aktiv im loopTask,
@@ -448,7 +462,7 @@ void HaWebsocketLogic_Start() {
     portEXIT_CRITICAL(&haTaskMux);
 
     if (reuse) {
-        // Stop() hat den Cache geleert - vollen Stand neu anfordern.
+        // Stop() hat den Cache als "nicht live" markiert - vollen Stand neu anfordern.
         HaEntitySync::RequestResync();
         return;
     }
@@ -472,7 +486,10 @@ void HaWebsocketLogic_Start() {
 
 void HaWebsocketLogic_Stop() {
     haShouldRun = false;
-    HaEntityCache::ClearAll();
+    // Zustaende bleiben sichtbar (letzter Stand), gelten aber nicht mehr als
+    // live. Gesichert werden sie beim Ende des HA_WS_Task (Flash-Schreiben
+    // nicht im loopTask). Siehe HaEntityCache.h.
+    HaEntityCache::MarkAllStale();
 }
 
 // ------------------------------------------------------------------------------

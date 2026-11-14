@@ -28,6 +28,7 @@ static void splash_timer_cb(lv_timer_t * timer) {
     splash_status_label = nullptr; 
     g_splash_bar = nullptr;
     g_cat_walker = nullptr;
+    Serial.printf("[Boot] Dashboard nach %lu ms\n", (unsigned long)millis());
     gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE);
 }
 
@@ -51,37 +52,48 @@ static void prog_anim_ready_cb(lv_anim_t * a) {
     }
 }
 
-// Die neue State-Machine Schnittstelle
+// Ladebalken und Katze (die Katze folgt dem Balkenwert, prog_anim_cb):
+//   WIFI:    laeuft langsam und immer langsamer Richtung 85 % - die Katze
+//            bleibt in Bewegung, solange das WLAN braucht.
+//   DONE / TIMEOUT: laeuft vom aktuellen Stand bis 100 %. Die Dauer richtet
+//            sich nach der Reststrecke (gleiches Tempo, egal wie frueh das
+//            WLAN fertig ist), mindestens FINISH_MIN_MS. Erst am Ziel setzt
+//            sich die Katze (prog_anim_ready_cb) - die Animation laeuft also
+//            immer vollstaendig durch, auch bei sehr schnellem Start.
+// lv_anim_start ersetzt eine laufende Animation desselben Ziels; deren
+// ready_cb wird dabei nicht gerufen.
+static const uint32_t WIFI_PHASE_MS  = 8000;   // 0 -> 85 %, ease_out
+static const int      WIFI_PHASE_PCT = 85;
+static const uint32_t FINISH_MS_PER_PCT = 12;  // Tempo der Schlussstrecke
+static const uint32_t FINISH_MIN_MS  = 600;
+
 void ViewBootScreen::setBootState(BootState state, const char* extraInfo) {
     if (!g_splash_bar || !g_cat_walker) return;
 
     g_current_boot_state = state;
     int start_pct = lv_bar_get_value(g_splash_bar); // Liest den echten Ist-Wert aus!
     int target_pct = start_pct;
-    int anim_time = 1000;
+    uint32_t anim_time = 1000;
+    lv_anim_path_cb_t path = lv_anim_path_ease_out;
     String txt = "";
 
     switch(state) {
         case BOOT_STATE_WIFI:
-            target_pct = 50;
-            anim_time = 3500; // Lauft geschmeidig ueber 3,5s zur Haelfte
+            target_pct = WIFI_PHASE_PCT;
+            anim_time = WIFI_PHASE_MS;
             txt = String("Verbinde mit WLAN '") + extraInfo + "'...";
             break;
-        case BOOT_STATE_HA:
-            target_pct = 90;
-            anim_time = 2500; // Zieht das Verbinden optisch etwas in die Laenge
-            txt = "WLAN verbunden. Verbinde Home Assistant...";
-            break;
         case BOOT_STATE_DONE:
+        case BOOT_STATE_TIMEOUT: {
             target_pct = 100;
-            anim_time = 400; // Rasantes Auffuellen
-            txt = "Home Assistant verbunden! Starte Dashboard...";
+            const uint32_t remaining = (uint32_t)(100 - start_pct);
+            anim_time = remaining * FINISH_MS_PER_PCT;
+            if (anim_time < FINISH_MIN_MS) anim_time = FINISH_MIN_MS;
+            path = lv_anim_path_ease_in_out;   // gleichmaessig anlaufen und ankommen
+            txt = (state == BOOT_STATE_DONE) ? "WLAN verbunden. Starte Dashboard..."
+                                             : "WLAN braucht zu lange. Starte ohne Verbindung...";
             break;
-        case BOOT_STATE_TIMEOUT:
-            target_pct = 100;
-            anim_time = 400; // Rasantes Auffuellen
-            txt = "Verbindung dauert zu lange. Starte Offline-Modus...";
-            break;
+        }
         default:
             return;
     }
@@ -97,7 +109,7 @@ void ViewBootScreen::setBootState(BootState state, const char* extraInfo) {
     lv_anim_set_values(&prog_anim, start_pct, target_pct);
     lv_anim_set_time(&prog_anim, anim_time);
     lv_anim_set_exec_cb(&prog_anim, prog_anim_cb);
-    lv_anim_set_path_cb(&prog_anim, lv_anim_path_ease_out);
+    lv_anim_set_path_cb(&prog_anim, path);
     lv_anim_set_ready_cb(&prog_anim, prog_anim_ready_cb);
     lv_anim_start(&prog_anim);
 }

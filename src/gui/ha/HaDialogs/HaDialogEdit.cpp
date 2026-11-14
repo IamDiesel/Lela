@@ -10,6 +10,7 @@
 #include "EditTabAction.h"
 #include "EditTabCondition.h"
 #include "EditTabSensor.h" 
+#include "EditTabMap.h"
 
 // Bildschirmtastatur und der Platz, den eine Vorschlagsliste unter einem
 // Eingabefeld braucht (Roller mit 3 Zeilen).
@@ -154,12 +155,15 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
     // --- Die saubere neue Modul-Architektur ---
     active_tabs.push_back(new EditTabSize());
     active_tabs.push_back(new EditTabDisplay());
-    active_tabs.push_back(new EditTabLayout());
+    // Karte: Symbol-/Textausrichtung und Klick-Aktion gibt es dort nicht.
+    const bool isMap = (w->getKind() == HaWidgetKind::Map);
+    if (!isMap) active_tabs.push_back(new EditTabLayout());
     // Den neuen Sensor-Tab dynamisch hinzufügen
     if (w->getKind() == HaWidgetKind::Sensor) {
         active_tabs.push_back(new EditTabSensor());
     }
-    active_tabs.push_back(new EditTabAction());
+    if (isMap) active_tabs.push_back(new EditTabMap());
+    if (!isMap) active_tabs.push_back(new EditTabAction());
     active_tabs.push_back(new EditTabCondition());
     
     for (auto tab : active_tabs) {

@@ -96,6 +96,20 @@ protected:
     void holdRemoteUpdates(uint32_t ms = 2500);
     bool remoteUpdatesHeld() const;
 
+    // --- Rueckmeldung nach dem Antippen (Licht, Aktion) ---
+    // Zwischenstand (Symbol halbdurchsichtig), bis HA einen ANDEREN Zustand
+    // meldet als vor dem Antippen. Meldungen mit dem alten Zustand (HA meldet
+    // oft erst Attribute oder andere Entitaeten) aendern nichts. Laeuft die
+    // Zeit ab, ohne dass sich der Zustand geaendert hat (Misserfolg), zeigt
+    // das Widget wieder den tatsaechlichen Zustand (ueber die Sperre oben:
+    // refreshAfterHoldDue -> updateState).
+    bool   pending_feedback = false;
+    String pending_from_state;
+    void beginPendingFeedback(uint32_t timeoutMs);
+    // In updateState() zuerst aufrufen: true = noch keine Bestaetigung,
+    // Meldung uebergehen (Zwischenstand bleibt).
+    bool pendingFeedbackBlocks(const String& state);
+
 public:
     lv_obj_t* container;
     static bool editModeActive;
@@ -146,7 +160,8 @@ public:
     void setName(String n);
     void setMdiIcon(String mdi);
     void setColors(String on, String off);
-    void setSize(int w, int h);
+    // virtuell: Widgets mit eigener Flaeche (Karte) passen sie an.
+    virtual void setSize(int w, int h);
     void setPosition(int x, int y, bool snap);
     void setSnapToGrid(bool snap);
     
@@ -205,6 +220,34 @@ public:
 
     virtual void updateState(String state);
     virtual void onClick() = 0; 
+
+    // Abgleich mit dem Entitaets-Cache, wenn sich dessen Version geaendert hat
+    // (ViewHomeAssistant::update). Standard: Zustand der eigenen Entitaet an
+    // updateState(); Ordner reichen weiter. Widgets mit mehreren Entitaeten
+    // (Karte) ueberschreiben das.
+    virtual void refreshFromCache();
+
+    // Regelmaessiger Aufruf aus ViewHomeAssistant::update() - fuer Widgets,
+    // die auf etwas anderes als den Entitaets-Cache warten (Karte: Kacheln).
+    // Muss billig sein, wenn nichts zu tun ist.
+    virtual void tick() {}
+
+    // Aenderungserkennung fuer ViewHomeAssistant::update(): true, wenn sich
+    // seit dem letzten Aufruf eine angezeigte Entitaet geaendert hat oder das
+    // Widget auf eine Rueckmeldung wartet. Merkt sich den neuen Stand.
+    // Frueher bekam JEDES Widget bei JEDER Aenderung im Haus refreshFromCache();
+    // Widgets ohne eigenen Vergleich setzten dabei Texte und Stile neu, und
+    // LVGL zeichnete fast den ganzen Bildschirm (~0,4 s, Eingaben gingen verloren).
+    // Ordner ueberschreiben das (Kinder).
+    virtual bool needsRefresh();
+
+protected:
+    // Kombinierter Aenderungszaehler der angezeigten Entitaeten
+    // (Standard: eigene Entitaet; Ordner: Kinder; Karte: alle Tracker).
+    virtual uint32_t sourceVersion();
+
+private:
+    uint32_t seen_source_version = 0;
 };
 
 class HALightWidget : public HAWidget {

@@ -19,6 +19,8 @@ public:
     void updateState(String state) override;
     void checkConditions() override;
     void onClick() override;
+    // Ein Ordner zeigt seine Kinder: geaendert, wenn sich eines geaendert hat.
+    bool needsRefresh() override;
     
     void addChild(HAWidget* widget, const HAWidgetDef& def);
     void removeChild(HAWidget* widget); 
@@ -28,4 +30,8 @@ public:
 private:
     std::vector<FolderChildInfo> folder_children;
     lv_obj_t* placeholder_lbl;
+    // Zuletzt gesetzte Darstellung (0 = normal - so legt sie der Konstruktor
+    // an, 1 = Edit-Modus). checkConditions() laeuft alle 500 ms - Stile nur
+    // bei Wechsel setzen.
+    int8_t applied_edit_look = 0;
 };

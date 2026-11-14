@@ -72,6 +72,7 @@
 #include "BleLogic.h"
 #include "ViewBootScreen.h"
 #include "CrashDiag.h"   // Absturz-Diagnose ueber Neustarts (Experiment E-1)
+#include "WifiConnect.h"
 
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
@@ -122,6 +123,11 @@ void updateBootMelody() {
             }
         }
     }
+}
+
+// Zeitmarke im Log: wo die Bootzeit bleibt (Messung Startzeit, 2026-11).
+static void bootMark(const char* phase) {
+    Serial.printf("[Boot] %s: %lu ms\n", phase, (unsigned long)millis());
 }
 
 void updateStaticStatus(const char* text) {
@@ -179,7 +185,8 @@ void setup() {
     
     if (wifiSsid != "") {
         Serial.println("[SYSTEM] Starte WLAN asynchron im Hintergrund...");
-        WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+        // Startet die Verbindung und misst die Dauer (siehe WifiConnect.h).
+        WifiConnect_Begin(wifiSsid, wifiPass);
         WiFi.setTxPower(WIFI_POWER_19_5dBm);
         WiFi.setSleep(false);
         wifiStarted = true; // Verhindert, dass SystemLogic es doppelt startet
@@ -260,6 +267,7 @@ void setup() {
 
     updateStaticStatus("Lade Grafik-Engine und reserviere Speicher...");
     Lvgl_Init();
+    bootMark("LVGL bereit");
     AudioStreamLogic_Init(); 
 
     int batLevel = M5.Power.getBatteryLevel();
@@ -269,6 +277,7 @@ void setup() {
 
     updateStaticStatus("Lese Flash-Speicher & Konfigurationen...");
     SystemLogic_Init(); 
+    bootMark("Systemdienste initialisiert");
 
     updateStaticStatus("Bereite Benutzeroberflaeche vor...");
     
@@ -281,6 +290,7 @@ void setup() {
 
     updateStaticStatus("Starte Hintergrunddienste...");
     SystemLogic_Update(); 
+    bootMark("setup() fertig");
 }
 
 
@@ -317,24 +327,20 @@ void loop() {
         if (!nativeSplashActive && gui.getCurrentScreen() == (ScreenID)99) {
             static BootState current_boot_state = BOOT_STATE_INIT;
             static uint32_t lvgl_anim_start_time = 0;
-            static uint32_t wifi_ready_time = 0; // NEU: Timer fuer die Toleranzzeit
             
             if (lvgl_anim_start_time == 0) lvgl_anim_start_time = millis();
             
             BootState new_state = current_boot_state;
 
-            // Logik-Kaskade: Smartes Warten (verhindert den 15s Timeout-Trap!)
-            if (WiFi.status() == WL_CONNECTED) {
-                if (wifi_ready_time == 0) wifi_ready_time = millis();
-                
-                // Wir beenden die Animation, sobald HA verbunden ist,
-                // ODER spaetestens 2,5 Sekunden nachdem das WLAN steht!
-                // So friert das Tablet niemals ein, wenn ein Server nicht antwortet.
-                if (HaWebsocketLogic_IsConnected() || (millis() - wifi_ready_time > 2500)) {
-                    new_state = BOOT_STATE_DONE;
-                } else {
-                    new_state = BOOT_STATE_HA;
-                }
+            // Nur auf das WLAN warten. Home Assistant verbindet sich erst beim
+            // Oeffnen der HA-App - frueher wartete der Start hier zusaetzlich
+            // auf HA und lief dabei jedes Mal in die 2,5-s-Toleranz.
+            // DONE/TIMEOUT sind endgueltig: die Schlussanimation laeuft dann
+            // vollstaendig durch (siehe ViewBootScreen::setBootState).
+            if (current_boot_state == BOOT_STATE_DONE || current_boot_state == BOOT_STATE_TIMEOUT) {
+                new_state = current_boot_state;
+            } else if (WiFi.status() == WL_CONNECTED) {
+                new_state = BOOT_STATE_DONE;
             } else {
                 new_state = BOOT_STATE_WIFI;
             }

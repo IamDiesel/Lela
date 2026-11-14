@@ -43,7 +43,8 @@ public:
     static uint32_t GetVersion();
 
     // Teilstring-Suche in ID und Name, ohne Gross-/Kleinschreibung.
-    static std::vector<String> Search(const String& query, size_t maxResults);
+    // onlyWithLocation: nur Entitaeten mit Koordinaten (Kartenwidget).
+    static std::vector<String> Search(const String& query, size_t maxResults, bool onlyWithLocation = false);
 
     static bool   Contains(const String& entityId);
     static String GetName(const String& entityId);

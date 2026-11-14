@@ -12,3 +12,4 @@
 #include "HAClimateWidget.h"
 #include "HATextWidget.h"
 #include "HAFolderWidget.h"
+#include "HAMapWidget.h"

@@ -39,6 +39,7 @@ static const char* const ATTRIBUTE_WHITELIST[] = {
     "current_position",
     "current_temperature", "temperature", "hvac_modes",
     "min_temp", "max_temp", "target_temp_step",
+    "latitude", "longitude", "gps_accuracy", "radius",   // Karte (Tracker, Zonen)
 };
 
 // ------------------------------------------------------------------------------
@@ -98,12 +99,16 @@ static JsonDocument& eventFilter() {
         // Vollstaendiger Zustand
         JsonObject full = ev["a"]["*"].to<JsonObject>();
         full["s"] = true;
+        full["lc"] = true;   // last_changed (Zustand)
+        full["lu"] = true;   // last_updated (auch Attribute, z. B. Position); fehlt, wenn = lc
         JsonObject fullAttr = full["a"].to<JsonObject>();
 
         // Aenderung
         JsonObject diff = ev["c"]["*"].to<JsonObject>();
         JsonObject plus = diff["+"].to<JsonObject>();
         plus["s"] = true;
+        plus["lc"] = true;
+        plus["lu"] = true;
         JsonObject plusAttr = plus["a"].to<JsonObject>();
         diff["-"]["a"] = true;
 
@@ -119,7 +124,10 @@ static JsonDocument& eventFilter() {
     return filter;
 }
 
-static void applyEvent(const String& payload) {
+// 'firstOfChunk': erstes Ereignis eines gerade angefragten Blocks - es enthaelt
+// den vollen Stand aller Entitaeten des Blocks, die es in HA gibt. Fehlt eine,
+// gibt es sie nicht mehr; ihr letzter Stand aus dem Flash wird verworfen.
+static void applyEvent(const String& payload, bool firstOfChunk) {
     JsonDocument doc(HaPsramAlloc());
     DeserializationError err = deserializeJson(doc, payload,
                                                DeserializationOption::Filter(eventFilter()),
@@ -138,6 +146,13 @@ static void applyEvent(const String& payload) {
     }
     for (JsonVariantConst v : ev["r"].as<JsonArrayConst>()) {
         HaEntityCache::ApplyRemoved(v.as<const char*>());
+    }
+
+    if (firstOfChunk) {
+        JsonObjectConst added = ev["a"];
+        for (size_t i = s_planIndex; i < s_planIndex + s_chunkLen && i < s_plan.size(); i++) {
+            if (added[s_plan[i]].isNull()) HaEntityCache::DropIfStale(s_plan[i].c_str());
+        }
     }
 }
 
@@ -269,8 +284,9 @@ bool HaEntitySync::HandleMessage(const String& type, uint32_t id, bool success, 
     if (type == "event") {
         if (std::find(s_activeSubs.begin(), s_activeSubs.end(), id) == s_activeSubs.end()) return false;
 
-        applyEvent(payload);
-        if (id == s_currentSubId && s_waiting) advance();
+        const bool firstOfChunk = (id == s_currentSubId && s_waiting);
+        applyEvent(payload, firstOfChunk);
+        if (firstOfChunk) advance();
         return true;
     }
 

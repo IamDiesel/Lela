@@ -6,6 +6,7 @@
 #include "lvgl.h" 
 #include <esp_heap_caps.h>
 #include "HaPsramAllocator.h"
+#include "HaWidgetKind.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -172,6 +173,21 @@ static void deserializeWidget(JsonObject wObj, HAWidgetDef& wDef) {
     wDef.slider_max = wObj["slider_max"] | 100.0f;
     wDef.slider_step = wObj["slider_step"] | 1.0f;
 
+    if (wObj["map_ents"].is<JsonArray>()) {
+        for (JsonVariant e : wObj["map_ents"].as<JsonArray>()) {
+            const String id = e.as<String>();
+            if (id.length() > 0) wDef.map_entities.push_back(id);
+        }
+    }
+    wDef.map_max_zoom = wObj["map_zoom"] | 16;
+    wDef.map_hours = wObj["map_hours"] | 0.0f;
+    wDef.map_stale_min = wObj["map_stale"] | 10;
+    // Fester Ausschnitt: nur gespeichert, wenn gesetzt (map_vz > 0).
+    wDef.map_view_zoom = wObj["map_vz"] | 0;
+    wDef.map_fixed = wDef.map_view_zoom > 0;
+    wDef.map_lat = wObj["map_lat"] | 0.0;
+    wDef.map_lon = wObj["map_lon"] | 0.0;
+
     wDef.conditions_type = wObj["conditions_type"] | "AND";
     if (wObj["conditions"].is<JsonArray>()) {
         for (JsonObject j_c : wObj["conditions"].as<JsonArray>()) {
@@ -233,6 +249,21 @@ static void serializeWidget(JsonObject wObj, const HAWidgetDef& w) {
     wObj["slider_min"] = w.slider_min;
     wObj["slider_max"] = w.slider_max;
     wObj["slider_step"] = w.slider_step;
+
+    // Kartenfelder nur bei Karten: haelt die Datei fuer alle anderen Widgets
+    // unveraendert.
+    if (HaWidgetKindFromString(w.type) == HaWidgetKind::Map) {
+        JsonArray j_ents = wObj["map_ents"].to<JsonArray>();
+        for (const auto& id : w.map_entities) j_ents.add(id);
+        wObj["map_zoom"] = w.map_max_zoom;
+        wObj["map_hours"] = w.map_hours;
+        wObj["map_stale"] = w.map_stale_min;
+        if (w.map_fixed && w.map_view_zoom > 0) {
+            wObj["map_vz"] = w.map_view_zoom;
+            wObj["map_lat"] = w.map_lat;
+            wObj["map_lon"] = w.map_lon;
+        }
+    }
 
     if (w.conditions.size() > 0) {
         wObj["conditions_type"] = w.conditions_type;

@@ -37,7 +37,22 @@ private:
     static std::vector<HAWidget*> widgets;
     static std::vector<lv_obj_t*> tab_pages;
 
+    // Schneller Start: build() legt nur die Widgets des aktiven Tabs an; die
+    // uebrigen Tabs fuellt update() stueckweise im Hintergrund (Zeitbudget je
+    // Durchlauf), nachdem das erste Bild gezeichnet ist. Ein Tab, der vorher
+    // gebraucht wird (Wechsel, Bearbeiten, Layout uebernehmen), wird sofort
+    // vollstaendig angelegt (ensureTabBuilt).
+    // tab_progress[i]: Anzahl der schon angelegten Widgets von Tab i.
+    static std::vector<size_t> tab_progress;
+
     static void helper_loadWidgets();
+    // Legt Widgets von Tab 'tab' an, bis er fertig oder 'deadlineMs'
+    // (millis(); 0 = ohne Grenze) erreicht ist. true = Tab fertig.
+    static bool buildTabWidgets(size_t tab, uint32_t deadlineMs);
+    static void ensureTabBuilt(size_t tab);
+    static void ensureAllTabsBuilt();
+    // Hintergrund-Aufbau (aus update()).
+    static void buildPendingTabs();
 
     static void btn_back_event_cb(lv_event_t * e);
     static void btn_edit_event_cb(lv_event_t * e);

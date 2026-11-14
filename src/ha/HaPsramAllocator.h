@@ -13,6 +13,7 @@
 
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include <stdlib.h>
 
 class HaPsramAllocator : public ArduinoJson::Allocator {
 public:
@@ -32,3 +33,24 @@ inline HaPsramAllocator* HaPsramAlloc() {
     static HaPsramAllocator instance;
     return &instance;
 }
+
+// Dasselbe fuer Standard-Container, z. B. std::vector<T, HaPsramStdAllocator<T>>.
+// Ohne ihn landen kleine Vektoren (<= 4 KB, SPIRAM_MALLOC_ALWAYSINTERNAL) im
+// internen RAM - bei vielen kleinen, wachsenden Listen (Positionsverlauf)
+// genau die Zerstueckelung, die der WLAN-Treiber nicht vertraegt.
+template <typename T>
+struct HaPsramStdAllocator {
+    using value_type = T;
+    HaPsramStdAllocator() = default;
+    template <typename U> HaPsramStdAllocator(const HaPsramStdAllocator<U>&) {}
+
+    T* allocate(size_t n) {
+        void* p = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM);
+        if (!p) abort();   // wie std::allocator ohne Ausnahmen
+        return static_cast<T*>(p);
+    }
+    void deallocate(T* p, size_t) { heap_caps_free(p); }
+
+    template <typename U> bool operator==(const HaPsramStdAllocator<U>&) const { return true; }
+    template <typename U> bool operator!=(const HaPsramStdAllocator<U>&) const { return false; }
+};

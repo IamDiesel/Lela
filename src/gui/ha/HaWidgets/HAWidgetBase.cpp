@@ -287,6 +287,25 @@ String HAWidget::getMediaContentType() { return ""; } String HAWidget::getMediaC
 
 void HAWidget::updateState(String state) { this->current_state = state; }
 
+bool HAWidget::needsRefresh() {
+    const uint32_t v = sourceVersion();
+    const bool changed = v != seen_source_version;
+    seen_source_version = v;
+    return changed;
+}
+
+uint32_t HAWidget::sourceVersion() {
+    return HaWebsocketLogic_GetEntityVersion(entity_id);
+}
+
+void HAWidget::refreshFromCache() {
+    const String state = HaWebsocketLogic_GetState(entity_id);
+    // Ordner haben keinen eigenen Zustand, reichen das Update aber an ihre Kinder weiter.
+    if (state.length() > 0 || kind == HaWidgetKind::Folder) {
+        updateState(state);
+    }
+}
+
 uint32_t HAWidget::parseColor(const String& hex, uint32_t fallback) {
     if (hex.length() < 2 || hex[0] != '#') return fallback;
     char* end = nullptr;
@@ -323,6 +342,24 @@ void HAWidget::holdRemoteUpdates(uint32_t ms) {
 
 bool HAWidget::remoteUpdatesHeld() const {
     return (int32_t)(hold_remote_until - millis()) > 0;
+}
+
+void HAWidget::beginPendingFeedback(uint32_t timeoutMs) {
+    pending_feedback = true;
+    pending_from_state = current_state;
+    lv_obj_set_style_text_opa(icon_label, LV_OPA_50, 0);
+    holdRemoteUpdates(timeoutMs);
+}
+
+bool HAWidget::pendingFeedbackBlocks(const String& state) {
+    if (!pending_feedback) return false;
+    if (remoteUpdatesHeld() && state == pending_from_state) return true;
+
+    // Bestaetigt (anderer Zustand) oder Zeit abgelaufen: Zwischenstand beenden.
+    pending_feedback = false;
+    hold_remote_until = millis();
+    refresh_after_hold = false;
+    return false;
 }
 
 bool HAWidget::refreshAfterHoldDue() {
@@ -420,7 +457,16 @@ HALightWidget::HALightWidget(lv_obj_t* parent, int tab_idx, String type, String 
     updateState("unknown");
 }
 
+// Rueckmeldung nach dem Antippen (beginPendingFeedback):
+//  * Schalten: bis HA den neuen Zustand meldet, hoechstens so lange - danach
+//    gilt das Schalten als fehlgeschlagen und der alte Zustand erscheint wieder.
+//  * Eigene Tap-Aktion / Aktionstaste: der Zustand aendert sich oft gar nicht
+//    (Skript, Automation) - kurzer Zwischenstand als Quittung.
+static const uint32_t TOGGLE_CONFIRM_TIMEOUT_MS = 5000;
+static const uint32_t ACTION_FEEDBACK_MS        = 1500;
+
 void HALightWidget::updateState(String state) {
+    if (pendingFeedbackBlocks(state)) return;   // noch keine Bestaetigung
     if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) {
         return; 
     }
@@ -441,13 +487,14 @@ void HALightWidget::updateState(String state) {
 }
 
 void HALightWidget::onClick() {
-    lv_obj_set_style_text_opa(icon_label, 127, 0); 
-    
-    if (!runTapAction()) {
-        int dotIdx = entity_id.indexOf('.'); 
-        String domain = (dotIdx != -1) ? entity_id.substring(0, dotIdx) : "homeassistant";
-        HaWebsocketLogic_CallService(domain, "toggle", entity_id);
+    if (runTapAction()) {
+        beginPendingFeedback(ACTION_FEEDBACK_MS);
+        return;
     }
+    beginPendingFeedback(TOGGLE_CONFIRM_TIMEOUT_MS);
+    int dotIdx = entity_id.indexOf('.'); 
+    String domain = (dotIdx != -1) ? entity_id.substring(0, dotIdx) : "homeassistant";
+    HaWebsocketLogic_CallService(domain, "toggle", entity_id);
 }
 
 // =========================================================
@@ -460,6 +507,7 @@ HAActionWidget::HAActionWidget(lv_obj_t* parent, int tab_idx, String type, Strin
 }
 
 void HAActionWidget::updateState(String state) {
+    if (pendingFeedbackBlocks(state)) return;   // Quittung laeuft noch
     if (this->current_state == state && lv_obj_get_style_text_opa(icon_label, 0) == 255) {
         return; 
     }
@@ -472,7 +520,7 @@ void HAActionWidget::updateState(String state) {
 }
 
 void HAActionWidget::onClick() {
-    lv_obj_set_style_text_opa(icon_label, 127, 0); 
+    beginPendingFeedback(ACTION_FEEDBACK_MS);
     
     if (!runTapAction()) {
         String domain = entity_id.substring(0, entity_id.indexOf('.')); 

@@ -1,4 +1,5 @@
 #include "LVGL_Driver.h"
+#include "DebugFlags.h"
 #include <M5Unified.h>
 
 static SemaphoreHandle_t lvgl_mux = NULL;
@@ -36,7 +37,35 @@ static void pushClipped(const lv_area_t* area, int w, int h, const uint16_t* dat
     M5.Display.pushImage(area->x1, area->y1, w, h, data);
 }
 
+#if PERF_PROFILE
+// Zeiten des laufenden Bildaufbaus; ausgewertet und zurueckgesetzt in
+// disp_monitor. Eigene Messung statt des 'time'-Werts von LVGL: lv_tick
+// zaehlt die Hauptschleife weiter (lv_tick_inc), steht also waehrend eines
+// langen Bildaufbaus still.
+static uint32_t s_flushUs = 0;          // Summe Uebertragen + Drehen ins Panel
+static uint32_t s_firstFlushUs = 0;     // Beginn des ersten Streifens (0 = keiner)
+static uint32_t s_lastFlushEndUs = 0;
+
+// Nach jedem Bildaufbau (LVGL). Dauer vom ersten bis zum letzten Streifen -
+// das Zeichnen des ersten Streifens fehlt darin (~1/45 des Bildes).
+static void disp_monitor(lv_disp_drv_t * disp_drv, uint32_t time, uint32_t px) {
+    (void)time;
+    const uint32_t screenPx = (uint32_t)disp_drv->hor_res * disp_drv->ver_res;
+    if (px * 2 >= screenPx && s_firstFlushUs != 0) {
+        Serial.printf("[Perf] Bild: %lu ms, davon Flush %lu ms, %lu%% der Flaeche\n",
+                      (unsigned long)((s_lastFlushEndUs - s_firstFlushUs) / 1000),
+                      (unsigned long)(s_flushUs / 1000), (unsigned long)(px * 100 / screenPx));
+    }
+    s_flushUs = 0;
+    s_firstFlushUs = 0;
+}
+#endif
+
 static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p) {
+#if PERF_PROFILE
+    const uint32_t flushStart = micros();
+    if (s_firstFlushUs == 0) s_firstFlushUs = flushStart;
+#endif
     int w = area->x2 - area->x1 + 1;
     int h = area->y2 - area->y1 + 1;
     const uint16_t* data = (const uint16_t *)&color_p->full;
@@ -58,6 +87,10 @@ static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_colo
     }
     M5.Display.endWrite();
 
+#if PERF_PROFILE
+    s_lastFlushEndUs = micros();
+    s_flushUs += s_lastFlushEndUs - flushStart;
+#endif
     lv_disp_flush_ready(disp_drv);
 }
 
@@ -124,6 +157,9 @@ void Lvgl_Init() {
     disp_drv.ver_res = 720;
     disp_drv.flush_cb = disp_flush;
     disp_drv.draw_buf = &draw_buf;
+#if PERF_PROFILE
+    disp_drv.monitor_cb = disp_monitor;
+#endif
     lv_disp_drv_register(&disp_drv);
 
     static lv_indev_drv_t indev_drv;

@@ -68,6 +68,7 @@ void ViewDashboard::btn_ha_event_cb(lv_event_t * e) {
     }
     
     playToneI2S(800, 100, true);
+    Serial.printf("[HA-Start] HA-App angetippt: %lu ms\n", (unsigned long)millis());
     
     lv_obj_t* btn = lv_event_get_target(e);
 

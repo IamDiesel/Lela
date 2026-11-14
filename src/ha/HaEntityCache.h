@@ -26,13 +26,37 @@
 // sdio_rx_get_buffer.
 //
 // Nicht platzierte Entitaeten (Suche, Hinzufuegen) liegen im HaEntityCatalog.
+//
+// Letzter Stand (schneller Start der HA-App): Beim Verlassen der App bleiben
+// die Abbilder erhalten (als "nicht live" markiert) und werden im Flash
+// gesichert (/ha_states.json, nur platzierte Entitaeten, nur bei Aenderung).
+// Beim Booten laedt der Preload-Task sie wieder. Die HA-App zeichnet dadurch
+// sofort mit den letzten bekannten Zustaenden; die Live-Daten uebermalen
+// danach nur, was sich geaendert hat - statt eines zweiten kompletten
+// Zeichendurchgangs. Bis eine Entitaet wieder live ist, liefert IsLive()
+// false: Bedienungen, die auf dem Wert aufbauen (z. B. Thermostat +/-),
+// warten darauf.
 // ==============================================================================
 class HaEntityCache {
 public:
     static volatile uint32_t cacheVersion;
 
     static void Init();
-    static void ClearAll();
+
+    // --- Letzter Stand (siehe oben) ---
+    // Verbindung endet: alle Abbilder als "nicht live" markieren (bleiben sichtbar).
+    static void MarkAllStale();
+    // Im Flash sichern (nur bei Aenderung seit dem letzten Sichern/Laden,
+    // hoechstens alle 10 min).
+    // Nicht aus dem loopTask: Flash-Schreiben blockiert einige 10 ms.
+    static void SaveSnapshot();
+    // Beim Booten (Preload-Task). Ueberschreibt keine Live-Abbilder.
+    static void LoadSnapshot();
+    // Abbild existiert und stammt aus der laufenden Verbindung.
+    static bool IsLive(String entity_id);
+    // Abbild verwerfen, falls es nur aus dem letzten Stand stammt (Entitaet
+    // gibt es in HA nicht mehr - das erste Abo-Ereignis enthielt sie nicht).
+    static void DropIfStale(const char* entity_id);
 
     // Baut die Liste der zu abonnierenden Entitaeten aus HaConfigLogic::dashboards
     // neu auf (Widgets, Ordnerkinder, Bedingungs-Entitaeten).
@@ -72,6 +96,15 @@ public:
     static std::vector<String> GetFanSpeedList(String entity_id);   // Sauger: waehlbare Saugstufen
     static int GetPosition(String entity_id);
 
+    // Koordinaten (Attribute latitude/longitude/gps_accuracy) - device_tracker,
+    // person, zone und Sensoren mit Position. false, wenn keine vorliegen.
+    static bool GetLocation(String entity_id, double& lat, double& lon, float& accuracyM);
+    // Radius einer Zone in Metern (Attribut radius), 0 wenn unbekannt.
+    static float GetZoneRadius(String entity_id);
+    // Letzte Aktualisierung (Zustand oder Attribut, z. B. Position) als
+    // Unix-Zeit; 0 wenn unbekannt.
+    static uint32_t GetLastUpdated(String entity_id);
+
     static float GetCurrentTemperature(String entity_id);
     static float GetTargetTemperature(String entity_id);
 
@@ -88,16 +121,22 @@ public:
     static float GetStep(String entity_id);
 
     static uint32_t GetCacheVersion();
+    // Aenderungszaehler einer Entitaet (0 = unbekannt). Aendert sich bei jeder
+    // Aenderung genau dieser Entitaet (Zustand oder Attribut).
+    static uint32_t GetEntityVersion(String entity_id);
 
 private:
     static SemaphoreHandle_t mutex;
     static std::vector<String> trackedEntities;
     static std::map<String, JsonDocument> entities;
+    static uint32_t savedVersion;   // cacheVersion beim letzten Sichern/Laden
 
     // Abbild einer Entitaet; Null-Objekt, wenn unbekannt. Nur unter mutex.
     static JsonObjectConst findLocked(const String& entity_id);
     static JsonDocument& snapshotLocked(const char* entity_id);
     static void touch();
+    // touch() und Aenderungszaehler der Entitaet setzen. Nur unter mutex.
+    static void touchEntity(JsonDocument& snap);
 
     // Liest unter dem Mutex aus dem Abbild: fn(Zustandsobjekt, Attribute).
     // Unbekannte Entitaet oder kein Mutex -> fallback.

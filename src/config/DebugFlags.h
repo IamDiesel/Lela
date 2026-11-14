@@ -70,6 +70,24 @@
 #define HEAP_PROFILE 0
 
 // ------------------------------------------------------------------------------
+// MAP_PROFILE - Messlauf des Kartenkachel-Dienstes (Schritt 0 Karten-Kachel)
+//
+// 60 s nachdem WLAN und Uhrzeit stehen (Zeit, um HA-Ansicht, Video-Overlay
+// und Ton fuer die Messung unter Last einzuschalten), fordert der Dienst die Kacheln
+// eines Ausschnitts von 1,5 x 1,5 km an (z15 und z16, ~30 Kacheln) - bewusst
+// an einem oeffentlichen Ort (Brandenburger Tor), nicht am Wohnort.
+// Ausgaben:
+//   [Map]     je Kachel: Quelle (Netz/Flash), Groesse, Zeit; neue Verbindung
+//             mit [Heap]-Zeile direkt nach dem TLS-Handshake
+//   [MapProf] Start (mit Projektions-Pruefwert) und Bericht am Ende
+// Erwartung beim ersten Lauf: alle Kacheln aus dem Netz, eine Verbindung.
+// Nach einem Neustart: alle aus dem Flash, keine Verbindung.
+//
+// Fuer den Dauerbetrieb AUS (0): Ausgaben ueber USB-CDC, siehe VIDEO_PROFILE.
+// ------------------------------------------------------------------------------
+#define MAP_PROFILE 0
+
+// ------------------------------------------------------------------------------
 // VIDEO_USE_PPA - Hardware-Skalierung und -Drehung fuer den Vollbildmodus
 //
 // Das Tab5-Panel ist physisch 720x1280 HOCHKANT (M5GFX: memory_width = 720,
@@ -140,6 +158,21 @@
 // bei 297 KB lief das System tagelang. 220 KB liegen mit Sicherheitsabstand
 // oberhalb der Grenze.
 #define VIDEO_SRAM_RESERVE_KB 220
+
+// ------------------------------------------------------------------------------
+// PERF_PROFILE - Messzeilen [Perf] fuer grosse Bildaufbauten
+//
+// Nach jedem Neuzeichnen von mindestens der halben Bildschirmflaeche (Wechsel
+// des Bildschirms, Vollbildkarte) eine Zeile: Gesamtzeit und davon die Zeit
+// fuer das Uebertragen/Drehen ins Panel (disp_flush). Daraus folgt, ob sich
+// eine Hardware-Drehung (PPA) lohnen wuerde - siehe Panel-Patch unten.
+// Kleine Aenderungen (Uhr, Zustaende) erzeugen keine Zeile.
+//
+// Fuer den Dauerbetrieb AUS (USB-Ausgaben, siehe VIDEO_PROFILE). Messrunde
+// Startzeit 2026-11 abgeschlossen. Die [Boot]- und [HA-Start]-Zeilen sind
+// davon unabhaengig.
+// ------------------------------------------------------------------------------
+#define PERF_PROFILE 0
 
 // ==============================================================================
 // NICHT per Schalter: Panel-Patch

@@ -1,11 +1,13 @@
 #pragma once
 #include <lvgl.h>
 
-// Die Zustaende unserer State-Machine
+// Die Zustaende unserer State-Machine.
+// Der Start wartet nur noch auf das WLAN: Home Assistant verbindet sich erst
+// beim Oeffnen der HA-App (GuiManager::switchScreen) - ein frueherer Zustand
+// "warte auf HA" lief deshalb immer in seine 2,5-s-Wartezeit.
 enum BootState {
     BOOT_STATE_INIT = 0,
     BOOT_STATE_WIFI,
-    BOOT_STATE_HA,
     BOOT_STATE_DONE,
     BOOT_STATE_TIMEOUT
 };

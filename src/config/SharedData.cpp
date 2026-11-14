@@ -5,6 +5,7 @@
 #include "AudioStreamLogic.h" 
 #include <WiFi.h>
 #include <math.h>
+#include "WifiNetworks.h"
 
 SemaphoreHandle_t bleMutex = NULL;
 volatile bool isStreamActive = false; 
@@ -25,6 +26,11 @@ String apPassword = "";
 
 String wifiSsid = "";
 String wifiPass = "";
+bool   staticIpEnabled = false;
+String staticIp = "";
+String staticGateway = "";
+String staticSubnet = "";
+String staticDns = "";
 String mqttBroker = ""; 
 int mqttPort = SECRET_MQTT_PORT;
 String mqttUser = "";
@@ -193,6 +199,13 @@ void Data_Init() {
     preferences.begin("catmat", false);
     wifiSsid = preferences.getString("wifiSsid", "");
     wifiPass = preferences.getString("wifiPass", "");
+
+    // Feste IP (isKey: fehlende Schluessel nicht als Fehler loggen lassen)
+    staticIpEnabled = preferences.getBool("ipFix", false);
+    staticIp      = preferences.isKey("ipAddr") ? preferences.getString("ipAddr", "") : "";
+    staticGateway = preferences.isKey("ipGw")   ? preferences.getString("ipGw", "")   : "";
+    staticSubnet  = preferences.isKey("ipMask") ? preferences.getString("ipMask", "") : "";
+    staticDns     = preferences.isKey("ipDns")  ? preferences.getString("ipDns", "")  : "";
     
     mqttBroker = preferences.getString("mqIP", SECRET_HA_IP); 
     mqttBroker.trim();
@@ -409,7 +422,14 @@ void playCatAlarmI2S() { if(audioQueue != NULL) { AudioMsg msg; msg.soundType = 
 void fullReset() { alarmActive = false; disconnectAlarmActive = false; catAlarmAcked = false; isArmed = false; cooldownUntil = millis() + 5000; topbarStatusMsg = ""; }
 void wakeDisplay() { requestWake = true; M5.Display.wakeup(); }
 void sleepDisplay() { requestSleep = true; M5.Display.sleep(); }
-void factoryReset() { preferences.begin("catmat", false); preferences.clear(); preferences.end(); delay(1000); ESP.restart(); }
+void factoryReset() {
+    preferences.begin("catmat", false);
+    preferences.clear();
+    preferences.end();
+    WifiNetworks_Clear();   // gemerkte WLAN-Netze samt Passwoertern
+    delay(1000);
+    ESP.restart();
+}
 
 namespace SharedData {
     void Save() {

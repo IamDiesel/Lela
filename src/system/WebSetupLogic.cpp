@@ -6,6 +6,7 @@
 #include "HaConfigLogic.h"
 #include "HaWebsocketLogic.h"
 #include <M5Unified.h> // NEU: Für den Display-Zugriff
+#include "WifiNetworks.h"
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
 extern void lvgl_port_unlock(void);
@@ -19,6 +20,33 @@ static bool   haImportOk      = false;
 static bool   haImportTooBig  = false;
 static String haImportMessage = "";
 static bool serverRunning = false; // Speichert den Status des Webservers
+
+// Wert fuer ein HTML-Attribut (value='...', data-...='...'). Ohne das
+// zerbrach z. B. ein Passwort mit ' oder < das Formular.
+static String htmlEscape(const String& in) {
+    String out;
+    out.reserve(in.length() + 8);
+    for (size_t i = 0; i < in.length(); i++) {
+        const char c = in[i];
+        switch (c) {
+            case '&':  out += "&amp;";  break;
+            case '<':  out += "&lt;";   break;
+            case '>':  out += "&gt;";   break;
+            case '"':  out += "&quot;"; break;
+            case '\'': out += "&#39;";  break;
+            default:   out += c;        break;
+        }
+    }
+    return out;
+}
+
+// Feld fuer die feste IP: gespeicherter Wert, sonst (falls verbunden) der
+// aktuelle - dann genuegt meist das Haekchen.
+static String ipFieldValue(const String& saved, IPAddress current) {
+    if (saved.length() > 0) return saved;
+    if (WiFi.status() == WL_CONNECTED && current != IPAddress((uint32_t)0)) return current.toString();
+    return "";
+}
 
 void WebSetupLogic_Init() {
     // --- HTML AUSLIEFERN (Setup) ---
@@ -36,7 +64,21 @@ void WebSetupLogic_Init() {
         html += ".btn-export { display:block; text-align:center; padding:15px; background-color:#2980B9; color:white; text-decoration:none; border-radius:6px; margin-bottom:15px; font-weight:bold; }";
         html += ".btn-import { background-color:#8E44AD !important; margin-top:10px !important; }";
         html += ".import-box { background-color:#222; padding:15px; border-radius:6px; margin-bottom: 30px; }";
-        html += "</style></head><body>";
+        html += "select { width: 100%; padding: 12px; border: none; border-radius: 6px; background-color: #2a2a2a; color: #fff; font-size: 16px; }";
+        html += ".chk { display:flex; align-items:center; gap:8px; color:#ddd; margin-top:10px; }";
+        html += ".chk input { width:20px; height:20px; }";
+        html += ".btn-small { margin-top:8px; padding:8px 12px; border:none; border-radius:6px; background:#555; color:#fff; font-size:14px; cursor:pointer; }";
+        html += ".hint { font-size:13px; color:#888; margin-top:6px; }";
+        html += "</style>";
+        // Kleine Helfer (kein externes Skript - das Portal laeuft auch ohne Internet).
+        html += "<script>";
+        html += "function pickNet(s){var o=s.options[s.selectedIndex];if(!o.dataset.s)return;";
+        html += "document.getElementById('ssid').value=o.dataset.s;document.getElementById('pw').value=o.dataset.p;}";
+        html += "function showPw(c,id){document.getElementById(id).type=c.checked?'text':'password';}";
+        html += "function forgetNet(){var s=document.getElementById('known');var o=s.options[s.selectedIndex];if(!o.dataset.s)return;";
+        html += "document.getElementById('forgetSsid').value=o.dataset.s;document.getElementById('forgetForm').submit();}";
+        html += "function ipToggle(){document.getElementById('ipBox').style.display=document.getElementById('ipFix').checked?'block':'none';}";
+        html += "</script></head><body>";
         
         html += "<h1>Lela OS Setup</h1>";
 
@@ -51,28 +93,61 @@ void WebSetupLogic_Init() {
         html += "<input type='submit' value='Layout wiederherstellen' class='btn-import'>";
         html += "</form></div>";
 
+        // Eigenes Formular zum Vergessen eines Netzes (Formulare duerfen nicht
+        // verschachtelt werden; forgetNet() fuellt und sendet es).
+        html += "<form id='forgetForm' method='POST' action='/wifi_forget'><input type='hidden' name='ssid' id='forgetSsid'></form>";
+
         html += "<form action='/save' method='POST'>";
         html += "<h2>WLAN Einstellungen</h2>";
-        html += "<label>SSID</label><input type='text' name='wifiSsid' value='" + wifiSsid + "'>";
-        html += "<label>Passwort</label><input type='password' name='wifiPass' value='" + wifiPass + "'>";
+
+        const std::vector<WifiNetwork> known = WifiNetworks_List();
+        if (!known.empty()) {
+            html += "<label>Gespeicherte Netze</label><select id='known' onchange='pickNet(this)'>";
+            html += "<option value=''>&ndash; neues Netz eingeben &ndash;</option>";
+            for (size_t i = 0; i < known.size(); i++) {
+                const String s = htmlEscape(known[i].ssid);
+                html += "<option value='" + String((unsigned)i) + "' data-s='" + s + "' data-p='" + htmlEscape(known[i].pass) + "'";
+                if (known[i].ssid == wifiSsid) html += " selected";
+                html += ">" + s + "</option>";
+            }
+            html += "</select>";
+            html += "<button type='button' class='btn-small' onclick='forgetNet()'>Ausgew&auml;hltes Netz vergessen</button>";
+            html += "<p class='hint'>Netze werden nach einer erfolgreichen Verbindung gemerkt (mit Passwort).</p>";
+        }
+
+        html += "<label>SSID</label><input type='text' id='ssid' name='wifiSsid' value='" + htmlEscape(wifiSsid) + "'>";
+        html += "<label>Passwort</label><input type='password' id='pw' name='wifiPass' value='" + htmlEscape(wifiPass) + "'>";
+        html += "<label class='chk'><input type='checkbox' onclick=\"showPw(this,'pw')\"> Passwort anzeigen</label>";
+
+        html += "<h2>Netzwerk (IP-Adresse)</h2>";
+        html += "<label class='chk'><input type='checkbox' id='ipFix' name='ipFix' value='1' onclick='ipToggle()'";
+        if (staticIpEnabled) html += " checked";
+        html += "> Feste IP-Adresse statt DHCP</label>";
+        html += "<p class='hint'>Startet ca. 2 s schneller. Die Adresse vorher im Router fest f&uuml;r dieses Ger&auml;t reservieren.</p>";
+        html += "<div id='ipBox' style='display:" + String(staticIpEnabled ? "block" : "none") + ";'>";
+        html += "<label>IP-Adresse</label><input type='text' name='ipAddr' placeholder='z. B. 192.168.2.125' value='" + htmlEscape(ipFieldValue(staticIp, WiFi.localIP())) + "'>";
+        html += "<label>Gateway (Router)</label><input type='text' name='ipGw' placeholder='z. B. 192.168.2.1' value='" + htmlEscape(ipFieldValue(staticGateway, WiFi.gatewayIP())) + "'>";
+        html += "<label>Subnetzmaske</label><input type='text' name='ipMask' placeholder='255.255.255.0' value='" + htmlEscape(ipFieldValue(staticSubnet, WiFi.subnetMask())) + "'>";
+        html += "<label>DNS (leer = Gateway)</label><input type='text' name='ipDns' value='" + htmlEscape(staticDns) + "'>";
+        html += "</div>";
 
         html += "<h2>Bluetooth Geräte</h2>";
-        html += "<label>Matte MAC (z.B. AA:BB:CC...)</label><input type='text' name='macM' value='" + savedMatMac + "'>";
-        html += "<label>Kippy MAC</label><input type='text' name='macK' value='" + savedKippyMac + "'>";
+        html += "<label>Matte MAC (z.B. AA:BB:CC...)</label><input type='text' name='macM' value='" + htmlEscape(savedMatMac) + "'>";
+        html += "<label>Kippy MAC</label><input type='text' name='macK' value='" + htmlEscape(savedKippyMac) + "'>";
 
         html += "<h2>Streams (Video & Audio)</h2>";
-        html += "<label>Video Stream URL (oder HA Pfad)</label><input type='text' name='camEntity' value='" + camEntity + "'>";
-        html += "<label>Audio Stream URL</label><input type='text' name='babyUrl' value='" + babyStreamUrl + "'>";
+        html += "<label>Video Stream URL (oder HA Pfad)</label><input type='text' name='camEntity' value='" + htmlEscape(camEntity) + "'>";
+        html += "<label>Audio Stream URL</label><input type='text' name='babyUrl' value='" + htmlEscape(babyStreamUrl) + "'>";
 
         html += "<h2>Home Assistant (Optional)</h2>";
-        html += "<label>HA IP</label><input type='text' name='haIP' value='" + haIP + "'>";
+        html += "<label>HA IP</label><input type='text' name='haIP' value='" + htmlEscape(haIP) + "'>";
         html += "<label>HA Port</label><input type='number' name='haPort' value='" + String(haPort) + "'>";
 
         html += "<h2>MQTT Broker</h2>";
-        html += "<label>Broker IP</label><input type='text' name='mqIP' value='" + mqttBroker + "'>";
+        html += "<label>Broker IP</label><input type='text' name='mqIP' value='" + htmlEscape(mqttBroker) + "'>";
         html += "<label>Port</label><input type='number' name='mqPort' value='" + String(mqttPort) + "'>";
-        html += "<label>Benutzer</label><input type='text' name='mqUser' value='" + mqttUser + "'>";
-        html += "<label>Passwort</label><input type='password' name='mqPass' value='" + mqttPass + "'>";
+        html += "<label>Benutzer</label><input type='text' name='mqUser' value='" + htmlEscape(mqttUser) + "'>";
+        html += "<label>Passwort</label><input type='password' name='mqPass' value='" + htmlEscape(mqttPass) + "'>";
 
         html += "<input type='submit' value='Speichern & Neustart'>";
         html += "</form></body></html>";
@@ -273,13 +348,46 @@ void WebSetupLogic_Init() {
         if(server.hasArg("mqPort")) { mqttPort = server.arg("mqPort").toInt(); preferences.putInt("mqPort", mqttPort); }
         if(server.hasArg("mqUser")) { mqttUser = server.arg("mqUser"); preferences.putString("mqUser", mqttUser); }
         if(server.hasArg("mqPass")) { mqttPass = server.arg("mqPass"); preferences.putString("mqPass", mqttPass); }
+
+        // Feste IP: Haekchen fehlt im Formular = aus. Nur gueltige Angaben
+        // einschalten - sonst bliebe das Geraet nach dem Neustart ohne Netz.
+        String ipNote = "";
+        if (server.hasArg("ipAddr")) {
+            staticIp = server.arg("ipAddr");           staticIp.trim();
+            staticGateway = server.arg("ipGw");        staticGateway.trim();
+            staticSubnet = server.arg("ipMask");       staticSubnet.trim();
+            staticDns = server.arg("ipDns");           staticDns.trim();
+            staticIpEnabled = server.hasArg("ipFix");
+            if (staticIpEnabled) {
+                IPAddress ip, gw, mask, dns;
+                const bool ok = ip.fromString(staticIp) && gw.fromString(staticGateway) &&
+                                mask.fromString(staticSubnet) && mask[0] == 255 &&
+                                (staticDns.length() == 0 || dns.fromString(staticDns));
+                if (!ok) {
+                    staticIpEnabled = false;
+                    ipNote = "<p style='color:#E67E22;'>Feste IP unvollst&auml;ndig oder ung&uuml;ltig &ndash; es bleibt bei DHCP.</p>";
+                }
+            }
+            preferences.putBool("ipFix", staticIpEnabled);
+            preferences.putString("ipAddr", staticIp);
+            preferences.putString("ipGw", staticGateway);
+            preferences.putString("ipMask", staticSubnet);
+            preferences.putString("ipDns", staticDns);
+        }
         preferences.end();
 
-        String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:sans-serif; background:#121212; color:#00A0FF; text-align:center; padding-top:50px;}</style></head><body><h2>Einstellungen gespeichert!</h2><p style='color:#fff;'>Das Lela OS startet in wenigen Sekunden neu...</p></body></html>";
+        String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{font-family:sans-serif; background:#121212; color:#00A0FF; text-align:center; padding-top:50px;}</style></head><body><h2>Einstellungen gespeichert!</h2>" + ipNote + "<p style='color:#fff;'>Das Lela OS startet in wenigen Sekunden neu...</p></body></html>";
         server.send(200, "text/html", html);
 
         delay(2000);
         ESP.restart();
+    });
+
+    // --- GEMERKTES WLAN VERGESSEN (Auswahlliste im Setup) ---
+    server.on("/wifi_forget", HTTP_POST, []() {
+        if (server.hasArg("ssid")) WifiNetworks_Forget(server.arg("ssid"));
+        server.sendHeader("Location", "/", true);
+        server.send(303, "text/plain", "");
     });
 
     server.onNotFound([]() {

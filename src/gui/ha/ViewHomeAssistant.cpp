@@ -16,8 +16,13 @@
 #include "HaDialogTab.h"
 #include "HaEditToolbar.h"
 #include "HaDialogFolder.h" 
+#include "HaDialogMap.h"
+#include "HaTrackHistory.h"
 
 #include <algorithm> 
+
+extern bool lvgl_port_lock(uint32_t timeout_ms);
+extern void lvgl_port_unlock(void);
 
 lv_obj_t* ViewHomeAssistant::screen = nullptr;
 lv_obj_t* ViewHomeAssistant::tabview = nullptr;
@@ -27,6 +32,18 @@ lv_obj_t* ViewHomeAssistant::trash_btn = nullptr;
 
 std::vector<HAWidget*> ViewHomeAssistant::widgets;
 std::vector<lv_obj_t*> ViewHomeAssistant::tab_pages; 
+std::vector<size_t> ViewHomeAssistant::tab_progress;
+
+// Hintergrund-Aufbau der uebrigen Tabs (siehe Header):
+// Zeit je update()-Durchlauf - die Oberflaeche bleibt bedienbar.
+static const uint32_t BACKGROUND_BUILD_BUDGET_MS = 20;
+// Erst nach so vielen update()-Durchlaeufen beginnen: bis dahin hat LVGL das
+// erste Bild des aktiven Tabs gezeichnet (ein lv_timer_handler zeichnet alle
+// ungueltigen Bereiche in einem Zug).
+static const uint32_t BACKGROUND_BUILD_START_UPDATES = 2;
+static uint32_t s_updatesSinceBuild = 0;
+static uint32_t s_backgroundStartMs = 0;
+static size_t   s_backgroundWidgets = 0;
 
 volatile bool ViewHomeAssistant::pendingHaReload = false;
 
@@ -49,22 +66,101 @@ void ViewHomeAssistant::helper_loadWidgets() {
     HaWebsocketLogic_UpdateTrackedEntities();
     
     tab_pages.clear();
+    tab_progress.assign(HaConfigLogic::dashboards.size(), 0);
     
+    // Alle Tabs (Reiter) sofort, Widgets zunaechst nur im aktiven Tab.
     for (size_t i = 0; i < HaConfigLogic::dashboards.size(); i++) {
         lv_obj_t * tab = lv_tabview_add_tab(tabview, HaConfigLogic::dashboards[i].name.c_str());
         lv_obj_set_scroll_dir(tab, LV_DIR_VER);
         tab_pages.push_back(tab); 
-        
-        for (const auto& wDef : HaConfigLogic::dashboards[i].widgets) {
-            HAWidget* new_widget = HaWidgetFactory::createWidget(tab, i, wDef);
-            if (new_widget) {
-                widgets.push_back(new_widget);
-            }
-        }
     }
     
     lv_tabview_add_tab(tabview, "+");
     lv_obj_add_event_cb(tabview, tabview_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    if (currentActiveTab >= HaConfigLogic::dashboards.size()) currentActiveTab = 0;
+    const uint32_t t0 = millis();
+    ensureTabBuilt(currentActiveTab);
+    Serial.printf("[HA-Start] Aktiver Tab: %u Widgets in %lu ms angelegt.\n",
+                  (unsigned)widgets.size(), (unsigned long)(millis() - t0));
+
+    s_updatesSinceBuild = 0;
+    s_backgroundStartMs = 0;
+    s_backgroundWidgets = 0;
+}
+
+bool ViewHomeAssistant::buildTabWidgets(size_t tab, uint32_t deadlineMs) {
+    if (tab >= tab_progress.size() || tab >= tab_pages.size()) return true;
+    const auto& defs = HaConfigLogic::dashboards[tab].widgets;
+
+    while (tab_progress[tab] < defs.size()) {
+        HAWidget* w = HaWidgetFactory::createWidget(tab_pages[tab], (int)tab, defs[tab_progress[tab]]);
+        tab_progress[tab] = tab_progress[tab] + 1;
+        if (w) {
+            widgets.push_back(w);
+            // Sofort mit dem bekannten Stand fuellen (der allgemeine Abgleich
+            // in update() laeuft nur bei Aenderungen) und diesen Stand merken.
+            w->needsRefresh();
+            w->refreshFromCache();
+        }
+        if (deadlineMs != 0 && (int32_t)(millis() - deadlineMs) >= 0) break;
+    }
+    return tab_progress[tab] >= defs.size();
+}
+
+void ViewHomeAssistant::ensureTabBuilt(size_t tab) {
+    buildTabWidgets(tab, 0);
+}
+
+void ViewHomeAssistant::ensureAllTabsBuilt() {
+    for (size_t i = 0; i < tab_progress.size(); i++) buildTabWidgets(i, 0);
+}
+
+void ViewHomeAssistant::buildPendingTabs() {
+    if (s_updatesSinceBuild < BACKGROUND_BUILD_START_UPDATES) {
+        s_updatesSinceBuild = s_updatesSinceBuild + 1;
+        return;
+    }
+
+    // Reihenfolge: Nachbarn des angezeigten Tabs zuerst (rechts, links, dann
+    // weiter aussen) - dorthin wischt man als Naechstes. Wechselt der Tab
+    // waehrenddessen, richtet sich die Reihenfolge nach dem neuen.
+    const size_t count = tab_progress.size();
+    const size_t active = (tabview && lv_tabview_get_tab_act(tabview) < count) ? lv_tabview_get_tab_act(tabview) : 0;
+    size_t tab = count;
+    for (size_t dist = 0; dist < count && tab == count; dist++) {
+        const size_t right = active + dist;
+        if (right < count && tab_progress[right] < HaConfigLogic::dashboards[right].widgets.size()) { tab = right; break; }
+        if (dist > 0 && dist <= active) {
+            const size_t left = active - dist;
+            if (tab_progress[left] < HaConfigLogic::dashboards[left].widgets.size()) { tab = left; break; }
+        }
+    }
+    if (tab >= count) {
+        // Alles angelegt: der Positionsverlauf der Karte darf jetzt laden.
+        HaTrackHistory::SetHold(false);
+        return;
+    }
+
+    if (s_backgroundStartMs == 0) s_backgroundStartMs = millis();
+    const size_t before = widgets.size();
+
+    // Unter der LVGL-Sperre: der Video-Task fasst sein Bildobjekt ebenfalls nur
+    // unter ihr an. Rekursiv - Aufrufe aus Ereignissen halten sie schon.
+    if (!lvgl_port_lock(0)) return;   // gerade belegt: naechster Durchlauf
+    buildTabWidgets(tab, millis() + BACKGROUND_BUILD_BUDGET_MS);
+    lvgl_port_unlock();
+    s_backgroundWidgets += widgets.size() - before;
+
+    // Fertig? Einmal melden.
+    bool all = true;
+    for (size_t i = 0; i < tab_progress.size(); i++) {
+        if (tab_progress[i] < HaConfigLogic::dashboards[i].widgets.size()) { all = false; break; }
+    }
+    if (all) {
+        Serial.printf("[HA-Start] Uebrige Tabs: %u Widgets im Hintergrund angelegt (%lu ms).\n",
+                      (unsigned)s_backgroundWidgets, (unsigned long)(millis() - s_backgroundStartMs));
+    }
 }
 
 void ViewHomeAssistant::captureActiveTabLayout() {
@@ -77,6 +173,10 @@ void ViewHomeAssistant::captureActiveTabLayout() {
         act_tab = 0;
     }
     currentActiveTab = act_tab;
+
+    // Noch nicht angelegte Widgets fehlten sonst im uebernommenen Layout -
+    // der Tab verloere beim Speichern seine Widgets.
+    ensureTabBuilt(act_tab);
     
     // Reihenfolge = Zeichenreihenfolge in LVGL (move_foreground beim Ziehen).
     std::stable_sort(widgets.begin(), widgets.end(), [](HAWidget* a, HAWidget* b) {
@@ -151,6 +251,8 @@ void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
     if (tab_id == HaConfigLogic::dashboards.size()) {
         HaDialogTab::showAddTabDialog();
     } else {
+        // Vor dem Hintergrund-Aufbau angewaehlt: jetzt vollstaendig anlegen.
+        ensureTabBuilt(tab_id);
         if (currentActiveTab != tab_id) {
             currentActiveTab = tab_id;
         }
@@ -159,6 +261,8 @@ void ViewHomeAssistant::tabview_event_cb(lv_event_t * e) {
 
 void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
     playToneI2S(800, 100, true); 
+    // Bearbeiten nur mit allen Widgets (Ziehen zwischen Tabs, Speichern).
+    ensureAllTabsBuilt();
     HAWidget::editModeActive = !HAWidget::editModeActive;
     HAWidget::applyEditModeScrollChain();
     
@@ -174,6 +278,10 @@ void ViewHomeAssistant::btn_edit_event_cb(lv_event_t * e) {
 }
 
 lv_obj_t* ViewHomeAssistant::build() {
+    const uint32_t buildStart = millis();
+    // Waehrend des Aufbaus keinen Positionsverlauf laden (grosse Antworten
+    // kosten Rechenzeit auf demselben Kern). Freigabe in buildPendingTabs().
+    HaTrackHistory::SetHold(true);
     trash_btn = nullptr; 
 
     HaDialogEdit::resetState(); 
@@ -255,6 +363,8 @@ lv_obj_t* ViewHomeAssistant::build() {
         lv_tabview_set_act(tabview, currentActiveTab, LV_ANIM_OFF);
     }
 
+    Serial.printf("[HA-Start] Bildschirm aufgebaut in %lu ms (bei %lu ms).\n",
+                  (unsigned long)(millis() - buildStart), (unsigned long)millis());
     return screen;
 }
 
@@ -307,6 +417,12 @@ void ViewHomeAssistant::update() {
     
     ViewTopbar_Update();
 
+    // Uebrige Tabs stueckweise anlegen (schneller Start, siehe Header).
+    buildPendingTabs();
+
+    // Vollbildkarte: Positionen, Wege und Kacheln nachziehen.
+    HaDialogMap::update();
+
     static uint32_t lastWidgetUpdate = 0;
     static uint32_t localCacheVersion = 0;
     uint32_t currentVersion = HaEntityCache::GetCacheVersion();
@@ -320,13 +436,17 @@ void ViewHomeAssistant::update() {
         localCacheVersion = currentVersion;
         lastWidgetUpdate = millis();
         
+        // Nur Widgets, deren Entitaeten sich geaendert haben. needsRefresh()
+        // immer aufrufen (merkt sich den Stand), auch beim Erzwingen.
         for (HAWidget* w : widgets) {
-            String state = HaWebsocketLogic_GetState(w->getEntityId());
-            // Ordner haben keinen eigenen Zustand, reichen das Update aber an ihre Kinder weiter.
-            if (state.length() > 0 || w->getKind() == HaWidgetKind::Folder) {
-                w->updateState(state);
-            }
+            const bool changed = w->needsRefresh();
+            if (force || changed) w->refreshFromCache();
         }
+    }
+
+    // Widgets mit eigenem Takt (Karte: nachgeladene Kacheln).
+    for (HAWidget* w : widgets) {
+        w->tick();
     }
 
     // Nach einer Bedienung waren Serverwerte kurz gesperrt. Ist die Sperre
@@ -334,7 +454,8 @@ void ViewHomeAssistant::update() {
     static uint32_t lastHoldCheck = 0;
     if (millis() - lastHoldCheck > 250) {
         lastHoldCheck = millis();
-        for (HAWidget* w : widgets) {
+        // Alle lebenden Widgets - auch Ordnerkinder (Licht im Ordner).
+        for (HAWidget* w : HAWidget::all_active_widgets) {
             if (w->refreshAfterHoldDue()) {
                 w->updateState(HaWebsocketLogic_GetState(w->getEntityId()));
             }
@@ -343,6 +464,7 @@ void ViewHomeAssistant::update() {
 }
 
 void ViewHomeAssistant::clearWidgets() {
+    tab_progress.clear();
     for (HAWidget* w : widgets) {
         if (w->container && lv_obj_is_valid(w->container)) {
             lv_obj_remove_event_cb(w->container, nullptr); 

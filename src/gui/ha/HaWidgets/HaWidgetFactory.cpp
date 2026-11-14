@@ -94,6 +94,17 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str()
         );
     }
+    else if (kind == HaWidgetKind::Map) {
+        new_widget = new HAMapWidget(
+            parent, tab_idx, wDef.type, wDef.entity_id, 
+            wDef.x, wDef.y, wDef.w, wDef.h, 
+            wDef.name.c_str(), wDef.mdi_icon.c_str(), wDef.color_on.c_str(), wDef.color_off.c_str(),
+            wDef.map_entities, wDef.map_max_zoom, wDef.map_hours
+        );
+        HAMapWidget* map = static_cast<HAMapWidget*>(new_widget);
+        map->setMapStaleMinutes(wDef.map_stale_min);
+        if (wDef.map_fixed) map->setFixedView(wDef.map_lat, wDef.map_lon, wDef.map_view_zoom);
+    }
     else if (kind == HaWidgetKind::Number) {
         new_widget = new HANumberWidget(
             parent, tab_idx, wDef.type, wDef.entity_id, 
@@ -182,6 +193,18 @@ HAWidgetDef HaWidgetFactory::createDefFromWidget(HAWidget* w) {
 
     if (w->getKind() == HaWidgetKind::Folder) {
         def.children = ((HAFolderWidget*)w)->getChildrenDefs();
+    }
+
+    if (w->getKind() == HaWidgetKind::Map) {
+        const HAMapWidget* map = static_cast<const HAMapWidget*>(w);
+        def.map_entities = map->getMapEntities();
+        def.map_max_zoom = map->getMapMaxZoom();
+        def.map_hours = map->getMapHours();
+        def.map_stale_min = map->getMapStaleMinutes();
+        def.map_fixed = map->hasFixedView();
+        def.map_lat = map->getFixedLat();
+        def.map_lon = map->getFixedLon();
+        def.map_view_zoom = map->getFixedZoom();
     }
 
     return def;

@@ -6,6 +6,7 @@
 #include <esp_heap_caps.h>
 #include "HaPsramAllocator.h"
 #include <functional>
+#include "MapTileConfig.h"
 
 
 void HaLovelaceParser::parseDashboardList(const String& payload) {
@@ -62,6 +63,12 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
     int margin = 20, cols = 6, cardW = 160, cardH = 160, i = 0;
     std::vector<String> foundEntities; 
 
+    // Karten (type: map) werden gesammelt und am Ende UNTER den uebrigen
+    // Widgets abgelegt: das Raster oben kennt nur mehrspaltige, keine
+    // mehrzeiligen Widgets - eine 2 Zeilen hohe Karte wuerde sonst die
+    // naechste Zeile ueberdecken.
+    std::vector<HAWidgetDef> mapWidgets;
+
     JsonDocument filter(HaPsramAlloc());
     filter["result"]["views"][0]["cards"] = true; 
     filter["result"]["views"][0]["sections"] = true; 
@@ -93,7 +100,11 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         int currentCardW = cardW;
         int itemsToAdvance = 1;
 
-        if (entity.startsWith("sensor.") || entity.startsWith("binary_sensor.") || entity.startsWith("weather.") || entity.startsWith("sun.")) {
+        // Personen und Tracker zeigen ihren Zustand (Zone) - wie im
+        // Hinzufuegen-Dialog. Frueher fielen sie auf "light" zurueck und
+        // meldeten beim Tippen "Service not found".
+        if (entity.startsWith("sensor.") || entity.startsWith("binary_sensor.") || entity.startsWith("weather.") || entity.startsWith("sun.")
+            || entity.startsWith("person.") || entity.startsWith("device_tracker.")) {
             widgetType = "sensor";
         }
         else if (entity.startsWith("button.") || entity.startsWith("input_button.") || entity.startsWith("script.") || entity.startsWith("automation.") || entity.startsWith("scene.")) {
@@ -168,9 +179,54 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
         i += itemsToAdvance;
     };
 
+    // HA-Karte (type: map) -> ein Karten-Widget. Ihre Entitaeten werden
+    // NICHT zusaetzlich als Einzelwidgets angelegt.
+    auto addMapWidget = [&](JsonObject card) {
+        HAWidgetDef wDef;
+        wDef.type = "map";
+        wDef.name = card["title"] | "";
+        wDef.w = cardW * 3 + margin * 2;    // 3 Spalten
+        wDef.h = cardH * 2 + margin;        // 2 Zeilen
+
+        if (card["entities"].is<JsonArray>()) {
+            for (JsonVariant item : card["entities"].as<JsonArray>()) {
+                String id = item.is<JsonObject>() ? String(item["entity"] | "") : item.as<String>();
+                id.trim();
+                if (id.indexOf('.') > 0) wDef.map_entities.push_back(id);
+            }
+        }
+
+        // default_zoom: Obergrenze beim Einpassen. Ueber MAP_MAX_ZOOM (OSM-Kacheln
+        // bis 19) vergroessert die Ansicht die Kacheln, bis MAP_MAX_VIEW_ZOOM.
+        int zoom = card["default_zoom"] | 14;
+        if (zoom > MAP_MAX_VIEW_ZOOM) zoom = MAP_MAX_VIEW_ZOOM;
+        if (zoom < 3) zoom = 3;
+        wDef.map_max_zoom = zoom;
+
+        // hours_to_show: Laenge des Weges (Stunden, auch Bruchteile).
+        float hours = card["hours_to_show"] | 0.0f;
+        if (hours < 0) hours = 0;
+        wDef.map_hours = hours;
+
+        static const char* const UNSUPPORTED[] = { "geo_location_sources", "theme_mode", "aspect_ratio" };
+        String ignored;
+        for (const char* key : UNSUPPORTED) {
+            if (!card[key].isNull()) { if (ignored.length()) ignored += ", "; ignored += key; }
+        }
+        Serial.printf("[HA-Import] Karte '%s': %u Entitaeten, Zoom bis %d, Weg %.2f h%s%s\n",
+                      wDef.name.c_str(), (unsigned)wDef.map_entities.size(), zoom, (double)hours,
+                      ignored.length() ? " | nicht unterstuetzt: " : "", ignored.c_str());
+        mapWidgets.push_back(wDef);
+    };
+
     std::function<void(JsonVariant)> extractCards = [&](JsonVariant node) {
         if (node.is<JsonObject>()) {
             JsonObject obj = node.as<JsonObject>();
+
+            if (String(obj["type"] | "") == "map") {
+                addMapWidget(obj);
+                return;
+            }
 
             if (obj["entities"].is<JsonArray>()) {
                 for (JsonVariant item : obj["entities"].as<JsonArray>()) {
@@ -230,7 +286,19 @@ void HaLovelaceParser::parseCards(const String& payload, int targetViewIndex, in
     JsonArray viewsArray = views.as<JsonArray>();
     extractCards(viewsArray[targetViewIndex]);
 
-    if (i == 0) {
+    // Karten unter das Raster: erste freie Zeile nach den Einzelwidgets.
+    if (!mapWidgets.empty()) {
+        const int rows = (i + cols - 1) / cols;
+        int y = margin + rows * (cardH + margin);
+        for (HAWidgetDef& m : mapWidgets) {
+            m.x = margin;
+            m.y = y;
+            y += m.h + margin;
+            HaConfigLogic::dashboards[currentImportTab].widgets.push_back(m);
+        }
+    }
+
+    if (i == 0 && mapWidgets.empty()) {
         importErrorMessage = "Es wurden keine\nunterstuetzten Entitaeten\ngefunden.";
         pendingImportError = true;
     } else { 
