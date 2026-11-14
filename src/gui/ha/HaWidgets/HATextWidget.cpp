@@ -1,4 +1,6 @@
 #include "HATextWidget.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "HaWebsocketLogic.h"
 #include "ViewHomeAssistant.h"
 #include "UIHelper.h" 
@@ -16,7 +18,7 @@ HATextWidget::HATextWidget(lv_obj_t* parent, int tab_idx, String type, String en
     
     // Schrift und Farbe explizit setzen (Theme-Standard waere auf dunklem Grund unsichtbar).
     lv_obj_set_style_text_font(lbl_value, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl_value, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl_value, UiTheme::c().text, 0);
     
     lv_obj_set_style_text_align(lbl_value, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(lbl_value, LV_LABEL_LONG_DOT); 
@@ -52,7 +54,7 @@ void HATextWidget::updateState(String state) {
     
     lv_label_set_text(lbl_value, state.c_str());
     
-    lv_obj_set_style_text_color(icon_label, lv_color_hex(0x03A9F4), 0); 
+    lv_obj_set_style_text_color(icon_label, lv_color_hex(HaTheme::themed(0x03A9F4)), 0); 
 }
 
 void HATextWidget::close_keyboard() {

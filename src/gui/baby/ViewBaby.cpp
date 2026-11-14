@@ -7,6 +7,7 @@
 #include "BabyService.h"
 #include "ViewTopbar.h"
 #include "ViewBabySettings.h"
+#include "UiTheme.h"      // Rollenfarben (Hell/Dunkel)
 #include <WiFi.h>
 
 static lv_obj_t * cam_image_obj = nullptr; 
@@ -27,7 +28,9 @@ static lv_obj_t * btn_settings = nullptr;
 static lv_obj_t * lbl_cam_bat_main = nullptr;
 static lv_obj_t * lbl_cam_bat_fs = nullptr;
 
-static uint32_t s_lastBtnColor = 0; 
+// Zuletzt gesetzte Farbe des Alarmknopfs (0xRRGGBB); ungueltig = 0xFFFFFFFF,
+// damit der erste Durchlauf immer zeichnet.
+static uint32_t s_lastBtnColor = 0xFFFFFFFF; 
 static int s_lastBtnStateForText = -1;
 
 static void view_baby_del_cb(lv_event_t * e) {
@@ -229,7 +232,7 @@ static void syncModeControls() {
 }
 
 lv_obj_t* ViewBaby::build() {
-    s_lastBtnColor = 0; s_lastBtnStateForText = -1;
+    s_lastBtnColor = 0xFFFFFFFF; s_lastBtnStateForText = -1;
 
     // Der Modus bleibt beim Betreten erhalten - laeuft schon Video oder Ton,
     // geht es nahtlos weiter. Die Ansicht haelt die Kamerasitzung auch im
@@ -239,23 +242,31 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_t* scr = lv_obj_create(NULL);
     if (!scr) return nullptr;
     lv_obj_add_event_cb(scr, view_baby_del_cb, LV_EVENT_DELETE, NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x111111), 0);
+    const UiColors& c = UiTheme::c();
+    lv_obj_set_style_bg_color(scr, c.bg, 0);
     lv_obj_add_event_cb(scr, GuiManager::gestureEventWrapper, LV_EVENT_GESTURE, &gui);
     lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 
-    ViewTopbar_Create(scr);
+    ViewTopbar_Create(scr, true);
 
     cam_image_obj = lv_img_create(scr); 
     lv_obj_set_size(cam_image_obj, 1024, 576); 
     lv_obj_align(cam_image_obj, LV_ALIGN_CENTER, 0, -20); 
 
     lbl_fps = lv_label_create(scr);
-    lv_obj_set_style_text_color(lbl_fps, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_text_color(lbl_fps, c.ok, 0);
     lv_obj_align_to(lbl_fps, cam_image_obj, LV_ALIGN_TOP_LEFT, 15, 15);
     lv_obj_add_flag(lbl_fps, LV_OBJ_FLAG_HIDDEN); 
     
     lbl_cam_bat_main = lv_label_create(scr);
+    // Liegt ueber dem Videobild: weiss auf dunkler Pille, damit es auf
+    // Bild und hellem Hintergrund gleichermassen lesbar bleibt.
     lv_obj_set_style_text_color(lbl_cam_bat_main, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(lbl_cam_bat_main, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(lbl_cam_bat_main, 150, 0);
+    lv_obj_set_style_pad_hor(lbl_cam_bat_main, 10, 0);
+    lv_obj_set_style_pad_ver(lbl_cam_bat_main, 4, 0);
+    lv_obj_set_style_radius(lbl_cam_bat_main, 12, 0);
     lv_obj_align_to(lbl_cam_bat_main, cam_image_obj, LV_ALIGN_TOP_RIGHT, -15, 15);
 
     lbl_play_icon = lv_label_create(cam_image_obj);
@@ -272,7 +283,7 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_set_width(lbl_cam_status, 1280); 
     lv_label_set_long_mode(lbl_cam_status, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_text_font(lbl_cam_status, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_cam_status, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_color(lbl_cam_status, c.muted, 0);
     lv_obj_align(lbl_cam_status, LV_ALIGN_TOP_MID, 0, 85); 
     lv_label_set_text(lbl_cam_status, ""); 
 
@@ -291,8 +302,12 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_add_flag(btn_audio, LV_OBJ_FLAG_CHECKABLE);
     lv_obj_clear_flag(btn_audio, LV_OBJ_FLAG_GESTURE_BUBBLE); 
     lv_obj_set_style_radius(btn_audio, 50, 0); 
-    lv_obj_set_style_bg_color(btn_audio, lv_color_hex(0x555555), LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(btn_audio, lv_color_hex(0x00FF00), LV_STATE_CHECKED);
+    // Runde Bedienknoepfe: tonal im Ruhezustand, primaer wenn aktiv.
+    lv_obj_set_style_shadow_width(btn_audio, 0, 0);
+    lv_obj_set_style_bg_color(btn_audio, c.surface2, LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(btn_audio, c.text, LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(btn_audio, c.primary, LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(btn_audio, c.onPrimary, LV_STATE_CHECKED);
     lv_obj_add_event_cb(btn_audio, btn_audio_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lbl_audio = lv_label_create(btn_audio);
     lv_label_set_text(lbl_audio, LV_SYMBOL_MUTE);
@@ -302,7 +317,9 @@ lv_obj_t* ViewBaby::build() {
     lv_obj_set_size(btn_fs, 100, 100); 
     lv_obj_align_to(btn_fs, cam_touch_overlay, LV_ALIGN_BOTTOM_RIGHT, -15, -15);
     lv_obj_clear_flag(btn_fs, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_set_style_bg_color(btn_fs, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_bg_color(btn_fs, c.surface2, 0);
+    lv_obj_set_style_text_color(btn_fs, c.text, 0);
+    lv_obj_set_style_shadow_width(btn_fs, 0, 0);
     lv_obj_set_style_radius(btn_fs, 50, 0); 
     lv_obj_add_event_cb(btn_fs, btn_fs_event_cb, LV_EVENT_CLICKED, NULL);
     lbl_fs = lv_label_create(btn_fs);
@@ -312,7 +329,9 @@ lv_obj_t* ViewBaby::build() {
     btn_settings = lv_btn_create(scr);
     lv_obj_set_size(btn_settings, 80, 80); 
     lv_obj_align(btn_settings, LV_ALIGN_TOP_RIGHT, -20, 90);
-    lv_obj_set_style_bg_color(btn_settings, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_bg_color(btn_settings, c.surface2, 0);
+    lv_obj_set_style_text_color(btn_settings, c.text, 0);
+    lv_obj_set_style_shadow_width(btn_settings, 0, 0);
     lv_obj_set_style_radius(btn_settings, 40, 0); 
     lv_obj_add_event_cb(btn_settings, [](lv_event_t* e){ playToneI2S(800, 100, true); ViewBabySettings_Show(); }, LV_EVENT_CLICKED, NULL);
     lv_obj_t* lbl_set = lv_label_create(btn_settings);
@@ -330,11 +349,14 @@ lv_obj_t* ViewBaby::build() {
     lv_label_set_text(lbl_ptt, LV_SYMBOL_MUTE " PTT");
     lv_obj_set_style_text_font(lbl_ptt, &lv_font_montserrat_20, 0);
     lv_obj_center(lbl_ptt);
+    // Gegensprechen gibt es nur mit der BabyCam als Tonquelle (Rueckkanal UDP).
+    if (!AudioStreamLogic_SupportsPTT()) lv_obj_add_flag(btn_ptt, LV_OBJ_FLAG_HIDDEN);
 
     btn_mute = lv_btn_create(scr);
     lv_obj_set_size(btn_mute, 180, 80);
     lv_obj_align(btn_mute, LV_ALIGN_BOTTOM_MID, 100, -20); 
     lv_obj_set_style_radius(btn_mute, 20, 0); 
+    lv_obj_set_style_shadow_width(btn_mute, 0, 0);
     lv_obj_clear_flag(btn_mute, LV_OBJ_FLAG_GESTURE_BUBBLE); 
     lv_obj_add_event_cb(btn_mute, btn_mute_event_cb, LV_EVENT_CLICKED, NULL);
     lbl_mute = lv_label_create(btn_mute);
@@ -418,21 +440,31 @@ void ViewBaby::update() {
 
     bool fastBlink = (millis() % 600 < 300);
     int curBtnState = babyAlarmActive ? (babyAlarmAcked ? 4 : 3) : (isBabyArmed ? 2 : 1);
-    uint32_t targetBtnColor = 0x555555; const char* targetBtnText = "";
+    // Ruhe und Scharf folgen dem Farbschema; Alarm (rot blinkend) und
+    // Quittiert (orange) bleiben bewusst in beiden Modi gleich.
+    const UiColors& c = UiTheme::c();
+    lv_color_t btnBg = c.surface2;
+    lv_color_t btnText = c.text;
+    const char* targetBtnText = "";
 
     switch(curBtnState) {
-        case 1: targetBtnText = LV_SYMBOL_BELL " OFF"; targetBtnColor = 0x555555; break;
-        case 2: targetBtnText = LV_SYMBOL_BELL " ON";  targetBtnColor = 0x00A0FF; break;
-        case 3: targetBtnText = LV_SYMBOL_MUTE " MUTE"; targetBtnColor = fastBlink ? 0xFF0000 : 0x660000; break;
-        case 4: targetBtnText = LV_SYMBOL_REFRESH " RESET"; targetBtnColor = 0xFF8800; break;
+        case 1: targetBtnText = LV_SYMBOL_BELL " OFF"; break;
+        case 2: targetBtnText = LV_SYMBOL_BELL " ON";
+                btnBg = c.primary; btnText = c.onPrimary; break;
+        case 3: targetBtnText = LV_SYMBOL_MUTE " MUTE";
+                btnBg = lv_color_hex(fastBlink ? 0xFF0000 : 0x660000); btnText = lv_color_white(); break;
+        case 4: targetBtnText = LV_SYMBOL_REFRESH " RESET";
+                btnBg = lv_color_hex(0xFF8800); btnText = lv_color_white(); break;
     }
+    const uint32_t targetBtnColor = lv_color_to32(btnBg) & 0xFFFFFF;
 
     if (s_lastBtnStateForText != curBtnState && lbl_mute != nullptr) {
         lv_label_set_text(lbl_mute, targetBtnText);
         s_lastBtnStateForText = curBtnState;
     }
     if (s_lastBtnColor != targetBtnColor && btn_mute != nullptr) {
-        lv_obj_set_style_bg_color(btn_mute, lv_color_hex(targetBtnColor), 0);
+        lv_obj_set_style_bg_color(btn_mute, btnBg, 0);
+        lv_obj_set_style_text_color(btn_mute, btnText, 0);
         s_lastBtnColor = targetBtnColor;
     }
     

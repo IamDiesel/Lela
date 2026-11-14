@@ -56,6 +56,14 @@ static char s_stgResList[CAM_RES_MAX][CAM_TEXT_LEN] = {{0}};
 static volatile int  s_stgResCount = 0;
 static volatile bool s_stgDirty    = false;
 
+// Zaehlt die Sitzungen (jede neue Anmeldung +1). Eine Statusantwort traegt die
+// Nummer der Sitzung, in der sie abgefragt wurde. So erkennt der BabyService,
+// ob die gemeldete Aufloesung schon aus der laufenden Sitzung stammt - oder
+// noch aus einer frueheren, nach der die Kamera-App neu gestartet sein kann.
+static volatile uint32_t s_sessionId     = 0;   // API-Task
+static volatile uint32_t s_stgSessionId  = 0;   // API-Task, mit dem Status
+static uint32_t          s_statusSession = 0;   // Hauptschleife
+
 static void stageText(char* dst, const char* src) {
     snprintf(dst, CAM_TEXT_LEN - 1, "%s", src ? src : "");
     dst[CAM_TEXT_LEN - 1] = '\0';
@@ -205,6 +213,13 @@ static void pollStatus() {
             camFlash          = doc["flash"]        | camFlash;
             camZoom           = doc["zoom"]         | camZoom;
 
+            // Audio-Ports der Kamera (api_RE.md, Abschnitt 4). Haben Vorrang
+            // vor der Einstellung, siehe camAudioPortIn in SharedData.h.
+            // Plain int: ein Schreiber (dieser Task), Leser vertragen einen
+            // um eine Abfrage veralteten Wert.
+            if (doc["audioBabyRecorderPort"].is<int>()) camAudioPortIn  = doc["audioBabyRecorderPort"].as<int>();
+            if (doc["audioParentPlayerPort"].is<int>()) camAudioPortOut = doc["audioParentPlayerPort"].as<int>();
+
             if (doc["cameraStatus"].is<const char*>()) {
                 stageText(s_stgStatus, (const char*)doc["cameraStatus"]);
             }
@@ -224,6 +239,7 @@ static void pollStatus() {
 
             // Erst ganz zum Schluss freigeben: die Hauptschleife soll nie eine
             // halb gefuellte Liste uebernehmen.
+            s_stgSessionId = s_sessionId;
             s_stgDirty = true;
         }
     }
@@ -302,6 +318,7 @@ static void apiTask(void*) {
             // Nur die erste Anmeldung einer Sitzung melden, nicht jeden Heartbeat.
             if (!s_registered) {
                 Serial.printf("[BabyCamApi] Sitzung bei der Kamera angemeldet: HTTP %d\n", code);
+                s_sessionId = s_sessionId + 1;
             }
             s_registered = true;
             continue;
@@ -367,41 +384,6 @@ void BabyCamApi_ToggleScreen()       { enqueue(OP_SCREEN); }
 void BabyCamApi_ToggleCamera()       { enqueue(OP_CAMERA_TOGGLE); }
 void BabyCamApi_PowerOff()           { enqueue(OP_POWEROFF); }
 
-// Zerlegt "1280x720". Gibt false zurueck, wenn das Format nicht stimmt.
-static bool parseRes(const char* text, int* w, int* h) {
-    if (!text || !*text) return false;
-    const char* x = strchr(text, 'x');
-    if (!x || x == text) return false;
-
-    *w = atoi(text);
-    *h = atoi(x + 1);
-    return (*w > 0 && *h > 0);
-}
-
-void BabyCamApi_ApplyBestResolution(int reqW, int reqH) {
-    const int count = s_stgResCount;
-    if (count <= 0) return;
-
-    int bestW = 0, bestH = 0, bestArea = 0;
-    const int reqArea = reqW * reqH;
-
-    for (int i = 0; i < count && i < CAM_RES_MAX; i++) {
-        int w = 0, h = 0;
-        if (!parseRes(s_stgResList[i], &w, &h)) continue;
-
-        // Genau die gewuenschte Aufloesung schlaegt jede Annaeherung.
-        if (w == reqW && h == reqH) { bestW = w; bestH = h; break; }
-
-        const int area = w * h;
-        if (area <= reqArea && area > bestArea) { bestArea = area; bestW = w; bestH = h; }
-    }
-
-    // Nichts Passendes gefunden: die erste gemeldete Aufloesung nehmen.
-    if (bestW == 0 && !parseRes(s_stgResList[0], &bestW, &bestH)) return;
-
-    if (bestW > 0 && bestH > 0) BabyCamApi_SetResolution(bestW, bestH);
-}
-
 // ------------------------------------------------------------------------------
 // Uebernahme in die Oberflaeche - MUSS aus der Hauptschleife gerufen werden
 // ------------------------------------------------------------------------------
@@ -409,12 +391,17 @@ bool BabyCamApi_IsSessionReady() {
     return isBabyApiActive && s_registered;
 }
 
+bool BabyCamApi_HasSessionStatus() {
+    return BabyCamApi_IsSessionReady() && s_statusSession == s_sessionId;
+}
+
 void BabyCamApi_Update() {
     if (!s_stgDirty) return;
     s_stgDirty = false;
 
-    camStatus     = s_stgStatus;
-    currentCamRes = s_stgRes;
+    camStatus       = s_stgStatus;
+    currentCamRes   = s_stgRes;
+    s_statusSession = s_stgSessionId;
 
     const int n = s_stgResCount;
     for (int i = 0; i < n && i < CAM_RES_MAX; i++) {

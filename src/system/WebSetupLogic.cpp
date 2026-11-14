@@ -7,6 +7,8 @@
 #include "HaWebsocketLogic.h"
 #include <M5Unified.h> // NEU: Für den Display-Zugriff
 #include "WifiNetworks.h"
+#include "WifiConnect.h"
+#include "secrets.h"
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
 extern void lvgl_port_unlock(void);
@@ -20,6 +22,7 @@ static bool   haImportOk      = false;
 static bool   haImportTooBig  = false;
 static String haImportMessage = "";
 static bool serverRunning = false; // Speichert den Status des Webservers
+static volatile bool s_stopRequested = false;   // WebSetupLogic_RequestStop()
 
 // Wert fuer ein HTML-Attribut (value='...', data-...='...'). Ohne das
 // zerbrach z. B. ein Passwort mit ' oder < das Formular.
@@ -46,6 +49,79 @@ static String ipFieldValue(const String& saved, IPAddress current) {
     if (saved.length() > 0) return saved;
     if (WiFi.status() == WL_CONNECTED && current != IPAddress((uint32_t)0)) return current.toString();
     return "";
+}
+
+// ------------------------------------------------------------------------------
+// Felder mit Rueckfall auf secrets.h
+// ------------------------------------------------------------------------------
+// Diese Felder zeigen nur, was im Geraet gespeichert ist. Ist nichts
+// gespeichert, bleibt das Feld leer und der Platzhalter nennt den Rueckfall.
+// Beim Speichern loescht ein leeres Feld den Schluessel - dann gilt wieder
+// secrets.h (siehe prefOrSecret in SharedData.cpp). Frueher standen hier die
+// wirksamen Werte; jedes Speichern schrieb so die Rueckfallwerte fest ins NVS.
+static String storedText(const char* key) {
+    return preferences.isKey(key) ? preferences.getString(key, "") : String();
+}
+
+static String storedNumber(const char* key) {
+    const int v = preferences.isKey(key) ? preferences.getInt(key, 0) : 0;
+    return (v > 0) ? String(v) : String();
+}
+
+// Ein Eingabefeld mit Beschriftung. `placeholder` ist bereits HTML-sicher.
+static String inputField(const char* label, const char* type, const char* name,
+                         const String& value, const String& placeholder) {
+    String f = "<label>";
+    f += label;
+    f += "</label><input type='";
+    f += type;
+    f += "' name='";
+    f += name;
+    f += "' value='" + htmlEscape(value) + "'";
+    if (placeholder.length() > 0) f += " placeholder='" + placeholder + "'";
+    f += ">";
+    return f;
+}
+
+// Auswahlliste. `options` als "Wert|Text;Wert|Text;...", `selected` = Wert.
+static String selectField(const char* label, const char* name, const char* options, int selected) {
+    String f = "<label>";
+    f += label;
+    f += "</label><select name='";
+    f += name;
+    f += "'>";
+    String opts(options);
+    int start = 0;
+    while (start < (int)opts.length()) {
+        int end = opts.indexOf(';', start);
+        if (end < 0) end = opts.length();
+        const String item = opts.substring(start, end);
+        start = end + 1;
+        const int bar = item.indexOf('|');
+        if (bar <= 0) continue;
+        const String value = item.substring(0, bar);
+        f += "<option value='" + value + "'";
+        if (value.toInt() == selected) f += " selected";
+        f += ">" + item.substring(bar + 1) + "</option>";
+    }
+    f += "</select>";
+    return f;
+}
+
+// Speichert ein Feld mit Rueckfall: leer -> Schluessel entfernen.
+static void saveOrClearText(const char* key) {
+    if (!server.hasArg(key)) return;
+    String v = server.arg(key);
+    v.trim();
+    if (v.length() > 0) preferences.putString(key, v);
+    else if (preferences.isKey(key)) preferences.remove(key);
+}
+
+static void saveOrClearNumber(const char* key) {
+    if (!server.hasArg(key)) return;
+    const int v = server.arg(key).toInt();
+    if (v > 0) preferences.putInt(key, v);
+    else if (preferences.isKey(key)) preferences.remove(key);
 }
 
 void WebSetupLogic_Init() {
@@ -131,23 +207,52 @@ void WebSetupLogic_Init() {
         html += "<label>DNS (leer = Gateway)</label><input type='text' name='ipDns' value='" + htmlEscape(staticDns) + "'>";
         html += "</div>";
 
-        html += "<h2>Bluetooth Geräte</h2>";
-        html += "<label>Matte MAC (z.B. AA:BB:CC...)</label><input type='text' name='macM' value='" + htmlEscape(savedMatMac) + "'>";
-        html += "<label>Kippy MAC</label><input type='text' name='macK' value='" + htmlEscape(savedKippyMac) + "'>";
+        // Ab hier Felder mit Rueckfall auf secrets.h (siehe storedText()).
+        // Lesend oeffnen genuegt; der Namensraum existiert nach Data_Init().
+        preferences.begin("catmat", true);
+        const String fromSecrets = "leer = Standard aus secrets.h";
+        html += "<p class='hint'>Leere Felder verwenden den Standard aus secrets.h.</p>";
 
-        html += "<h2>Streams (Video & Audio)</h2>";
-        html += "<label>Video Stream URL (oder HA Pfad)</label><input type='text' name='camEntity' value='" + htmlEscape(camEntity) + "'>";
-        html += "<label>Audio Stream URL</label><input type='text' name='babyUrl' value='" + htmlEscape(babyStreamUrl) + "'>";
+        html += "<h2>Bluetooth Geräte</h2>";
+        html += inputField("Matte MAC (z.B. AA:BB:CC...)", "text", "macM", storedText("macM"), htmlEscape(SECRET_MAC_MAT));
+        html += inputField("Kippy MAC", "text", "macK", storedText("macK"), htmlEscape(SECRET_MAC_KIPPY));
+
+        // Kamera: dieselben Felder wie der Dialog "Stream Verbindung" am Geraet.
+        // BabyCam: nur die IP - die Stream-URLs baut das Geraet selbst.
+        // Fremde Kamera: Video- und Audio-URL gelten, die IP nur fuer die API.
+        html += "<h2>Kamera</h2>";
+        html += inputField("BabyCam IP-Adresse", "text", "strIp", storedText("strIp"), htmlEscape(SECRET_STREAM_IP));
+        html += "<label class='chk'><input type='checkbox' name='useCstUrl' value='1'";
+        if (useCustomUrls) html += " checked";
+        html += "> Fremde Kamera (eigene URLs statt BabyCam)</label>";
+        html += inputField("Video-URL (nur fremde Kamera)", "text", "camEntity", storedText("camEntity"), fromSecrets);
+
+        // Babyphone-Ton: dieselben Felder wie der Dialog am Geraet
+        // (AudioSourceDialog). Die Quelle ist unabhaengig von der Videoquelle.
+        html += "<h2>Babyphone-Ton</h2>";
+        html += selectField("Quelle", "audSrc", "0|BabyCam (UDP);1|HTTP-Stream", audioSource);
+        html += "<p class='hint'>BabyCam: rohes PCM per UDP, mit Gegensprechen. Meldet die Kamera eigene Ports, gelten diese.</p>";
+        html += inputField("BabyCam: Empfangsport", "number", "audPIn", storedNumber("audPIn"), String(AUDIO_UDP_PORT_IN_DEFAULT));
+        html += inputField("BabyCam: Sprechport", "number", "audPOut", storedNumber("audPOut"), String(AUDIO_UDP_PORT_OUT_DEFAULT));
+        html += inputField("HTTP: Audio-URL (http://...)", "text", "babyUrl", storedText("babyUrl"), fromSecrets);
+        html += selectField("HTTP: Format", "audioFmt", "0|PCM 16 Bit (roh oder WAV);1|AAC (ADTS)", audioFormat);
+        html += selectField("HTTP-PCM: Abtastrate", "audRate",
+                            "8000|8000 Hz;11025|11025 Hz;16000|16000 Hz;22050|22050 Hz;32000|32000 Hz;44100|44100 Hz;48000|48000 Hz",
+                            audioPcmRate);
+        html += selectField("HTTP-PCM: Kan&auml;le", "audCh", "1|Mono;2|Stereo", audioPcmChannels);
+        html += "<p class='hint'>Abtastrate und Kan&auml;le gelten nur f&uuml;r rohes PCM; ein WAV-Kopf und AAC bringen beides selbst mit.</p>";
 
         html += "<h2>Home Assistant (Optional)</h2>";
-        html += "<label>HA IP</label><input type='text' name='haIP' value='" + htmlEscape(haIP) + "'>";
-        html += "<label>HA Port</label><input type='number' name='haPort' value='" + String(haPort) + "'>";
+        html += inputField("HA IP", "text", "haIP", storedText("haIP"), htmlEscape(SECRET_HA_IP));
+        html += inputField("HA Port", "number", "haPort", storedNumber("haPort"), String(SECRET_HA_PORT));
 
         html += "<h2>MQTT Broker</h2>";
-        html += "<label>Broker IP</label><input type='text' name='mqIP' value='" + htmlEscape(mqttBroker) + "'>";
-        html += "<label>Port</label><input type='number' name='mqPort' value='" + String(mqttPort) + "'>";
-        html += "<label>Benutzer</label><input type='text' name='mqUser' value='" + htmlEscape(mqttUser) + "'>";
-        html += "<label>Passwort</label><input type='password' name='mqPass' value='" + htmlEscape(mqttPass) + "'>";
+        html += inputField("Broker IP", "text", "mqIP", storedText("mqIP"), "leer = HA IP");
+        html += inputField("Port", "number", "mqPort", storedNumber("mqPort"), String(SECRET_MQTT_PORT));
+        html += inputField("Benutzer", "text", "mqUser", storedText("mqUser"), fromSecrets);
+        html += "<label>Passwort</label><input type='password' id='mqpw' name='mqPass' value='" + htmlEscape(storedText("mqPass")) + "' placeholder='" + fromSecrets + "'>";
+        html += "<label class='chk'><input type='checkbox' onclick=\"showPw(this,'mqpw')\"> Passwort anzeigen</label>";
+        preferences.end();
 
         html += "<input type='submit' value='Speichern & Neustart'>";
         html += "</form></body></html>";
@@ -338,16 +443,31 @@ void WebSetupLogic_Init() {
         preferences.begin("catmat", false);
         if(server.hasArg("wifiSsid")) { wifiSsid = server.arg("wifiSsid"); preferences.putString("wifiSsid", wifiSsid); }
         if(server.hasArg("wifiPass")) { wifiPass = server.arg("wifiPass"); preferences.putString("wifiPass", wifiPass); }
-        if(server.hasArg("macM")) { savedMatMac = server.arg("macM"); preferences.putString("macM", savedMatMac); }
-        if(server.hasArg("macK")) { savedKippyMac = server.arg("macK"); preferences.putString("macK", savedKippyMac); }
-        if(server.hasArg("babyUrl")) { babyStreamUrl = server.arg("babyUrl"); preferences.putString("babyUrl", babyStreamUrl); }
-        if(server.hasArg("camEntity")) { camEntity = server.arg("camEntity"); preferences.putString("camEntity", camEntity); }
-        if(server.hasArg("haIP")) { haIP = server.arg("haIP"); preferences.putString("haIP", haIP); }
-        if(server.hasArg("haPort")) { haPort = server.arg("haPort").toInt(); preferences.putInt("haPort", haPort); }
-        if(server.hasArg("mqIP")) { mqttBroker = server.arg("mqIP"); preferences.putString("mqIP", mqttBroker); }
-        if(server.hasArg("mqPort")) { mqttPort = server.arg("mqPort").toInt(); preferences.putInt("mqPort", mqttPort); }
-        if(server.hasArg("mqUser")) { mqttUser = server.arg("mqUser"); preferences.putString("mqUser", mqttUser); }
-        if(server.hasArg("mqPass")) { mqttPass = server.arg("mqPass"); preferences.putString("mqPass", mqttPass); }
+        // Felder mit Rueckfall: leer = secrets.h. Die Variablen im RAM werden
+        // nicht angefasst - nach dem Speichern folgt ohnehin ein Neustart, und
+        // Data_Init() leitet die wirksamen Werte dann einheitlich ab.
+        saveOrClearText("macM");
+        saveOrClearText("macK");
+        saveOrClearText("strIp");
+        saveOrClearText("camEntity");
+        saveOrClearText("babyUrl");
+        saveOrClearText("haIP");
+        saveOrClearNumber("haPort");
+        saveOrClearText("mqIP");
+        saveOrClearNumber("mqPort");
+        saveOrClearText("mqUser");
+        saveOrClearText("mqPass");
+        // Haekchen fehlt im Formular = aus. Nur auswerten, wenn das Formular
+        // den Kamera-Abschnitt ueberhaupt enthielt.
+        if (server.hasArg("strIp")) preferences.putBool("useCstUrl", server.hasArg("useCstUrl"));
+        // Babyphone-Ton. Auswahllisten liefern immer einen gueltigen Wert;
+        // Data_Init() prueft beim Neustart trotzdem noch einmal.
+        if (server.hasArg("audSrc"))   preferences.putInt("audSrc",   server.arg("audSrc").toInt());
+        if (server.hasArg("audioFmt")) preferences.putInt("audioFmt", server.arg("audioFmt").toInt());
+        if (server.hasArg("audRate"))  preferences.putInt("audRate",  server.arg("audRate").toInt());
+        if (server.hasArg("audCh"))    preferences.putInt("audCh",    server.arg("audCh").toInt());
+        saveOrClearNumber("audPIn");
+        saveOrClearNumber("audPOut");
 
         // Feste IP: Haekchen fehlt im Formular = aus. Nur gueltige Angaben
         // einschalten - sonst bliebe das Geraet nach dem Neustart ohne Netz.
@@ -400,12 +520,45 @@ void WebSetupLogic_Init() {
     });
 }
 
+void WebSetupLogic_RequestStop() {
+    pendingWebSetupMode = 0;   // noch nicht gestartetes Setup gar nicht erst starten
+    s_stopRequested = true;
+}
+
+// Beendet das Setup. Der Webserver selbst stoppt unten im Update, sobald
+// auch kein Bildschirmfoto-Modus ihn braucht.
+static void endSetup() {
+    if (webSetupMode == 0) return;
+    // Ersteinrichtung ohne gespeichertes WLAN: Das Setup-WLAN ist der einzige
+    // Zugang zum Geraet und bleibt deshalb bestehen.
+    if (webSetupMode == 1 && wifiSsid == "") return;
+    const int mode = webSetupMode;
+    webSetupMode = 0;
+    Serial.printf("[Setup] Web-Setup beendet (Modus %d).\n", mode);
+    if (mode == 1) {
+        // Eigenes Setup-WLAN abbauen und zurueck in den Stationsbetrieb.
+        // Die Anmeldung im Heimnetz uebernimmt SystemLogic (wifiStarted = false
+        // -> WifiConnect_Begin), wie beim Einschalten des WLANs.
+        dnsServer.stop();
+        WiFi.softAPdisconnect(true);
+        WiFi.mode(WIFI_STA);
+        WifiConnect_Reset();
+        wifiStarted = false;
+    }
+}
+
 void WebSetupLogic_Update() {
 #if NET_QUIET_DURING_VIDEO
     // Waehrend eines Videostreams keine Webserver-Bearbeitung (siehe SharedData.h).
     // Das Setup-Portal selbst laeuft ohnehin nur, wenn kein Video aktiv ist.
     if (isStreamActive && webSetupMode == 0) return;
 #endif
+    // Erst beenden, dann ggf. neu starten (Wechsel Heimnetz <-> Setup-WLAN).
+    if (s_stopRequested) {
+        s_stopRequested = false;
+        endSetup();
+    }
+
     if (pendingWebSetupMode > 0) {
         webSetupMode = pendingWebSetupMode;
         pendingWebSetupMode = 0;
@@ -447,8 +600,13 @@ void WebSetupLogic_Update() {
         server.handleClient();
         if (webSetupMode == 1) dnsServer.processNextRequest();
         
-        // Timeout nach 5 Minuten im Setup Mode
-        if (webSetupMode > 0 && millis() - webSetupStartTime > 300000) ESP.restart();
+        // Nach 5 Minuten ohne Speichern endet das Setup (ohne Neustart). Ausnahme
+        // Ersteinrichtung ohne gespeichertes WLAN: dann ist das Setup-WLAN der
+        // einzige Zugang und bleibt bestehen.
+        if (webSetupMode > 0 && millis() - webSetupStartTime > 300000) {
+            webSetupStartTime = millis();   // Ersteinrichtung: naechstes Fenster
+            endSetup();
+        }
 
         // Webserver sauber beenden, wenn Screenshot UND Setup Mode inaktiv sind
         if (webSetupMode == 0 && pendingScreenshotMode == 0) {

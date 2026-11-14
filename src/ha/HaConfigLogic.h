@@ -18,8 +18,12 @@ struct HAWidgetDef {
     int h = 105;
     String name = "";
     String mdi_icon = "";
-    String color_on = "";
+    String color_on = "";    // "#RRGGBB" als Dunkel-Wert, leer = Standard des Typs
     String color_off = "";
+    // false: Nutzerfarben gelten unveraendert in beiden Farbschemata (keine
+    // automatische Gegenfarbe im hellen Schema). JSON "color_adapt", nur
+    // gespeichert, wenn false.
+    bool color_adapt = true;
     
     // Gleiche Standardwerte wie beim Laden (deserializeWidget). Frueher stand
     // hier 0/2/1 (DEFAULT/TOP_MID/TOP_LEFT) - manuell hinzugefuegte Widgets

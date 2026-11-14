@@ -30,6 +30,7 @@ protected:
     int state_margin; 
     
     bool snap_to_grid; 
+    bool color_adapt = true;   // Nutzerfarben im hellen Schema anpassen (HaTheme)
 
     bool show_chart = false;
     int chart_w_pct = 60;
@@ -75,8 +76,12 @@ protected:
     // --- Gemeinsame Helfer fuer alle Widget-Typen ---
     // Konfigurierte Farbe "#RRGGBB" als 0xRRGGBB, sonst 'fallback'.
     static uint32_t parseColor(const String& hex, uint32_t fallback);
-    uint32_t colorOnOr(uint32_t fallback) const  { return parseColor(color_on, fallback); }
-    uint32_t colorOffOr(uint32_t fallback) const { return parseColor(color_off, fallback); }
+    // Wirksame Farbe im aktuellen Farbschema (0xRRGGBB). 'fallback' ist die
+    // Standardfarbe des Typs als Dunkel-Wert und passt sich immer an; eine
+    // Nutzerfarbe nur, wenn global und fuer dieses Widget erlaubt (HaTheme).
+    uint32_t colorOnOr(uint32_t fallback) const  { return effectiveColor(color_on, fallback); }
+    uint32_t colorOffOr(uint32_t fallback) const { return effectiveColor(color_off, fallback); }
+    uint32_t effectiveColor(const String& hex, uint32_t fallback) const;
 
     // Fuehrt die konfigurierte Klick-Aktion aus (Domain/Service/Ziel aus dem
     // Bearbeiten-Dialog). false, wenn keine konfiguriert ist.
@@ -160,6 +165,8 @@ public:
     void setName(String n);
     void setMdiIcon(String mdi);
     void setColors(String on, String off);
+    void setColorAdapt(bool adapt);
+    bool getColorAdapt() const { return color_adapt; }
     // virtuell: Widgets mit eigener Flaeche (Karte) passen sie an.
     virtual void setSize(int w, int h);
     void setPosition(int x, int y, bool snap);

@@ -23,10 +23,6 @@ struct AudioMsg { uint16_t freq; uint32_t duration; uint8_t soundType; uint8_t v
 extern SemaphoreHandle_t bleMutex;
 
 extern bool dongleAlarmEnabled; 
-extern bool audioDebugEnabled;
-extern String audioLogs[10];
-extern int audioLogIdx;
-extern void addAudioLog(String msg);
 
 extern bool babyAlarmActive;
 
@@ -66,7 +62,7 @@ extern int haPort;
 extern String streamIp; 
 extern bool useCustomUrls; 
 extern String camEntity; 
-extern String babyStreamUrl; 
+extern String babyStreamUrl;   // URL der HTTP-Audioquelle (siehe audioSource)
 
 extern String topbarStatusMsg;
 
@@ -116,11 +112,6 @@ extern int catRssi;
 extern bool wifiEnabled;
 extern bool matEnabled;
 extern bool kippyEnabled;
-extern int prioMaster; 
-extern int prioSlave;  
-extern float effPrioMat;
-extern float effPrioKippy;
-extern float effPrioWifi;
 
 extern bool isTrackerMode; 
 extern bool isCatAtHome;        
@@ -204,15 +195,36 @@ extern volatile bool videoLowLatency;
 extern volatile bool showFps;
 extern volatile int currentFps;
 
-extern int mjpegDropThreshold; 
-extern int camHackMode; 
 extern volatile bool isStreamActive;
 // VERALTET: wird nicht mehr benutzt. Die JPEG-Puffer verwaltet VideoDecoder
 // ueber jpeg_alloc_decoder_mem() im PSRAM. Symbol bleibt aus
 // Kompatibilitaetsgruenden erhalten.
 extern uint8_t* download_buf;
 
-extern int audioFormat; 
+// --- Babyphone-Ton: Quelle ------------------------------------------------
+// BabyCam (UDP): rohes PCM 44,1 kHz/16 Bit/mono, die Kamera sendet nach einem
+//   API-Befehl an unseren Empfangsport. Nur hier gibt es Gegensprechen (PTT).
+// HTTP-Stream: beliebige Quelle unter `babyStreamUrl`, Format einstellbar.
+// Wirksam beim naechsten Start des Tons (AudioStreamLogic_ApplyConfig()).
+enum AudioSourceType : int { AUDIO_SRC_BABYCAM_UDP = 0, AUDIO_SRC_HTTP = 1 };
+// Werte wie im frueheren Dropdown "Audio-Format" (NVS "audioFmt").
+enum AudioHttpFormat : int { AUDIO_FMT_PCM16 = 0, AUDIO_FMT_AAC = 1 };
+
+#define AUDIO_UDP_PORT_IN_DEFAULT   50001   // api_RE.md: audioBabyRecorderPort
+#define AUDIO_UDP_PORT_OUT_DEFAULT  50003   // api_RE.md: audioParentPlayerPort
+#define AUDIO_PCM_RATE_DEFAULT      44100
+
+extern int audioSource;        // AudioSourceType            (NVS "audSrc")
+extern int audioFormat;        // AudioHttpFormat            (NVS "audioFmt")
+extern int audioPcmRate;       // Hz, nur HTTP-PCM ohne WAV-Kopf (NVS "audRate")
+extern int audioPcmChannels;   // 1/2, nur HTTP-PCM ohne WAV-Kopf (NVS "audCh")
+extern int audioUdpPortIn;     // BabyCam -> Tablet          (NVS "audPIn")
+extern int audioUdpPortOut;    // Tablet -> BabyCam (PTT)    (NVS "audPOut")
+// Von der BabyCam im Status gemeldete Ports, 0 = unbekannt. Geschrieben vom
+// API-Task; gemeldete Werte haben Vorrang vor der Einstellung - die Kamera
+// sendet dorthin, wohin SIE will.
+extern volatile int camAudioPortIn;
+extern volatile int camAudioPortOut;
 extern volatile bool audioStandaloneMode;
 
 extern uint8_t lastBtPackets[MAX_BT_MSGS][10];
@@ -236,7 +248,6 @@ extern volatile bool pttSwipeLock;
 
 void Data_Init();
 void Audio_Init();
-void calcMultiplex();
 void playToneI2S(uint16_t freq, uint32_t duration_ms, bool isUiSound = false);
 
 // NEU: Sound fuer Slider Release
@@ -251,5 +262,6 @@ void sleepDisplay();
 void factoryReset();
 
 namespace SharedData {
+    // Speichert die Mixer-Einstellungen (Lautstaerken und Stummschaltungen).
     void Save();
 }

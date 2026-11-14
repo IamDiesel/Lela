@@ -1,6 +1,8 @@
 #include "HAWidgetBase.h"
 #include "HaWebsocketLogic.h"
 #include "MdiMapper.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include <algorithm> 
 
 bool HAWidget::editModeActive = false;
@@ -183,9 +185,10 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
     container = lv_obj_create(parent);
     lv_obj_set_size(container, w, h); lv_obj_set_pos(container, x, y);
     lv_obj_set_style_radius(container, 25, 0);
-    lv_obj_set_style_bg_color(container, lv_color_hex(0x222222), 0); 
+    lv_obj_set_style_bg_color(container, HaTheme::card(), 0); 
     lv_obj_set_style_border_width(container, 2, 0);
-    lv_obj_set_style_border_color(container, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_color(container, HaTheme::cardBorder(), 0);
+    lv_obj_set_style_text_color(container, UiTheme::c().text, 0);   // Werte-Labels der Typen erben
     
     lv_obj_set_style_pad_all(container, 0, 0);
     
@@ -212,7 +215,7 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
     lv_obj_set_style_text_align(name_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(name_label, &lv_font_montserrat_16, 0);
     lv_label_set_text(name_label, widget_name.c_str());
-    lv_obj_set_style_text_color(name_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(name_label, UiTheme::c().text, 0);
     
     setSize(w, h); 
     all_active_widgets.push_back(this);
@@ -249,6 +252,11 @@ void HAWidget::setAlignments(int i_align, int t_align, int s_align, int i_margin
 void HAWidget::setName(String n) { widget_name = formatEntityName(entity_id, n); lv_label_set_text(name_label, widget_name.c_str()); }
 void HAWidget::setMdiIcon(String mdi) { mdi_icon = mdi; lv_label_set_text(icon_label, getIconForEntity(entity_id, mdi_icon).c_str()); }
 void HAWidget::setColors(String on, String off) { color_on = on; color_off = off; String old = current_state; current_state = "force_update"; updateState(old); }
+void HAWidget::setColorAdapt(bool adapt) {
+    if (adapt == color_adapt) return;
+    color_adapt = adapt;
+    String old = current_state; current_state = "force_update"; updateState(old);   // neu einfaerben
+}
 
 void HAWidget::setSize(int w, int h) {
     lv_obj_set_size(container, w, h);
@@ -311,6 +319,12 @@ uint32_t HAWidget::parseColor(const String& hex, uint32_t fallback) {
     char* end = nullptr;
     const unsigned long v = strtoul(hex.c_str() + 1, &end, 16);
     return (end && *end == '\0') ? (uint32_t)v : fallback;
+}
+
+uint32_t HAWidget::effectiveColor(const String& hex, uint32_t fallback) const {
+    const uint32_t v = parseColor(hex, 0xFFFFFFFFu);
+    if (v == 0xFFFFFFFFu) return HaTheme::themed(fallback);   // keine Nutzerfarbe
+    return HaTheme::user(v, color_adapt);
 }
 
 bool HAWidget::runTapAction() {
@@ -478,10 +492,10 @@ void HALightWidget::updateState(String state) {
     const uint32_t c_off_val = colorOffOr(0x555555);
     
     if (state == "on" || state == "open") {
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); 
+        lv_obj_set_style_bg_color(container, HaTheme::cardOn(c_on_val), 0); 
         lv_obj_set_style_text_color(icon_label, lv_color_hex(c_on_val), 0); 
     } else {
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x111111), 0); 
+        lv_obj_set_style_bg_color(container, HaTheme::cardOff(), 0); 
         lv_obj_set_style_text_color(icon_label, lv_color_hex(c_off_val), 0); 
     }
 }

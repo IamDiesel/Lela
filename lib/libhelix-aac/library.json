@@ -1,0 +1,12 @@
+{
+  "name": "libhelix-aac",
+  "version": "2026.10.7",
+  "description": "Helix Fixed-point HE-AAC decoder (RealNetworks), unveraendert uebernommen aus ESP8266Audio (src/libhelix-aac) Commit e1f2a1a34aa460f5cca7a60b69d9a350fd099938. Siehe README.md.",
+  "license": "RPSL / RCSL (RealNetworks)",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "src"
+  }
+}

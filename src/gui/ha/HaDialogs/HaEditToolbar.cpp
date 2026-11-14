@@ -1,4 +1,6 @@
 #include "HaEditToolbar.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "HaDialogTab.h"
 #include "HaDialogImport.h"
@@ -27,6 +29,7 @@ void HaEditToolbar::show() {
     lv_obj_clear_flag(lv_tabview_get_tab_btns(ViewHomeAssistant::tabview), LV_OBJ_FLAG_CLICKABLE); 
     
     lv_obj_set_style_bg_color(ViewHomeAssistant::btn_edit, lv_color_hex(0x27AE60), 0); 
+    lv_obj_set_style_text_color(ViewHomeAssistant::btn_edit, lv_color_white(), 0);   // aktiv: gruen, in beiden Schemata
     lv_label_set_text(ViewHomeAssistant::label_edit, LV_SYMBOL_SAVE " SPEICHERN");
 
     btn_tab_left = lv_btn_create(ViewHomeAssistant::screen);
@@ -151,7 +154,8 @@ void HaEditToolbar::show() {
 void HaEditToolbar::hide() {
     lv_obj_add_flag(lv_tabview_get_tab_btns(ViewHomeAssistant::tabview), LV_OBJ_FLAG_CLICKABLE); 
     
-    lv_obj_set_style_bg_color(ViewHomeAssistant::btn_edit, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(ViewHomeAssistant::btn_edit, HaTheme::control(), 0);
+    lv_obj_set_style_text_color(ViewHomeAssistant::btn_edit, UiTheme::c().text, 0);
     lv_label_set_text(ViewHomeAssistant::label_edit, LV_SYMBOL_EDIT " BEARBEITEN");
 
     if (btn_tab_left) { lv_obj_del_async(btn_tab_left); btn_tab_left = nullptr; }

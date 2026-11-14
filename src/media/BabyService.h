@@ -88,9 +88,17 @@ const char* BabyService_Describe();
 // neu (~3 s). Deshalb gilt sie je Abnehmer: die Baby-Ansicht bekommt die vom
 // Benutzer gewaehlte, das Overlay eine eigene (Standard: die kleinste). Ohne
 // sichtbaren Abnehmer (z.B. in den Einstellungen) bleibt die zuletzt gesetzte.
+//
+// Angefordert wird bei jedem Verbindungsaufbau, abgeglichen mit der Liste der
+// Kamera: die eingestellte, sonst die naechstkleinere, sonst die kleinste.
+// Die Einstellung ist EIN Wert - beide Bedienstellen (Einstellungen und
+// Baby-Ansicht) lesen und schreiben ihn hier. `currentCamRes` ist dagegen
+// nur der Ist-Wert, den die Kamera meldet.
 
 // Aufloesung fuer die Baby-Ansicht, Format "BxH". Wird gespeichert.
 void   BabyService_SetBabyResolution(const String& res);
+String BabyService_GetBabyResolutionSetting();    // gespeicherter Wunsch
+String BabyService_GetBabyResolution();           // nach Abgleich mit der Liste
 
 // Aufloesung fuer das Overlay. "" = automatisch (kleinste der Kamera).
 void   BabyService_SetPipResolution(const String& res);
@@ -99,7 +107,8 @@ String BabyService_GetPipResolution();            // tatsaechlich verwendete
 
 // Von der Kamera gemeldete Aufloesungen, mit '\n' getrennt (Format fuer
 // lv_dropdown). Ist die Kamera gerade nicht erreichbar, die zuletzt bekannte
-// Liste aus dem Flash - die Liste haengt von Kamera und Linse ab.
+// Liste aus dem Flash - aber nur, wenn sie zur eingestellten Kamera-IP gehoert.
+// Die Liste haengt von Kamera und Linse ab.
 String BabyService_GetResolutionOptions();
 
 // Bildrate des Overlays (1..15 fps). Wird gespeichert.

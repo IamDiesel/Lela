@@ -23,13 +23,20 @@ void BabyCamApi_Update();
 // Warteschlange.
 bool BabyCamApi_IsSessionReady();
 
+// true, sobald zusaetzlich eine Statusantwort AUS DER LAUFENDEN Sitzung
+// uebernommen ist. Erst dann sind currentCamRes und die Aufloesungsliste
+// verlaesslich (die Kamera-App kann zwischen zwei Sitzungen neu gestartet sein
+// und ihre Standardaufloesung haben). Nur aus der Hauptschleife.
+bool BabyCamApi_HasSessionStatus();
+
 // --- Video- und Performance-Einstellungen ---
 void BabyCamApi_SetQuality(int qual);        // 0..100
 void BabyCamApi_SetSpeed(int speed);         // 0 = max fps, 100 = Eco
 void BabyCamApi_SetZoom(int zoom);           // 0..100
 void BabyCamApi_SetExposure(int percent);    // 0..100
+// Setzt die Aufloesung ohne Pruefung. Welche Aufloesung die Kamera kann und
+// welche angefordert wird, entscheidet der BabyService (Abgleich mit der Liste).
 void BabyCamApi_SetResolution(int w, int h);
-void BabyCamApi_ApplyBestResolution(int reqW, int reqH);
 
 // --- Kamera- und Licht-Toggles ---
 void BabyCamApi_ToggleFlash();

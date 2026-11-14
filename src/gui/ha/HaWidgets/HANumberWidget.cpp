@@ -1,4 +1,6 @@
 #include "HANumberWidget.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "HaWebsocketLogic.h"
 
 HANumberWidget::HANumberWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off)
@@ -8,9 +10,9 @@ HANumberWidget::HANumberWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     lv_obj_set_size(slider, lv_pct(80), 10);
     lv_obj_align(slider, LV_ALIGN_CENTER, 0, 10);
     
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x555555), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x03A9F4), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider, lv_color_white(), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(slider, HaTheme::track(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(HaTheme::themed(0x03A9F4)), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, UiTheme::c().accent, LV_PART_KNOB);
     
     lv_obj_add_flag(slider, LV_OBJ_FLAG_EVENT_BUBBLE);
     
@@ -20,7 +22,7 @@ HANumberWidget::HANumberWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     
     val_label = lv_label_create(container);
     lv_obj_set_style_text_font(val_label, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(val_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(val_label, UiTheme::c().text, 0);
     lv_obj_align_to(val_label, slider, LV_ALIGN_OUT_TOP_MID, 0, -5);
     lv_label_set_text(val_label, "-");
     
@@ -54,7 +56,7 @@ void HANumberWidget::updateState(String state) {
     if (!HAWidget::parseNumber(state, val)) {
         // "unavailable"/"unknown": nicht als 0 anzeigen.
         lv_label_set_text(val_label, "--");
-        lv_obj_set_style_text_color(icon_label, lv_color_hex(0x555555), 0);
+        lv_obj_set_style_text_color(icon_label, lv_color_hex(HaTheme::themed(0x555555)), 0);
         return;
     }
 
@@ -68,7 +70,7 @@ void HANumberWidget::updateState(String state) {
     lv_slider_set_value(slider, (int32_t)lroundf(val * scale), LV_ANIM_OFF);
     showValue(val_label, val, scale);
     
-    lv_obj_set_style_text_color(icon_label, lv_color_hex(0x03A9F4), 0); 
+    lv_obj_set_style_text_color(icon_label, lv_color_hex(HaTheme::themed(0x03A9F4)), 0); 
 }
 
 void HANumberWidget::slider_event_cb(lv_event_t * e) {

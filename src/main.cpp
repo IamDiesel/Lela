@@ -65,6 +65,8 @@
 #include "SharedData.h"
 #include "SystemLogic.h"
 #include "GuiManager.h"
+#include "UiTheme.h"
+#include "HaTheme.h"
 #include "AudioStreamLogic.h"
 #include "WebSetupLogic.h" 
 #include "VideoLogic.h"    
@@ -176,6 +178,8 @@ void setup() {
 
 
     Data_Init(); // Laedt sofort die wifiSsid aus dem Speicher
+    UiTheme::init();   // Farbschema - braucht die Einstellungen, vor dem ersten Bildschirm
+    HaTheme::init();   // HA-App: Gegenfarben fuer Nutzerfarben an/aus
     
     // ==============================================================
     // EARLY-RADIO-INIT: WLAN sofort im Hintergrund starten!

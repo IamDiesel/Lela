@@ -1,4 +1,6 @@
 #include "HaDialogEdit.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "SharedData.h"
 #include "UIHelper.h"
@@ -125,7 +127,7 @@ void HaDialogEdit::showWidgetEditDialog(HAWidget* w) {
 
     edit_panel = lv_obj_create(overlay);
     lv_obj_set_size(edit_panel, 860, 580); 
-    lv_obj_set_style_bg_color(edit_panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(edit_panel);
     lv_obj_add_flag(edit_panel, LV_OBJ_FLAG_CLICKABLE); 
     lv_obj_clear_flag(edit_panel, LV_OBJ_FLAG_GESTURE_BUBBLE); 
 
@@ -189,10 +191,9 @@ void HaDialogEdit::handleWidgetDeleteDrop(HAWidget* w) {
 
         lv_obj_t* panel = lv_obj_create(overlay);
         lv_obj_set_size(panel, 500, 250); lv_obj_center(panel);
-        lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+        UIHelper::themePanel(panel);
 
         lv_obj_t* lbl_del = UIHelper::createLabel(panel, "Widget loeschen?", &lv_font_montserrat_24, LV_ALIGN_TOP_MID, 0, 30);
-        lv_obj_set_style_text_color(lbl_del, lv_color_white(), 0);
         
         UIHelper::createButton(panel, 200, 60, LV_ALIGN_BOTTOM_RIGHT, -20, -30, 0xAA0000, "Ja, loeschen", [](lv_event_t* e) {
             HAWidget* wid = (HAWidget*)lv_event_get_user_data(e);

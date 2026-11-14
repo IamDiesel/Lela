@@ -1,4 +1,6 @@
 #include "HaDialogFolder.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "HaDialogAdd.h"
 #include "HaDialogEdit.h"
 #include "ViewHomeAssistant.h"
@@ -22,7 +24,7 @@ void HaDialogFolder::show(HAFolderWidget* folder) {
     lv_obj_t* panel = lv_obj_create(overlay);
     lv_obj_set_size(panel, 860, 520);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
     UIHelper::createLabel(panel, "Ordner Inhalt verwalten", &lv_font_montserrat_24, LV_ALIGN_TOP_MID, 0, 10);
@@ -30,7 +32,7 @@ void HaDialogFolder::show(HAFolderWidget* folder) {
     lv_obj_t* list = lv_obj_create(panel);
     lv_obj_set_size(list, 820, 340);
     lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_set_style_bg_color(list, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(list, UiTheme::c().bg, 0);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
 
     auto& children = folder->getFolderChildren();
@@ -40,7 +42,7 @@ void HaDialogFolder::show(HAFolderWidget* folder) {
         lv_obj_t* row = lv_obj_create(list);
         lv_obj_set_width(row, LV_PCT(100));
         lv_obj_set_height(row, 60);
-        lv_obj_set_style_bg_color(row, lv_color_hex(0x444444), 0);
+        lv_obj_set_style_bg_color(row, HaTheme::control(), 0); lv_obj_set_style_text_color(row, UiTheme::c().text, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 

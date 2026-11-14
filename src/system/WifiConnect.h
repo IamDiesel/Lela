@@ -39,3 +39,8 @@ void WifiConnect_Update();
 
 // WLAN wurde abgeschaltet: Ueberwachung beenden.
 void WifiConnect_Reset();
+
+// Wechselt das Netz (Einstellungen: gemerkte Netze / anderes Netz): speichert
+// SSID und Passwort als aktuelles WLAN und meldet sich neu an. Gemerkt wird
+// das Netz wie immer erst nach erfolgreicher Verbindung (WifiNetworks).
+void WifiConnect_SwitchTo(const String& ssid, const String& pass);

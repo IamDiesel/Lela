@@ -4,6 +4,8 @@
 #include "MdiMapper.h"
 #include "HaColorPicker.h"
 #include "SharedData.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 
 void EditTabDisplay::updateColorBtn(lv_obj_t* btn, String hexColor, const char* prefix) {
     if (!btn || !lv_obj_is_valid(btn)) return;
@@ -11,14 +13,42 @@ void EditTabDisplay::updateColorBtn(lv_obj_t* btn, String hexColor, const char* 
     if (!label || !lv_obj_is_valid(label)) return;
     
     if(hexColor.length() > 0 && hexColor.startsWith("#")) {
-        lv_obj_set_style_bg_color(btn, lv_color_hex(strtol(hexColor.substring(1).c_str(), NULL, 16)), 0);
+        // Knopf zeigt die gewaehlte Farbe selbst (Dunkel-Wert), Schrift lesbar darauf.
+        const uint32_t rgb = strtol(hexColor.substring(1).c_str(), NULL, 16);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(rgb), 0);
         lv_label_set_text_fmt(label, "%s %s", prefix, hexColor.c_str()); 
-        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+        lv_obj_set_style_text_color(label, HaTheme::onColor(rgb), 0);
     } else {
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x555555), 0);
+        lv_obj_set_style_bg_color(btn, HaTheme::control(), 0);
         lv_label_set_text_fmt(label, "%s Standard", prefix); 
-        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+        lv_obj_set_style_text_color(label, UiTheme::c().text, 0);
     }
+}
+
+// Erklaert unter den Farbknoepfen, welche Farben im hellen Schema gelten.
+void EditTabDisplay::updateAdaptHint() {
+    if (!lbl_adapt_hint || !lv_obj_is_valid(lbl_adapt_hint)) return;
+    if (!HaTheme::autoAdapt()) {
+        lv_label_set_text(lbl_adapt_hint, "Gegenfarben sind global aus (Einstellungen > Anzeige).");
+        return;
+    }
+    if (!selected_adapt) {
+        lv_label_set_text(lbl_adapt_hint, "Die Farben gelten unveraendert in beiden Farbschemata.");
+        return;
+    }
+    // "#RRGGBB" der Gegenfarbe, oder "Standard" ohne eigene Farbe.
+    auto lightText = [](const String& hex, char* out, size_t n) {
+        if (hex.length() > 1 && hex.startsWith("#")) {
+            const uint32_t rgb = strtol(hex.substring(1).c_str(), NULL, 16);
+            snprintf(out, n, "#%06lX", (unsigned long)HaTheme::lightOf(rgb));
+        } else {
+            snprintf(out, n, "Standard");
+        }
+    };
+    char on[12], off[12];
+    lightText(selected_color_on, on, sizeof(on));
+    lightText(selected_color_off, off, sizeof(off));
+    lv_label_set_text_fmt(lbl_adapt_hint, "Im hellen Schema: Aktiv %s, Inaktiv %s", on, off);
 }
 
 void EditTabDisplay::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) {
@@ -124,6 +154,7 @@ void EditTabDisplay::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) 
         HaColorPicker::show(tab->selected_color_on, [tab](String color) {
             tab->selected_color_on = color; 
             updateColorBtn(tab->btn_color_on, tab->selected_color_on, "Aktiv:");
+            tab->updateAdaptHint();
         });
     }, this);
     
@@ -133,11 +164,25 @@ void EditTabDisplay::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) 
         HaColorPicker::show(tab->selected_color_off, [tab](String color) {
             tab->selected_color_off = color; 
             updateColorBtn(tab->btn_color_off, tab->selected_color_off, "Inaktiv:");
+            tab->updateAdaptHint();
         });
     }, this);
 
     updateColorBtn(btn_color_on, selected_color_on, "Aktiv:"); 
     updateColorBtn(btn_color_off, selected_color_off, "Inaktiv:");
+
+    // Automatische Gegenfarbe fuer dieses Widget (global abschaltbar unter
+    // Einstellungen > Anzeige). Aus = gewaehlte Farben gelten in beiden Schemata.
+    selected_adapt = w->getColorAdapt();
+    cb_adapt = UIHelper::createCheckbox(parent, "Im hellen Schema Gegenfarbe verwenden", &lv_font_montserrat_16,
+                                        LV_ALIGN_TOP_LEFT, 10, 295, selected_adapt, [](lv_event_t* e) {
+        EditTabDisplay* tab = (EditTabDisplay*)lv_event_get_user_data(e);
+        if (!tab || !tab->cb_adapt) return;
+        tab->selected_adapt = lv_obj_has_state(tab->cb_adapt, LV_STATE_CHECKED);
+        tab->updateAdaptHint();
+    }, this);
+    lbl_adapt_hint = UIHelper::createLabel(parent, "", &lv_font_montserrat_14, LV_ALIGN_TOP_LEFT, 10, 330, 0xAAAAAA);
+    updateAdaptHint();
 }
 
 void EditTabDisplay::saveConfig(HAWidget* w) {
@@ -159,5 +204,6 @@ void EditTabDisplay::saveConfig(HAWidget* w) {
             }
         }
     }
+    w->setColorAdapt(selected_adapt);
     w->setColors(selected_color_on, selected_color_off);
 }

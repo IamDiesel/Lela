@@ -1,4 +1,6 @@
 #include "HaDialogTab.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "HaConfigLogic.h"
 #include "HaWebsocketLogic.h"
@@ -97,7 +99,7 @@ void HaDialogTab::deleteCurrentTab() {
     lv_obj_t* panel = lv_obj_create(confirm_overlay);
     lv_obj_set_size(panel, 560, 260);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
 

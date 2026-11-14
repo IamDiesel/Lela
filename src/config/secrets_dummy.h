@@ -36,7 +36,9 @@
 #define SECRET_MQTT_CATMAT_MAT_RSSI   "smartmat/sensor/mat_rssi"
 #define SECRET_MQTT_CATMAT_KIPPY_RSSI "smartmat/sensor/kippy_rssi"
 
-// Audio Stream
+// Babyphone-Ton, Quelle "HTTP-Stream": Rueckfall-URL, solange in den
+// Einstellungen keine eingetragen ist (Format dort waehlen: PCM oder AAC).
+// Beispiel: go2rtc-AAC. Mit der Quelle "BabyCam (UDP)" wird sie nicht benutzt.
 #define SECRET_BABY_STREAM_URL "http://192.168.1.100:1984/api/stream.aac?src=baby_audio_esp"
 
 // Kamera-Kennung fuer die Babyphone-API (Sitzungsanmeldung)

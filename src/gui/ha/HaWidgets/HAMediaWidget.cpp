@@ -1,6 +1,7 @@
 #include "HAMediaWidget.h"
 #include "HaWebsocketLogic.h"
 #include "MdiMapper.h"
+#include "HaTheme.h"
 
 // =========================================================
 // MEDIA WIDGET
@@ -30,10 +31,10 @@ void HAMediaWidget::updateState(String state) {
     const uint32_t c_off_val = colorOffOr(0x555555);
     
     if (state != "off" && state != "unavailable" && state != "unknown") {
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); 
+        lv_obj_set_style_bg_color(container, HaTheme::cardOn(c_on_val), 0); 
         lv_obj_set_style_text_color(icon_label, lv_color_hex(c_on_val), 0); 
     } else {
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x111111), 0); 
+        lv_obj_set_style_bg_color(container, HaTheme::cardOff(), 0); 
         lv_obj_set_style_text_color(icon_label, lv_color_hex(c_off_val), 0); 
     }
 }
@@ -74,10 +75,10 @@ void HAMediaItemWidget::updateState(String state) {
     const uint32_t c_off_val = colorOffOr(0x555555);
     
     if (state == "playing") {
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); 
+        lv_obj_set_style_bg_color(container, HaTheme::cardOn(c_on_val), 0); 
         lv_obj_set_style_text_color(icon_label, lv_color_hex(c_on_val), 0); 
     } else {
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x111111), 0); 
+        lv_obj_set_style_bg_color(container, HaTheme::cardOff(), 0); 
         lv_obj_set_style_text_color(icon_label, lv_color_hex(c_off_val), 0); 
     }
 }

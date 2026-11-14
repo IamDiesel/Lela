@@ -1,4 +1,6 @@
 #include "HAFolderWidget.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "HaWebsocketLogic.h"
 #include "HaWidgetFactory.h"
 #include "HaDialogFolder.h"
@@ -14,7 +16,7 @@ HAFolderWidget::HAFolderWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     
     placeholder_lbl = lv_label_create(container);
     lv_label_set_text(placeholder_lbl, LV_SYMBOL_DIRECTORY " Ordner");
-    lv_obj_set_style_text_color(placeholder_lbl, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_color(placeholder_lbl, lv_color_hex(HaTheme::themed(0x888888)), 0);
     lv_obj_align(placeholder_lbl, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(placeholder_lbl, LV_OBJ_FLAG_HIDDEN);
 }

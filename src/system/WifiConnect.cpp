@@ -137,3 +137,20 @@ void WifiConnect_Reset() {
     s_active = false;
     s_connected = false;
 }
+
+void WifiConnect_SwitchTo(const String& ssid, const String& pass) {
+    wifiSsid = ssid;
+    wifiPass = pass;
+    preferences.begin("catmat", false);
+    preferences.putString("wifiSsid", wifiSsid);
+    preferences.putString("wifiPass", wifiPass);
+    preferences.end();
+    Serial.printf("[WLAN] Wechsel zu '%s'.\n", ssid.c_str());
+
+    // WLAN aus oder noch nie gestartet: SystemLogic startet spaeter mit den
+    // neuen Daten. Sonst sofort neu anmelden - ohne den WLAN-Chip abzuschalten
+    // (das kostete ~3 s Hochfahren, siehe oben).
+    if (!wifiEnabled || !wifiStarted) return;
+    WiFi.disconnect(false, false);
+    WifiConnect_Begin(ssid, pass);
+}

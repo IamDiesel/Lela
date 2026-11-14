@@ -1,4 +1,7 @@
 #include "HASelectWidget.h"
+#include "HaTheme.h"
+#include "UIHelper.h"
+#include "UiTheme.h"
 #include "HaWebsocketLogic.h"
 
 HASelectWidget::HASelectWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off)
@@ -8,9 +11,7 @@ HASelectWidget::HASelectWidget(lv_obj_t* parent, int tab_idx, String type, Strin
     lv_obj_set_width(dropdown, lv_pct(85));
     lv_obj_align(dropdown, LV_ALIGN_CENTER, 0, 0);
     
-    lv_obj_set_style_bg_color(dropdown, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_width(dropdown, 0, 0);
-    lv_obj_set_style_text_color(dropdown, lv_color_white(), 0);
+    UIHelper::themeDropdown(dropdown);   // Feld und aufklappende Liste im Farbschema
     
     lv_obj_add_flag(dropdown, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_event_cb(dropdown, dropdown_event_cb, LV_EVENT_VALUE_CHANGED, this);
@@ -46,8 +47,8 @@ void HASelectWidget::updateState(String state) {
         lv_obj_add_state(dropdown, LV_STATE_DISABLED);
         lv_obj_clear_flag(dropdown, LV_OBJ_FLAG_CLICKABLE);
         
-        lv_obj_set_style_bg_color(dropdown, lv_color_hex(0x333333), 0);
-        lv_obj_set_style_text_color(dropdown, lv_color_hex(0xAAAAAA), 0);
+        lv_obj_set_style_bg_color(dropdown, HaTheme::control(), 0); lv_obj_set_style_text_color(dropdown, UiTheme::c().text, 0); lv_obj_set_style_shadow_width(dropdown, 0, 0);
+        lv_obj_set_style_text_color(dropdown, UiTheme::c().muted, 0);
         
     } else {
         String opt_str = "";
@@ -76,11 +77,11 @@ void HASelectWidget::updateState(String state) {
         lv_obj_clear_state(dropdown, LV_STATE_DISABLED);
         lv_obj_add_flag(dropdown, LV_OBJ_FLAG_CLICKABLE);
         
-        lv_obj_set_style_bg_color(dropdown, lv_color_hex(0x444444), 0);
-        lv_obj_set_style_text_color(dropdown, lv_color_white(), 0);
+        lv_obj_set_style_bg_color(dropdown, HaTheme::control(), 0); lv_obj_set_style_text_color(dropdown, UiTheme::c().text, 0); lv_obj_set_style_shadow_width(dropdown, 0, 0);
+        lv_obj_set_style_text_color(dropdown, UiTheme::c().text, 0);
     }
     
-    lv_obj_set_style_text_color(icon_label, lv_color_hex(0xFFD700), 0); 
+    lv_obj_set_style_text_color(icon_label, lv_color_hex(HaTheme::themed(0xFFD700)), 0); 
 }
 
 void HASelectWidget::dropdown_event_cb(lv_event_t * e) {

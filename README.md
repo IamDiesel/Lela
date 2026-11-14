@@ -97,6 +97,11 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
 
 ### 1.5 Audio & Video (Babyphone-Modus)
 * **Kamera-Quelle:** MJPEG-Video über HTTP und unkomprimiertes PCM-Audio (44,1 kHz, 16 Bit, mono) über UDP. Als Quelle kann beispielsweise ein altes Smartphone mit der App [BabyCam](https://play.google.com/store/apps/details?id=com.arjonasoftware.babycam) dienen.
+* **Tonquelle (Einstellungen → Babyphone → Tonquelle, auch im Web-Setup):**
+  * **BabyCam (UDP)** – Standard. Rohes PCM; Empfangsport 50001 und Sprechport 50003 sind einstellbar, meldet die Kamera im Status eigene Ports, gelten diese. Nur hier gibt es Gegensprechen (PTT-Knopf wird sonst ausgeblendet).
+  * **HTTP-Stream** – beliebige Quelle per `http://`-URL, Format **PCM 16 Bit** (roh mit einstellbarer Abtastrate/Kanälen, oder mit WAV-Kopf) bzw. **AAC (ADTS)**, z. B. go2rtc `…/api/stream.aac`. Abruf mit HTTP/1.0 (kein Chunked-Transfer), Stereo wird zu mono gemischt, nach Abbruch neuer Versuch (2–30 s).
+  * Alle Quellen schreiben in denselben Jitterpuffer; die I2S-Hardware fasst nur der Audio-Task an. Eine geänderte Quelle startet den laufenden Ton neu.
+  * Test für AAC ohne Kamera: `ffmpeg -re -f lavfi -i "sine=frequency=440:sample_rate=44100" -c:a aac -b:a 64k -f adts -listen 1 http://0.0.0.0:8090/test.aac`, dann `http://<PC-IP>:8090/test.aac` mit Format AAC eintragen.
 * **Babyphone-Dienst (`BabyService`):** Video, Ton und Kamerasitzung hängen nicht am Bildschirm, sondern an einem Modus: **Aus / Audio / Video / Video+Audio**. Ein Bildschirmwechsel ändert den Modus nicht. Nach einem Neustart ist der Modus „Aus“.
   * Umschalten über die QuickSettings (Zeile „Babyphone“), in der Baby-App (Tippen aufs Bild = Video+Audio an/aus, Audio-Knopf = nur Ton) oder per MQTT.
   * Die Kopfleiste zeigt den laufenden Modus als Symbol rechts neben dem Akku.
@@ -108,6 +113,11 @@ Das System ist in dedizierte Logik- und View-Klassen unterteilt, die asynchron a
   * Technik: LVGL zeichnet nur Rahmen und Statuszeile; das Bild skaliert der Hardware-Beschleuniger (PPA) direkt in den Bildspeicher, LVGL spart diese Fläche beim Zeichnen aus (`Lvgl_SetReservedArea`).
   * Einstellungen (Baby-App → Zahnrad): Overlay-Bildrate (1–15 fps, Standard 5), Overlay-Auflösung (Standard: kleinste, die die Kamera meldet) und „Overlay-Lage zurücksetzen“.
 * **Auflösung je Abnehmer:** Die Baby-App nutzt die eingestellte Kamera-Auflösung, das Overlay seine eigene. Ein Wechsel zwischen beiden startet den Kamerastream neu (~3 s).
+* **Kamera-Auflösung (eine Einstellung, zwei Bedienstellen):** In den Einstellungen und im Zahnrad-Dialog der Baby-App steht dasselbe Dropdown (`CamResolutionUi`) mit derselben Einstellung.
+  * Angefordert wird bei **jedem Verbindungsaufbau** (Videostart oder neue Kamerasitzung), sobald der erste Kamerastatus dieser Sitzung vorliegt. Liefert die Kamera die Auflösung schon, wird nichts gesendet (kein unnötiger Stream-Neustart).
+  * Abgleich mit der Liste der Kamera: die eingestellte, sonst die nächstkleinere, sonst die kleinste. Unter dem Dropdown steht ein Hinweis, wenn die Kamera etwas anderes liefert.
+  * Die Liste wird je Kamera-IP gemerkt und ist auch bei ausgeschalteter Kamera wählbar.
+  * Fremde Kamera (Expertenmodus): Dropdown gesperrt – die Auflösung steht dort in der URL.
 * **Latenz-Modus:** Stauen sich Bilder, wird nur das neueste dekodiert – die Anzeige hängt der Realität nicht hinterher.
 * **Sicherheitsventil:** Wird der interne DMA-fähige Speicher knapp (größter Block < 12 KB), pausiert nur das Video („Video pausiert – Speicher knapp“); Ton und Alarme laufen weiter. Hintergrund: Der WLAN-Treiber braucht dort bis zu 7,5 KB am Stück, sonst startet das Gerät neu.
 * **Alarmierung:** Baby-Alarm per MQTT weckt das Display, öffnet die Baby-App und startet Video+Audio.
@@ -150,6 +160,19 @@ Zeigt Entitäten mit Koordinaten (`device_tracker`, `person`, Sensoren mit `lati
   * **Zwischenspeicher:** 56 dekodierte Kacheln im PSRAM; dazu im Flash (`/tiles`, max. 2 MB, mindestens 7 Tage gültig), sodass sie nach einem Neustart sofort da sind.
   * Bei knappem DMA-Speicher pausiert der Abruf („Karte pausiert – Speicher knapp“). Video und WLAN haben Vorrang.
 
+### 1.8 Einstellungen & Farbschema
+* **Aufbau:** Bestehende Topbar oben, links eine Seitenleiste mit fünf Bereichen (Katzenmatte, Babyphone, Verbindungen, Anzeige, System) – farbige Symbol-Kacheln wie auf dem Dashboard, darunter ein Live-Status („Matte verbunden“, „WLAN – MQTT“). Rechts Karten mit Zeilen: Titel, Beschreibung oder Status-Chip, Bedienelement.
+* **Unterseiten statt Popups:** Kamera-Verbindung (inkl. BabyCam-Suche), Tonquelle, WLAN-Netz, Web-Setup (QR-Code), Bluetooth-Suche für Matte/Kippy, Diagnose und Bildschirmfoto öffnen sich in der Inhaltsfläche, mit „‹ Bereich“ zurück und „Verwerfen/Übernehmen“. Die Bildschirmtastatur schiebt das Eingabefeld in den sichtbaren Bereich.
+* **WLAN-Netz:** Gemerkte Netze direkt verbinden oder vergessen; neues Netz per Suche („In der Nähe“) oder von Hand. Der Wechsel meldet sich ohne Neustart neu an (`WifiConnect_SwitchTo`); gemerkt wird ein Netz erst nach erfolgreicher Verbindung.
+* **Neustart** mit Rückfrage im Knopf (zweimal tippen), **Bildschirmfoto im Browser** als sichtbares Werkzeug unter System.
+* **Farbschema (`UiTheme`):** Dunkel, Hell oder Automatisch (07–20 Uhr hell). Farben werden nach Rolle abgefragt (Hintergrund, Karte, Text, Akzent …); beim Wechsel wird die Ansicht einmal neu aufgebaut. Alarmfarben, Kachelfarben, HA-Zustandsfarben und Kartenkacheln bleiben gleich.
+  * Stand: Alle Ansichten nutzen das Schema (Einstellungen, Dashboard, Schnelleinstellungen, Baby-App, Katzenmatte, HA-App samt Widgets und Dialogen), jeweils mit der Topbar im Schema.
+  * **HA-App (`HaTheme`):** Kacheln im hellen Schema: „an“ leicht in der Widget-Farbe getönt, „aus“ neutral grau. Widget-Farben werden als Dunkel-Wert gespeichert (`color_on`/`color_off` wie bisher, keine Migration); im hellen Schema gilt die Gegenfarbe – für die 23 Palettenfarben und die Standardfarben der Widget-Typen als festes Paar (bunte Farben mit Kontrast ≥ 3:1 auf Weiß), für alle anderen berechnet. Die Farbwahl zeigt die Gegenfarbe als Streifen unter jeder Kachel.
+  * Die Gegenfarbe für eigene Farben lässt sich global (Einstellungen › Anzeige › „Gegenfarben im hellen Schema“) und je Widget (Bearbeiten › Anzeige, JSON `color_adapt: false`) abschalten; dann gilt die gewählte Farbe in beiden Schemata. Standardfarben passen sich immer an. Stopp-/Löschen-Rot, farbige Aktionsknöpfe und die Kartenansicht bleiben gleich.
+  * Sofort neu aufgebaut werden Einstellungen, Dashboard und Katzenmatte; Baby-App und HA-App übernehmen einen Wechsel beim nächsten Öffnen (ein Neuaufbau dort würde laufende Streams bzw. die HA-Ansicht unterbrechen).
+  * Signalfarben (Kippy nah/mittel/fern, HA-Tracker zuhause/unterwegs) laufen über die Rollen OK/Hinweis/Gefahr, damit sie auch auf hellem Grund lesbar bleiben.
+* **Technik:** Nur die sichtbare Seite existiert als LVGL-Objekte; gemeinsame Stile (`SettingsUi`) statt Einzelstilen je Objekt; flach (keine Schatten, Verläufe, Animationen), weil jeder volle Neuaufbau auf dem Tab5 0,3–0,5 s kostet.
+
 ---
 
 ## 2. Hardware-Voraussetzungen
@@ -170,9 +193,9 @@ Der Quellcode ist modular in folgende Hauptbereiche unterteilt:
 * `src/config/`: Systemweite Konstanten, globale Variablen und Zugangsdaten (`secrets.h`).
 * `src/doc/`: Zusätzliche Dokumentationen und Setup-Hinweise.
 * `src/gui/`: Die vollständige LVGL-Benutzeroberfläche.
-  * `core/`: Haupt-Views (Dashboard, Settings, Topbar, QuickSettings, Alarm-Popups), Video-Overlay (`ViewVideoPip`) und `GuiManager`.
+  * `core/`: Haupt-Views (Dashboard, Settings, Topbar, QuickSettings, Alarm-Popups), Video-Overlay (`ViewVideoPip`) und `GuiManager`; Farbschema `UiTheme`, Einstellungs-Bausteine `SettingsUi` und die Seiten `SettingsPage*.cpp`.
   * `map/`: Wiederverwendbare Kartenansicht `MapView` (Kacheln, Marker, Wege, Ausschnitt) ohne HA-Bezug.
-  * `ha/`: C++ LVGL-Integration für Home Assistant.
+  * `ha/`: C++ LVGL-Integration für Home Assistant; Farben im Schema über `HaTheme` (Kachel-Rollen, Paletten-Gegenfarben).
     * `HaWidgets/`: Modulare Widget-Klassen (Base, Light, Sensor, Vacuum, Media, Map).
     * `HaDialogs/`: Gekapselte UI-Popups (Edit, Add, Light, Vacuum, ColorPicker) und die `UIHelper`-Factory für sauberen LVGL-Code.
   * `baby/` & `cat/`: Spezialisierte Ansichten für die Video/Audio- und Sensor-Überwachung.
@@ -200,8 +223,9 @@ Die Versionen von LVGL, M5GFX und M5Unified sind **bewusst exakt festgelegt**: a
 * **`gilmaimon/ArduinoWebsockets`** (`0.5.4`): Home Assistant WebSocket.
 * **`knolleary/PubSubClient`** (`2.8.0`): MQTT.
 * **`bertmelis/USBHostSerial`** (Git, Commit `3608e9a`, Version 0.2.0): USB-CDC zum BLE-Coprozessor (T-Dongle S3).
+* **`lib/libhelix-aac`** (eingebettet): AAC-Decoder (Helix, RealNetworks) für Babyphone-Ton per HTTP. Unverändert aus ESP8266Audio, Commit `e1f2a1a` – Herkunft, Lizenz (RPSL/RCSL) und Aktualisierung in `lib/libhelix-aac/README.md`.
 
-Seit v2.0.0 sind **alle** Bibliotheken exakt gepinnt (Git-Bibliotheken auf einen Commit), damit ein Neubau auch später dieselben Stände zieht. Die Babyphone-Audioausgabe läuft direkt über M5Unified; die frühere Abhängigkeit `ESP8266Audio` war ungenutzt und ist entfernt.
+Seit v2.0.0 sind **alle** Bibliotheken exakt gepinnt (Git-Bibliotheken auf einen Commit), damit ein Neubau auch später dieselben Stände zieht. Die Babyphone-Audioausgabe läuft direkt über M5Unified. Von `ESP8266Audio` wird nur noch der AAC-Decoder genutzt, eingebettet unter `lib/` – die Bibliothek selbst ist entfernt (ihre Ausgabeklasse griff an der I2S-Hardware vorbei).
 
 ---
 
@@ -245,10 +269,14 @@ Wenn das Gerät zum ersten Mal startet (oder sein konfiguriertes WLAN nicht find
    * Lokales WLAN – mit „Passwort anzeigen“ und einer Auswahlliste **gespeicherter Netze**. Jedes Netz, mit dem sich das Gerät erfolgreich verbunden hat, wird samt Passwort gemerkt (bis zu 8, NVS-Bereich `wifinets`). Die Auswahl füllt SSID und Passwort; „Ausgewähltes Netz vergessen“ entfernt einen Eintrag. Die Werkseinstellung löscht alle.
    * Optional eine **feste IP-Adresse** (IP, Gateway, Subnetzmaske, DNS) statt DHCP. Der Start ist damit ca. 2 s schneller. Die Adresse vorher im Router fest für das Gerät reservieren. Ungültige Angaben werden nicht übernommen (es bleibt bei DHCP).
    * IP und Port von Home Assistant
-   * MQTT-Broker Credentials
-   * Stream-URLs für Video & Audio (z. B. aus der BabyCam-App)
+   * MQTT-Broker (IP, Port, Benutzer, Passwort)
+   * Kamera: IP der BabyCam, oder „Fremde Kamera“ mit eigener Video- und Audio-URL (gleiche Felder wie „Stream Verbindung“ am Gerät)
    * MAC-Adressen der Bluetooth-Peripherie
+
+   **Rückfall auf `secrets.h`:** Die Felder zeigen nur, was im Gerät gespeichert ist. Ein leeres Feld bedeutet „Standard aus `secrets.h`“ – der Platzhalter nennt ihn. Wird ein Feld geleert und gespeichert, gilt wieder `secrets.h`. Das betrifft HA, MQTT, Kamera und MAC-Adressen.
 5. Nach dem Speichern startet das Display neu und verbindet sich automatisch mit der Infrastruktur.
+
+**Später aus den Einstellungen** (Verbindungen › Web-Setup): „Im Heimnetz“ (Tablet bleibt im WLAN) oder „Eigenes Setup-WLAN“ (wie oben). Das Setup läuft nur, solange die QR-Seite offen ist: „Beenden“, „‹ Verbindungen“, ein anderer Bereich oder das Verlassen der Einstellungen beenden es **ohne Neustart**; aus dem Setup-WLAN meldet sich das Tablet wieder im Heimnetz an. Ohne Eingabe endet es nach 5 Minuten. Bluetooth, Alarme und Anzeige laufen währenddessen weiter. Ausnahme Ersteinrichtung ohne gespeichertes WLAN: Dann bleibt das Setup-WLAN bestehen, weil es der einzige Zugang ist.
 
 ---
 

@@ -1,4 +1,6 @@
 #include "HaDialogAdd.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "UIHelper.h"
 #include "HaWebsocketLogic.h"
@@ -43,7 +45,7 @@ static bool isMapTypeSelected() {
 static void updateMapPreview(const String& input) {
     if (HaDialogAdd::target_folder) {
         lv_label_set_text(lbl_preview, "Karten koennen nicht in einen Ordner gelegt werden.");
-        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0xE74C3C), 0);
+        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(HaTheme::themed(0xE74C3C)), 0);
         return;
     }
     String text;
@@ -54,7 +56,7 @@ static void updateMapPreview(const String& input) {
         text = "Karte: ersten Tracker suchen (z.B. lola)\nZuhause (zone.home) kommt automatisch dazu";
     }
     lv_label_set_text(lbl_preview, text.c_str());
-    lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0x3498DB), 0);
+    lv_obj_set_style_text_color(lbl_preview, lv_color_hex(HaTheme::themed(0x3498DB)), 0);
 }
 
 // Legt das Kartenwidget an (Enter im Hinzufuegen-Dialog bei Typ "map").
@@ -113,13 +115,13 @@ static void updateAddWidgetPreview() {
     
     if (input_txt.length() == 0 && e_type != "folder") {
         lv_label_set_text(lbl_preview, "Vorschau: ...");
-        lv_obj_set_style_text_color(lbl_preview, lv_color_white(), 0);
+        lv_obj_set_style_text_color(lbl_preview, UiTheme::c().text, 0);
         return;
     }
     
     if (e_type == "folder") {
         lv_label_set_text(lbl_preview, "Status: Leerer Ordner wird angelegt");
-        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0x3498DB), 0);
+        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(HaTheme::themed(0x3498DB)), 0);
         return;
     }
 
@@ -133,14 +135,14 @@ static void updateAddWidgetPreview() {
         // das waere irrefuehrend. Die Vorschau aktualisiert sich nach dem Laden.
         previewText += HaEntityCatalog::IsLoading() ? "Status: Entitaetsliste wird geladen ..."
                                                      : "Status: Entitaetsliste nicht verfuegbar (HA getrennt?)";
-        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0xAAAAAA), 0);
+        lv_obj_set_style_text_color(lbl_preview, UiTheme::c().muted, 0);
     } else if (exists) {
         previewText += "Status: Gefunden in HA! " LV_SYMBOL_OK;
         if (ha_name.length() > 0) previewText += " (" + ha_name + ")";
-        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0x2ECC71), 0); 
+        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(HaTheme::themed(0x2ECC71)), 0); 
     } else {
         previewText += "Status: Unbekannt " LV_SYMBOL_CLOSE " (Trotzdem moeglich)";
-        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(0xE74C3C), 0); 
+        lv_obj_set_style_text_color(lbl_preview, lv_color_hex(HaTheme::themed(0xE74C3C)), 0); 
     }
     lv_label_set_text(lbl_preview, previewText.c_str());
 }
@@ -164,7 +166,7 @@ void HaDialogAdd::showAddWidgetDialog(HAFolderWidget* folder) {
     lv_obj_t* panel = lv_obj_create(add_widget_overlay);
     lv_obj_set_size(panel, 860, 480);
     lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 20);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
     lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
 

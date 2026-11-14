@@ -2,12 +2,15 @@
 #include "GuiManager.h"
 #include "SharedData.h"
 #include "ViewTopbar.h"
+#include "UiTheme.h"      // Rollenfarben (Hell/Dunkel)
+#include "SettingsUi.h"   // gemeinsamer Knopfstil
 #include <WiFi.h>
 #include <cmath>
 #include <ctime>
 #include <cstdio>
 
-#define TEXT_COLOR (isDarkMode ? lv_color_white() : lv_color_black())
+// Haupttextfarbe folgt dem Farbschema (UiTheme), nicht mehr isDarkMode direkt.
+#define TEXT_COLOR (UiTheme::c().text)
 
 #define ICON_RADAR_X -135
 #define ICON_RADAR_Y 500
@@ -20,7 +23,9 @@ static int s_catRssi = -999;
 static int32_t s_currentPressure = -99999;
 static int32_t s_rawPressure = -99999;
 
-static uint32_t s_lastBtnColor = 0; 
+// Zuletzt gesetzte Farbe des Alarmknopfs (0xRRGGBB); 0xFFFFFFFF = ungueltig,
+// damit der erste Durchlauf sicher zeichnet.
+static uint32_t s_lastBtnColor = 0xFFFFFFFF; 
 static int s_lastBtnStateForText = -1;
 static int s_lastGraphMode = -1; 
 
@@ -208,10 +213,11 @@ static void chart_event_cb(lv_event_t * e) {
     if (chart_expanded) {
         lv_obj_set_size(chart, 1000, 500); 
         lv_obj_align(chart, LV_ALIGN_CENTER, 0, 0); 
-        lv_obj_set_style_bg_color(chart, lv_color_hex(0x111111), 0); 
+        lv_obj_set_style_bg_color(chart, UiTheme::c().surface, 0); 
         lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, 0); 
         lv_obj_set_style_border_width(chart, 2, LV_PART_MAIN); 
-        lv_obj_set_style_line_color(chart, lv_color_hex(0x444444), LV_PART_MAIN); 
+        lv_obj_set_style_border_color(chart, UiTheme::c().divider, LV_PART_MAIN); 
+        lv_obj_set_style_line_color(chart, UiTheme::c().divider, LV_PART_MAIN); 
         lv_chart_set_div_line_count(chart, 4, 4); 
 
         lv_obj_align_to(label_legend, chart, LV_ALIGN_OUT_TOP_MID, 0, -20); 
@@ -242,7 +248,7 @@ static void chart_event_cb(lv_event_t * e) {
         lv_obj_align(chart, LV_ALIGN_TOP_MID, -20, 280); 
         lv_obj_set_style_bg_opa(chart, 0, 0); 
         lv_obj_set_style_border_width(chart, 0, LV_PART_MAIN); 
-        lv_obj_set_style_line_color(chart, lv_color_hex(0x333333), LV_PART_MAIN); 
+        lv_obj_set_style_line_color(chart, UiTheme::c().divider, LV_PART_MAIN); 
         lv_chart_set_div_line_count(chart, 3, 5); 
 
         lv_obj_align_to(label_legend, chart, LV_ALIGN_OUT_RIGHT_MID, 15, 0); 
@@ -273,17 +279,19 @@ static void chart_event_cb(lv_event_t * e) {
 lv_obj_t* ViewCatMat::build() {
     s_haTrackerState = -1; s_catStateUi = -1; s_catRssi = -999;
     s_currentPressure = -99999; s_rawPressure = -99999;
-    s_lastBtnColor = 0; s_lastBtnStateForText = -1; s_lastGraphMode = -1; 
+    s_lastBtnColor = 0xFFFFFFFF; s_lastBtnStateForText = -1; s_lastGraphMode = -1; 
 
     lv_obj_t* scr = lv_obj_create(NULL);
     if (!scr) return nullptr; 
 
-    lv_obj_set_style_bg_color(scr, isDarkMode ? lv_color_hex(0x111111) : lv_color_white(), 0);
+    SettingsUi::initStyles();
+    const UiColors& c = UiTheme::c();
+    lv_obj_set_style_bg_color(scr, c.bg, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE); 
     lv_obj_add_event_cb(scr, GuiManager::gestureEventWrapper, LV_EVENT_GESTURE, &gui);
 
-    ViewTopbar_Create(scr);
+    ViewTopbar_Create(scr, true);
 
     label_status = lv_label_create(scr); 
     lv_label_set_text(label_status, "Suche..."); 
@@ -304,13 +312,13 @@ lv_obj_t* ViewCatMat::build() {
     lv_obj_align(label_avg, LV_ALIGN_TOP_MID, 0, 220); 
     
     label_raw = lv_label_create(scr); 
-    lv_obj_set_style_text_color(label_raw, lv_color_hex(0x888888), 0); 
+    lv_obj_set_style_text_color(label_raw, UiTheme::c().muted, 0); 
     lv_obj_set_style_text_font(label_raw, &lv_font_montserrat_16, 0); 
     lv_label_set_text(label_raw, "RAW: 0"); 
     lv_obj_align_to(label_raw, label_avg, LV_ALIGN_OUT_LEFT_MID, -40, 0); 
     
     label_limit = lv_label_create(scr); 
-    lv_obj_set_style_text_color(label_limit, lv_color_hex(0x888888), 0); 
+    lv_obj_set_style_text_color(label_limit, UiTheme::c().muted, 0); 
     lv_obj_set_style_text_font(label_limit, &lv_font_montserrat_16, 0); 
     lv_label_set_text_fmt(label_limit, "Limit: %d", thresholdVal); 
     lv_obj_align_to(label_limit, label_avg, LV_ALIGN_OUT_RIGHT_MID, 40, 0); 
@@ -327,24 +335,24 @@ lv_obj_t* ViewCatMat::build() {
     lv_obj_set_style_pad_all(chart, 0, LV_PART_MAIN); 
     lv_obj_set_style_bg_opa(chart, 0, 0); 
     lv_obj_set_style_border_width(chart, 0, LV_PART_MAIN); 
-    lv_obj_set_style_line_color(chart, lv_color_hex(0x333333), LV_PART_MAIN); 
+    lv_obj_set_style_line_color(chart, UiTheme::c().divider, LV_PART_MAIN); 
     lv_chart_set_div_line_count(chart, 3, 5); 
     
-    ser_avg = lv_chart_add_series(chart, lv_color_hex(0x00A0FF), LV_CHART_AXIS_PRIMARY_Y); 
+    ser_avg = lv_chart_add_series(chart, c.accent, LV_CHART_AXIS_PRIMARY_Y); 
     lv_chart_set_all_value(chart, ser_avg, LV_CHART_POINT_NONE); 
     lv_obj_add_event_cb(chart, chart_event_cb, LV_EVENT_CLICKED, NULL);
     
     label_legend = lv_label_create(scr); updateLegendText(); 
     lv_obj_set_style_text_font(label_legend, &lv_font_montserrat_16, 0); 
-    lv_obj_set_style_text_color(label_legend, lv_color_hex(0x888888), 0); 
+    lv_obj_set_style_text_color(label_legend, UiTheme::c().muted, 0); 
     lv_obj_set_style_text_align(label_legend, LV_TEXT_ALIGN_CENTER, 0); 
     lv_obj_align_to(label_legend, chart, LV_ALIGN_OUT_RIGHT_MID, 15, 0); 
     
     label_latest_val = lv_label_create(scr); 
     lv_label_set_text(label_latest_val, "0"); 
     lv_obj_set_style_text_font(label_latest_val, &lv_font_montserrat_20, 0); 
-    lv_obj_set_style_text_color(label_latest_val, lv_color_hex(0x00A0FF), 0); 
-    lv_obj_set_style_bg_color(label_latest_val, lv_color_hex(0x333333), 0); 
+    lv_obj_set_style_text_color(label_latest_val, c.accent, 0); 
+    lv_obj_set_style_bg_color(label_latest_val, c.surface2, 0); 
     lv_obj_set_style_bg_opa(label_latest_val, 220, 0); 
     lv_obj_set_style_pad_all(label_latest_val, 8, 0); 
     lv_obj_set_style_radius(label_latest_val, 10, 0); 
@@ -352,6 +360,7 @@ lv_obj_t* ViewCatMat::build() {
     
     btn_auto_fit = lv_btn_create(scr); 
     lv_obj_set_size(btn_auto_fit, 200, 50); 
+    SettingsUi::styleButton(btn_auto_fit, SettingsUi::Btn::Primary); 
     lv_obj_add_event_cb(btn_auto_fit, btn_auto_fit_event_cb, LV_EVENT_CLICKED, NULL); 
     lv_obj_t * label_auto_fit = lv_label_create(btn_auto_fit); 
     lv_label_set_text(label_auto_fit, "AUTO FIT"); 
@@ -362,14 +371,14 @@ lv_obj_t* ViewCatMat::build() {
     for (int i = 0; i <= 6; i++) { 
         tick_y[i] = lv_label_create(scr); 
         lv_obj_set_style_text_font(tick_y[i], &lv_font_montserrat_16, 0); 
-        lv_obj_set_style_text_color(tick_y[i], lv_color_hex(0x888888), 0); 
+        lv_obj_set_style_text_color(tick_y[i], UiTheme::c().muted, 0); 
         lv_obj_add_flag(tick_y[i], LV_OBJ_FLAG_HIDDEN); 
         
         tick_x[i] = lv_label_create(scr); 
         lv_obj_set_style_text_font(tick_x[i], &lv_font_montserrat_16, 0); 
         lv_obj_set_width(tick_x[i], 80); 
         lv_obj_set_style_text_align(tick_x[i], LV_TEXT_ALIGN_CENTER, 0); 
-        lv_obj_set_style_text_color(tick_x[i], lv_color_hex(0x888888), 0); 
+        lv_obj_set_style_text_color(tick_x[i], UiTheme::c().muted, 0); 
         lv_obj_add_flag(tick_x[i], LV_OBJ_FLAG_HIDDEN); 
     }
 
@@ -407,9 +416,9 @@ lv_obj_t* ViewCatMat::build() {
     lv_obj_add_flag(home_cont, LV_OBJ_FLAG_HIDDEN); 
     
     static const lv_point_t h_house[] = {{0, 42}, {54, 0}, {108, 42}, {108, 96}, {0, 96}, {0, 42}};
-    lv_obj_t * l_house = lv_line_create(home_cont); lv_line_set_points(l_house, h_house, 6); lv_obj_set_style_line_width(l_house, 6, 0); lv_obj_set_style_line_color(l_house, lv_color_hex(0x00FF00), 0);
+    lv_obj_t * l_house = lv_line_create(home_cont); lv_line_set_points(l_house, h_house, 6); lv_obj_set_style_line_width(l_house, 6, 0); lv_obj_set_style_line_color(l_house, UiTheme::c().ok, 0);
     static const lv_point_t h_cat_sit[] = {{72,96}, {36,96}, {36,72}, {42,48}, {36,30}, {45,39}, {63,39}, {72,30}, {66,48}, {72,72}, {72,96}};
-    lv_obj_t * h_cat = lv_line_create(home_cont); lv_line_set_points(h_cat, h_cat_sit, 11); lv_obj_set_style_line_width(h_cat, 6, 0); lv_obj_set_style_line_color(h_cat, lv_color_hex(0x00FF00), 0); lv_obj_set_style_line_rounded(h_cat, true, 0);
+    lv_obj_t * h_cat = lv_line_create(home_cont); lv_line_set_points(h_cat, h_cat_sit, 11); lv_obj_set_style_line_width(h_cat, 6, 0); lv_obj_set_style_line_color(h_cat, UiTheme::c().ok, 0); lv_obj_set_style_line_rounded(h_cat, true, 0);
 
     away_cont = lv_obj_create(scr); 
     lv_obj_set_size(away_cont, 108, 96); 
@@ -424,19 +433,20 @@ lv_obj_t* ViewCatMat::build() {
     static const lv_point_t a_tree2[] = {{99,84}, {99,42}, {90,42}, {99,12}, {108,42}, {99,42}};
     static const lv_point_t a_cat_walk[] = {{30,48}, {36,66}, {51,66}, {63,60}, {66,51}, {72,51}, {78,60}, {72,69}, {72,84}, {66,84}, {66,75}, {51,75}, {51,84}, {45,84}, {45,75}, {36,66}};
     
-    lv_obj_t * l_t1 = lv_line_create(away_cont); lv_line_set_points(l_t1, a_tree1, 6); lv_obj_set_style_line_width(l_t1, 6, 0); lv_obj_set_style_line_color(l_t1, lv_color_hex(0xFF8800), 0);
-    lv_obj_t * l_t2 = lv_line_create(away_cont); lv_line_set_points(l_t2, a_tree2, 6); lv_obj_set_style_line_width(l_t2, 6, 0); lv_obj_set_style_line_color(l_t2, lv_color_hex(0xFF8800), 0);
-    lv_obj_t * l_acat = lv_line_create(away_cont); lv_line_set_points(l_acat, a_cat_walk, 16); lv_obj_set_style_line_width(l_acat, 6, 0); lv_obj_set_style_line_color(l_acat, lv_color_hex(0xFF8800), 0); lv_obj_set_style_line_rounded(l_acat, true, 0);
+    lv_obj_t * l_t1 = lv_line_create(away_cont); lv_line_set_points(l_t1, a_tree1, 6); lv_obj_set_style_line_width(l_t1, 6, 0); lv_obj_set_style_line_color(l_t1, UiTheme::c().warn, 0);
+    lv_obj_t * l_t2 = lv_line_create(away_cont); lv_line_set_points(l_t2, a_tree2, 6); lv_obj_set_style_line_width(l_t2, 6, 0); lv_obj_set_style_line_color(l_t2, UiTheme::c().warn, 0);
+    lv_obj_t * l_acat = lv_line_create(away_cont); lv_line_set_points(l_acat, a_cat_walk, 16); lv_obj_set_style_line_width(l_acat, 6, 0); lv_obj_set_style_line_color(l_acat, UiTheme::c().warn, 0); lv_obj_set_style_line_rounded(l_acat, true, 0);
     
     label_ha_tracker = lv_label_create(scr); 
     lv_label_set_text(label_ha_tracker, "Lade HA..."); 
     lv_obj_set_style_text_font(label_ha_tracker, &lv_font_montserrat_24, 0); 
     lv_obj_align(label_ha_tracker, LV_ALIGN_TOP_MID, ICON_HA_X, ICON_HA_Y + 100); 
-    lv_obj_set_style_text_color(label_ha_tracker, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_text_color(label_ha_tracker, UiTheme::c().muted, 0);
 
     btn_mute = lv_btn_create(scr); 
     lv_obj_set_size(btn_mute, 600, 80); 
     lv_obj_align(btn_mute, LV_ALIGN_BOTTOM_MID, 0, -40); 
+    lv_obj_set_style_shadow_width(btn_mute, 0, 0); 
     lv_obj_add_event_cb(btn_mute, btn_mute_event_cb, LV_EVENT_CLICKED, NULL); 
     
     lv_obj_t * label_mute = lv_label_create(btn_mute); 
@@ -456,25 +466,34 @@ void ViewCatMat::update() {
     ViewTopbar_Update();
 
     int curBtnState = alarmActive ? (catAlarmAcked ? 4 : 3) : (disconnectAlarmActive ? (catAlarmAcked ? 6 : 5) : (isArmed ? 2 : 1));
-    uint32_t targetBtnColor = 0x555555; const char* targetBtnText = "";
+    const char* targetBtnText = "";
 
     bool fastBlink = (millis() % 600 < 300);
 
+    // Ruhe und Scharf folgen dem Farbschema; Alarm- und Offline-Zustaende
+    // (blinkend) bleiben bewusst in beiden Modi gleich.
+    const UiColors& c = UiTheme::c();
+    lv_color_t btnBg = c.surface2;
+    lv_color_t btnText = c.text;
+    const lv_color_t white = lv_color_white();
+
     switch(curBtnState) {
-        case 1: targetBtnText = "ALARM AKTIVIEREN"; targetBtnColor = 0x555555; break;
-        case 2: targetBtnText = "ALARM DEAKTIVIEREN"; targetBtnColor = 0x00A0FF; break;
-        case 3: targetBtnText = "CATMAT ALARM STUMM"; targetBtnColor = fastBlink ? 0xFF0000 : 0x660000; break;
-        case 4: targetBtnText = "CATMAT ALARM RESET"; targetBtnColor = 0xFF8800; break;
-        case 5: targetBtnText = "OFFLINE-WARNUNG STUMM"; targetBtnColor = fastBlink ? 0x0000FF : 0x000055; break;
-        case 6: targetBtnText = "OFFLINE-WARNUNG IGNORIEREN"; targetBtnColor = 0x0088CC; break;
+        case 1: targetBtnText = "ALARM AKTIVIEREN"; break;
+        case 2: targetBtnText = "ALARM DEAKTIVIEREN"; btnBg = c.primary; btnText = c.onPrimary; break;
+        case 3: targetBtnText = "CATMAT ALARM STUMM"; btnBg = lv_color_hex(fastBlink ? 0xFF0000 : 0x660000); btnText = white; break;
+        case 4: targetBtnText = "CATMAT ALARM RESET"; btnBg = lv_color_hex(0xFF8800); btnText = white; break;
+        case 5: targetBtnText = "OFFLINE-WARNUNG STUMM"; btnBg = lv_color_hex(fastBlink ? 0x0000FF : 0x000055); btnText = white; break;
+        case 6: targetBtnText = "OFFLINE-WARNUNG IGNORIEREN"; btnBg = lv_color_hex(0x0088CC); btnText = white; break;
     }
+    const uint32_t targetBtnColor = lv_color_to32(btnBg) & 0xFFFFFF;
 
     if (s_lastBtnStateForText != curBtnState) {
         lv_label_set_text(lv_obj_get_child(btn_mute, 0), targetBtnText);
         s_lastBtnStateForText = curBtnState;
     }
     if (s_lastBtnColor != targetBtnColor) {
-        lv_obj_set_style_bg_color(btn_mute, lv_color_hex(targetBtnColor), 0);
+        lv_obj_set_style_bg_color(btn_mute, btnBg, 0);
+        lv_obj_set_style_text_color(btn_mute, btnText, 0);
         s_lastBtnColor = targetBtnColor;
     }
 
@@ -524,12 +543,14 @@ void ViewCatMat::update() {
     else curCatState = 4;
 
     if (s_catStateUi != curCatState || (curCatState > 1 && s_catRssi != catRssi)) {
-        lv_color_t tc = lv_color_hex(0x555555);
+        // Signalampel ueber Rollenfarben, damit sie auch im hellen Modus
+        // lesbar bleibt (reines Gelb/Gruen verschwindet auf Weiss).
+        lv_color_t tc = c.muted;
         if (curCatState == 0) lv_label_set_text(label_cat, "OFF");
         else if (curCatState == 1) lv_label_set_text(label_cat, "Abwesend");
-        else if (curCatState == 2) { tc = lv_color_hex(0x00FF00); lv_label_set_text_fmt(label_cat, "Nah (%d)", catRssi); }
-        else if (curCatState == 3) { tc = lv_color_hex(0xFFFF00); lv_label_set_text_fmt(label_cat, "Mittel (%d)", catRssi); }
-        else if (curCatState == 4) { tc = lv_color_hex(0xFF8800); lv_label_set_text_fmt(label_cat, "Fern (%d)", catRssi); }
+        else if (curCatState == 2) { tc = c.ok;     lv_label_set_text_fmt(label_cat, "Nah (%d)", catRssi); }
+        else if (curCatState == 3) { tc = c.warn;   lv_label_set_text_fmt(label_cat, "Mittel (%d)", catRssi); }
+        else if (curCatState == 4) { tc = c.danger; lv_label_set_text_fmt(label_cat, "Fern (%d)", catRssi); }
         
         set_cat_color(tc); lv_obj_set_style_text_color(label_cat, tc, 0);
         if (!chart_expanded) { lv_obj_clear_flag(cat_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(label_cat, LV_OBJ_FLAG_HIDDEN); }
@@ -539,10 +560,10 @@ void ViewCatMat::update() {
     int curHaTrackerState = (!wifiEnabled) ? 1 : ((!isTrackerDataValid || WiFi.status() != WL_CONNECTED) ? 2 : (isCatAtHome ? 3 : 4));
     if (s_haTrackerState != curHaTrackerState) {
         if (!chart_expanded) {
-            if (curHaTrackerState == 1) { lv_label_set_text(label_ha_tracker, "WLAN Aus"); lv_obj_set_style_text_color(label_ha_tracker, lv_color_hex(0x555555), 0); lv_obj_add_flag(home_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(away_cont, LV_OBJ_FLAG_HIDDEN); }
-            else if (curHaTrackerState == 2) { lv_label_set_text(label_ha_tracker, "Lade HA..."); lv_obj_set_style_text_color(label_ha_tracker, lv_color_hex(0x555555), 0); lv_obj_add_flag(home_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(away_cont, LV_OBJ_FLAG_HIDDEN); }
-            else if (curHaTrackerState == 3) { lv_label_set_text(label_ha_tracker, "Zuhause"); lv_obj_set_style_text_color(label_ha_tracker, lv_color_hex(0x00FF00), 0); lv_obj_clear_flag(home_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(away_cont, LV_OBJ_FLAG_HIDDEN); }
-            else { lv_label_set_text(label_ha_tracker, "Unterwegs"); lv_obj_set_style_text_color(label_ha_tracker, lv_color_hex(0xFF8800), 0); lv_obj_add_flag(home_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(away_cont, LV_OBJ_FLAG_HIDDEN); }
+            if (curHaTrackerState == 1) { lv_label_set_text(label_ha_tracker, "WLAN Aus"); lv_obj_set_style_text_color(label_ha_tracker, UiTheme::c().muted, 0); lv_obj_add_flag(home_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(away_cont, LV_OBJ_FLAG_HIDDEN); }
+            else if (curHaTrackerState == 2) { lv_label_set_text(label_ha_tracker, "Lade HA..."); lv_obj_set_style_text_color(label_ha_tracker, UiTheme::c().muted, 0); lv_obj_add_flag(home_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(away_cont, LV_OBJ_FLAG_HIDDEN); }
+            else if (curHaTrackerState == 3) { lv_label_set_text(label_ha_tracker, "Zuhause"); lv_obj_set_style_text_color(label_ha_tracker, UiTheme::c().ok, 0); lv_obj_clear_flag(home_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(away_cont, LV_OBJ_FLAG_HIDDEN); }
+            else { lv_label_set_text(label_ha_tracker, "Unterwegs"); lv_obj_set_style_text_color(label_ha_tracker, UiTheme::c().warn, 0); lv_obj_add_flag(home_cont, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(away_cont, LV_OBJ_FLAG_HIDDEN); }
         }
         s_haTrackerState = curHaTrackerState;
     }

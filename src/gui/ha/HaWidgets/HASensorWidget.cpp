@@ -1,6 +1,8 @@
 #include "HASensorWidget.h"
 #include "HaWebsocketLogic.h"
 #include "MdiMapper.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include <math.h>
 #include <string.h>
 
@@ -61,11 +63,11 @@ void HASensorWidget::buildUI() {
         
         lv_obj_set_style_bg_opa(chart, 0, LV_PART_MAIN); 
         lv_obj_set_style_border_width(chart, 0, LV_PART_MAIN);
-        lv_obj_set_style_line_color(chart, lv_color_hex(0x333333), LV_PART_MAIN); 
+        lv_obj_set_style_line_color(chart, HaTheme::track(), LV_PART_MAIN); 
         
         lv_obj_set_style_line_width(chart, 2, LV_PART_TICKS); 
-        lv_obj_set_style_line_color(chart, lv_color_hex(0x666666), LV_PART_TICKS);
-        lv_obj_set_style_text_color(chart, lv_color_hex(0xAAAAAA), LV_PART_TICKS); 
+        lv_obj_set_style_line_color(chart, HaTheme::track(), LV_PART_TICKS);
+        lv_obj_set_style_text_color(chart, UiTheme::c().muted, LV_PART_TICKS); 
         lv_obj_set_style_text_font(chart, &lv_font_montserrat_12, LV_PART_TICKS);
         
         lv_obj_set_style_line_width(chart, 3, LV_PART_ITEMS); 
@@ -74,18 +76,18 @@ void HASensorWidget::buildUI() {
         
         lv_obj_add_event_cb(chart, chart_draw_event_cb, LV_EVENT_DRAW_PART_BEGIN, this);
         
-        ser = lv_chart_add_series(chart, lv_color_hex(0x3498DB), LV_CHART_AXIS_PRIMARY_Y);
+        ser = lv_chart_add_series(chart, lv_color_hex(HaTheme::themed(0x3498DB)), LV_CHART_AXIS_PRIMARY_Y);
         
         state_label = lv_label_create(container);
         lv_label_set_recolor(state_label, true); 
         lv_obj_set_style_text_font(state_label, &lv_font_montserrat_16, 0); 
-        lv_obj_set_style_text_color(state_label, lv_color_white(), 0);
+        lv_obj_set_style_text_color(state_label, UiTheme::c().text, 0);
         lv_label_set_text(state_label, "--"); 
         lv_obj_align(state_label, LV_ALIGN_TOP_RIGHT, -10, 20);
         
         unit_label = lv_label_create(container);
         lv_obj_set_style_text_font(unit_label, &lv_font_montserrat_14, 0); 
-        lv_obj_set_style_text_color(unit_label, lv_color_hex(0x888888), 0);
+        lv_obj_set_style_text_color(unit_label, UiTheme::c().muted, 0);
         lv_label_set_text(unit_label, ""); 
         lv_obj_align(unit_label, LV_ALIGN_TOP_LEFT, 15, 20);
     } else {
@@ -94,7 +96,7 @@ void HASensorWidget::buildUI() {
         state_label = lv_label_create(container);
         lv_label_set_recolor(state_label, true); 
         lv_obj_set_style_text_font(state_label, &lv_font_montserrat_28, 0); 
-        lv_obj_set_style_text_color(state_label, lv_color_white(), 0);
+        lv_obj_set_style_text_color(state_label, UiTheme::c().text, 0);
         lv_label_set_text(state_label, "--");
         
         setAlignments(icon_align, text_align, state_align, icon_margin, text_margin, state_margin); 
@@ -345,7 +347,10 @@ void HASensorWidget::updateState(String state) {
     String unit = HaWebsocketLogic_GetUnit(entity_id); 
     
     if (unit.length() > 0 && state != "unavailable" && state != "unknown") {
-        display_text += " #888888 " + unit + "#"; 
+        // Einheit gedimmt (Recolor-Syntax "#RRGGBB text#"), Farbe aus dem Schema.
+        char unitCol[8];
+        snprintf(unitCol, sizeof(unitCol), "%06lX", (unsigned long)(lv_color_to32(UiTheme::c().muted) & 0xFFFFFF));
+        display_text += String(" #") + unitCol + " " + unit + "#"; 
         
         if (!show_chart) { 
             lv_obj_set_style_text_font(icon_label, &lv_font_montserrat_48, 0); 

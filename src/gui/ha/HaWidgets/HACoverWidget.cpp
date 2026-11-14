@@ -1,4 +1,6 @@
 #include "HACoverWidget.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "HaWebsocketLogic.h"
 
 HACoverWidget::HACoverWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi_icon, const char* c_on, const char* c_off)
@@ -10,9 +12,9 @@ HACoverWidget::HACoverWidget(lv_obj_t* parent, int tab_idx, String type, String 
     lv_obj_align(slider, LV_ALIGN_CENTER, 0, -10);
     lv_slider_set_range(slider, 0, 100);
     
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x555555), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x3498DB), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider, lv_color_white(), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(slider, HaTheme::track(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(HaTheme::themed(0x3498DB)), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, UiTheme::c().accent, LV_PART_KNOB);
     
     lv_obj_add_flag(slider, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_event_cb(slider, slider_event_cb, LV_EVENT_VALUE_CHANGED, this);
@@ -20,7 +22,7 @@ HACoverWidget::HACoverWidget(lv_obj_t* parent, int tab_idx, String type, String 
     
     pos_label = lv_label_create(container);
     lv_obj_set_style_text_font(pos_label, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(pos_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(pos_label, UiTheme::c().text, 0);
     lv_obj_align_to(pos_label, slider, LV_ALIGN_OUT_TOP_MID, 0, -5);
     lv_label_set_text(pos_label, "-");
 
@@ -28,7 +30,7 @@ HACoverWidget::HACoverWidget(lv_obj_t* parent, int tab_idx, String type, String 
     btn_up = lv_btn_create(container);
     lv_obj_set_size(btn_up, 60, 40);
     lv_obj_align(btn_up, LV_ALIGN_BOTTOM_LEFT, 20, -10);
-    lv_obj_set_style_bg_color(btn_up, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_bg_color(btn_up, HaTheme::control(), 0); lv_obj_set_style_text_color(btn_up, UiTheme::c().text, 0); lv_obj_set_style_shadow_width(btn_up, 0, 0);
     lv_obj_add_event_cb(btn_up, btn_event_cb, LV_EVENT_CLICKED, this);
     lv_obj_t* lbl_up = lv_label_create(btn_up);
     lv_label_set_text(lbl_up, LV_SYMBOL_UP);
@@ -46,7 +48,7 @@ HACoverWidget::HACoverWidget(lv_obj_t* parent, int tab_idx, String type, String 
     btn_down = lv_btn_create(container);
     lv_obj_set_size(btn_down, 60, 40);
     lv_obj_align(btn_down, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
-    lv_obj_set_style_bg_color(btn_down, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_bg_color(btn_down, HaTheme::control(), 0); lv_obj_set_style_text_color(btn_down, UiTheme::c().text, 0); lv_obj_set_style_shadow_width(btn_down, 0, 0);
     lv_obj_add_event_cb(btn_down, btn_event_cb, LV_EVENT_CLICKED, this);
     lv_obj_t* lbl_down = lv_label_create(btn_down);
     lv_label_set_text(lbl_down, LV_SYMBOL_DOWN);
@@ -76,9 +78,9 @@ void HACoverWidget::updateState(String state) {
     
     // Optisches Feedback: Wenn der Rollladen offen ist, leuchtet das Icon blau
     if (state == "open" || state == "opening" || pos > 0) {
-        lv_obj_set_style_text_color(icon_label, lv_color_hex(0x3498DB), 0); 
+        lv_obj_set_style_text_color(icon_label, lv_color_hex(HaTheme::themed(0x3498DB)), 0); 
     } else {
-        lv_obj_set_style_text_color(icon_label, lv_color_hex(0x888888), 0); 
+        lv_obj_set_style_text_color(icon_label, lv_color_hex(HaTheme::themed(0x888888)), 0); 
     }
 }
 

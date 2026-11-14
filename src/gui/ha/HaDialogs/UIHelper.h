@@ -33,6 +33,15 @@ public:
     static lv_obj_t* createTextarea(lv_obj_t* parent, int w, int h, int align, int x, int y, const char* text, const char* placeholder = "", bool one_line = true);
     static lv_obj_t* createCheckbox(lv_obj_t* parent, const char* text, const lv_font_t* font, int align, int x, int y, bool checked, lv_event_cb_t cb = nullptr, void* user_data = nullptr);
 
+    // Farben des aktuellen Schemas (UiTheme/HaTheme) auf vorhandene Objekte.
+    // Die create*-Funktionen rufen sie selbst; fuer Objekte, die ein Dialog
+    // direkt mit lv_*_create anlegt.
+    //   themePanel: Dialogflaeche + vererbte Textfarbe fuer alle Labels darin.
+    static void themePanel(lv_obj_t* panel);
+    static void themeDropdown(lv_obj_t* dd);
+    static void themeTextarea(lv_obj_t* ta);
+    static void themeCheckbox(lv_obj_t* cbx);
+
     // Bindet einen statischen Overlay-Zeiger an die Lebensdauer des Objekts:
     // Wird 'obj' geloescht - egal ob per Schliessen-Knopf, lv_obj_del_async()
     // oder zusammen mit dem ganzen Screen beim Bildschirmwechsel -, setzt ein

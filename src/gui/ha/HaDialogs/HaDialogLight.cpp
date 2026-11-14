@@ -1,4 +1,6 @@
 #include "HaDialogLight.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "HaWebsocketLogic.h"
 #include "SharedData.h"
@@ -143,7 +145,7 @@ void HaDialogLight::show(HAWidget* w) {
     
     lv_obj_set_size(panel, 500, panel_h);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
     
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE); 
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE); 

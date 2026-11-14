@@ -18,6 +18,7 @@
 #include "ViewCatMat.h"
 #include "ViewHomeAssistant.h" 
 #include "ViewSettings.h"      
+#include "UiTheme.h"
 #include "BabyCamApi.h"
 #include "BabyService.h"
 #include "ViewPopups.h"
@@ -28,8 +29,6 @@
 #include "WifiConnect.h"
 
 #include <time.h> 
-
-int cameraRefreshMs = 300; 
 
 void SystemLogic_Init() {
     // Vor jeder TLS-Verbindung: mbedTLS-Speicher ins PSRAM (siehe TlsMemory.h).
@@ -44,16 +43,11 @@ void SystemLogic_Init() {
     MqttLogic_Init(); 
     WebSetupLogic_Init(); 
     
+    // Alle Einstellungen laedt Data_Init() (SharedData.cpp). Hier stand
+    // frueher ein zweiter Ladeblock, der u. a. camEntity mit einem anderen
+    // Rueckfallwert ueberschrieb. Die MQTT-Babyphone-Topics haben keine
+    // Eingabe und kommen aus secrets.h (Vorbelegung in SharedData.cpp).
     if (wifiSsid == "") { pendingWebSetupMode = 1; } 
-    preferences.begin("catmat", true); 
-    haIP = preferences.getString("haIP", SECRET_HA_IP); 
-    haPort = preferences.getInt("haPort", SECRET_HA_PORT); 
-    camEntity = preferences.getString("camEntity", SECRET_CAM_SNAPSHOT_PATH); 
-    mqttBabyTopic = preferences.getString("mqttBaby", SECRET_MQTT_BABY_TOPIC); 
-    mqttCameraTriggerTopic = preferences.getString("mqttCamTrig", SECRET_MQTT_CAM_TRIGGER);
-    cameraRefreshMs = preferences.getInt("camRef", 300); 
-    showFps = preferences.getBool("showFps", false);
-    preferences.end();
 }
 
 void SystemLogic_Update() {
@@ -68,35 +62,41 @@ void SystemLogic_Update() {
     // selben Kontext, aus dem die Oberflaeche sie liest.
     BabyCamApi_Update();
 
-    calcMultiplex(); 
-    if (webSetupMode > 0 || pendingWebSetupMode > 0) return; 
-
-    if (!wifiEnabled && wifiStarted) {
-        WiFi.disconnect(true, false);
-        WifiConnect_Reset();
-        wifiStarted = false;
-        timeSynced = false;
-    }
+    // Web-Setup: Im eigenen Setup-WLAN (Modus 1) arbeitet der Funk als
+    // Zugangspunkt - dann ruht nur die WLAN-Steuerung des Heimnetzes (An/Aus,
+    // Anmeldung, Zeitabgleich). Alles andere laeuft weiter: Bluetooth,
+    // Alarmauswertung und -toene, Anzeige. Frueher endete die Schleife hier
+    // fuer die ganze Setup-Dauer, auch im Heimnetz-Modus, in dem das WLAN
+    // unberuehrt bleibt.
+    const bool setupAp = (webSetupMode == 1 || pendingWebSetupMode == 1);
+    if (!setupAp) {
+        if (!wifiEnabled && wifiStarted) {
+            WiFi.disconnect(true, false);
+            WifiConnect_Reset();
+            wifiStarted = false;
+            timeSynced = false;
+        }
     
-    if (wifiEnabled && !wifiStarted && !isTrackerMode && effPrioWifi > 0) { 
-        WifiConnect_Begin(wifiSsid, wifiPass); 
-        WiFi.setTxPower(WIFI_POWER_19_5dBm); 
-        esp_wifi_set_ps(WIFI_PS_NONE);
-        wifiStarted = true; 
-    }
+        if (wifiEnabled && !wifiStarted && !isTrackerMode) { 
+            WifiConnect_Begin(wifiSsid, wifiPass); 
+            WiFi.setTxPower(WIFI_POWER_19_5dBm); 
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            wifiStarted = true; 
+        }
 
-    // Erste WLAN-Verbindung protokollieren (Dauer, Kanal, Feldstaerke).
-    WifiConnect_Update();
+        // Erste WLAN-Verbindung protokollieren (Dauer, Kanal, Feldstaerke).
+        WifiConnect_Update();
 
-    static bool ntpConfigured = false;
-    if (WiFi.status() == WL_CONNECTED && !ntpConfigured) {
-        configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", "pool.ntp.org", "time.google.com");
-        ntpConfigured = true;
-        timeSynced = true; 
-    } else if (WiFi.status() != WL_CONNECTED) {
-        ntpConfigured = false;
-        timeSynced = false;
-    }
+        static bool ntpConfigured = false;
+        if (WiFi.status() == WL_CONNECTED && !ntpConfigured) {
+            configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", "pool.ntp.org", "time.google.com");
+            ntpConfigured = true;
+            timeSynced = true; 
+        } else if (WiFi.status() != WL_CONNECTED) {
+            ntpConfigured = false;
+            timeSynced = false;
+        }
+    }   // !setupAp
 
     // Kartenkacheln: derzeit nur der Messlauf (MAP_PROFILE). Vor BleLogic, das
     // die Schleife waehrend eines BLE-Einrichtungsscans vorzeitig beendet.
@@ -232,6 +232,10 @@ void SystemLogic_Update() {
     // Bildschirm erst hier lesen: ein Alarm weiter oben kann ihn in diesem
     // Durchlauf gewechselt haben, und die Aktualisierung gehoert zur neuen
     // Ansicht.
+    // Farbschema "Automatisch": schaltet um 7 und 20 Uhr um (baut ggf. die
+    // offene Ansicht neu auf) - vor deren update().
+    UiTheme::update();
+
     const ScreenID currentScreen = gui.getCurrentScreen();
     if (currentScreen == SCREEN_DASHBOARD) {
         ViewDashboard::update();

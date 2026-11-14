@@ -1,4 +1,5 @@
 #include "EditTabMap.h"
+#include "UiTheme.h"
 #include "UIHelper.h"
 #include "HaDialogEdit.h"
 #include "HAMapWidget.h"
@@ -145,7 +146,7 @@ void EditTabMap::buildUI(lv_obj_t* parent, HAWidget* w, lv_obj_t* keyboard) {
     lv_obj_set_pos(chip_box, 10, 35);
     lv_obj_set_style_bg_opa(chip_box, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(chip_box, 1, 0);
-    lv_obj_set_style_border_color(chip_box, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_color(chip_box, UiTheme::c().divider, 0);
     lv_obj_set_style_pad_all(chip_box, 6, 0);
     lv_obj_set_style_pad_gap(chip_box, 8, 0);
     lv_obj_set_flex_flow(chip_box, LV_FLEX_FLOW_ROW_WRAP);

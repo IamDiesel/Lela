@@ -16,7 +16,8 @@
 //
 //   [UI / SystemLogic] --Kommando--> [audioTask] --besitzt--> M5.Speaker / M5.Mic
 //                                        ^
-//   [audioRxTask] --UDP--> Jitterpuffer -+
+//   [audioRxTask] --Quelle--> Jitterpuffer -+
+//      Quelle: BabyCam (UDP) oder HTTP (PCM/WAV, AAC) - siehe AudioSourceTypes.h
 //
 // Der UI-Ton-Task (SharedData.cpp) bleibt ein zweiter Nutzer der Hardware -
 // Tastenklicks und der Mattenalarm duerfen nicht vom Babyphone abhaengen. Er
@@ -31,6 +32,8 @@
 #include "AudioStreamLogic.h"
 #include "SharedData.h"
 #include "BabyCamApi.h"
+#include "AudioSourceTypes.h"
+#include "AudioSourceHttp.h"
 #include <M5Unified.hpp>
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -44,8 +47,8 @@ volatile bool isPTTActive      = false;
 // Abstimmung
 // ------------------------------------------------------------------------------
 static const uint32_t AUDIO_RATE      = 44100;   // api_RE.md: 44100 Hz, 16 Bit, Mono
-static const uint16_t UDP_PORT_IN     = 50001;   // Kamera -> Tablet
-static const uint16_t UDP_PORT_OUT    = 50003;   // Tablet -> Kamera (PTT)
+// Die UDP-Ports sind einstellbar (SharedData.h, audioUdpPortIn/Out); meldet die
+// BabyCam eigene, gelten diese (effectiveUdpPortIn/Out).
 
 // Jitterpuffer. Muss die DMA-Kette (~43 ms) und das Underrun-Fenster (~24 ms)
 // ueberbruecken; ueber SDIO-WLAN ist reichlich Reserve angebracht.
@@ -86,6 +89,30 @@ static bool s_primed = false;            // Vorlauf erreicht? (nur Audio-Task)
 // millis() hinein - ein Wettlauf aendert den Wert also um Millisekunden.
 static volatile uint32_t s_lastAliveMs = 0;
 
+// ------------------------------------------------------------------------------
+// Konfiguration der Tonquelle
+// ------------------------------------------------------------------------------
+// s_cfgPending: zuletzt aus den Einstellungen gelesen (Hauptschleife, beim
+//               Start-Wunsch und bei ApplyConfig).
+// s_cfgActive:  gilt fuer die laufende Wiedergabe (Audio-Task setzt sie beim
+//               Start, der RX-Task kopiert sie je Sitzung).
+// Kopiert wird nur unter s_cfgMux - die Struktur ist zu gross fuer atomare
+// Zugriffe.
+static portMUX_TYPE       s_cfgMux     = portMUX_INITIALIZER_UNLOCKED;
+static AudioSourceConfig  s_cfgPending = {};
+static AudioSourceConfig  s_cfgActive  = {};
+// Jede Wiedergabe bekommt eine neue Generation. Der RX-Task erkennt daran einen
+// Neustart (z.B. neue Quelle), auch wenn isAudioStreaming dazwischen nur kurz
+// false war.
+static volatile uint32_t  s_streamGen  = 0;
+// Abtastrate der Samples im Ring. BabyCam immer 44100; HTTP-Quellen melden
+// ihre Rate ueber die Senke. M5Unified resampled je Kanal auf die Ausgaberate.
+static volatile uint32_t  s_streamRate = AUDIO_RATE;
+// Konfiguration beim Start des Gegensprechens (Ziel-Port). Nur Audio-Task.
+static AudioSourceConfig  s_cfgPtt     = {};
+
+static void captureConfig();   // Einstellungen -> s_cfgPending (Hauptschleife), siehe unten
+
 #if AUDIO_PROFILE
 // Messwerte fuer [AudioProf]. Jeder Zaehler hat genau einen Schreiber (RX-Task
 // bzw. Audio-Task); zurueckgesetzt wird nur vom Audio-Task. Ein dabei
@@ -113,6 +140,7 @@ enum AudioCmd : uint8_t {
     CMD_STOP_BABY,
     CMD_START_PTT,
     CMD_STOP_PTT,
+    CMD_RESTART_BABY,   // neue Quellen-Einstellung: laufende Wiedergabe neu starten
 };
 
 static QueueHandle_t s_cmdQ   = nullptr;
@@ -470,7 +498,7 @@ static void feedSpeaker() {
 
     // Fester Kanal 0: mit -1 sucht M5Unified rueckwaerts einen freien Kanal,
     // wodurch ein Dauerstrom zwischen Kanaelen springen kann.
-    M5.Speaker.playRaw(buf, got / 2, AUDIO_RATE, false, 1, 0);
+    M5.Speaker.playRaw(buf, got / 2, s_streamRate, false, 1, 0);
 
     AudioHw_Unlock();
 
@@ -492,26 +520,120 @@ static void feedSpeaker() {
 }
 
 // ------------------------------------------------------------------------------
-// UDP-Empfang -> Ringpuffer
+// Senke fuer die Quellen (AudioSourceTypes.h) - nur aus dem Empfangs-Task
 // ------------------------------------------------------------------------------
+// TCP-Quellen (HTTP) liefern so schnell, wie der Server sendet. Statt bei
+// vollem Puffer zu verwerfen, wartet die Senke kurz: Der Gegendruck bremst
+// ueber das TCP-Fenster den Server. UDP kennt das nicht - dort gilt weiter
+// "verwerfen und nachziehen" (ringWrite/ringTrim).
+static const uint32_t SINK_WAIT_MAX_MS = 200;
+
+static uint32_t s_rxGen = 0;   // Generation der laufenden Empfangssitzung (RX-Task)
+
+static bool sinkRunning() {
+    return isAudioStreaming && !isPTTActive && s_rxGen == s_streamGen;
+}
+
+static void sinkWrite(const int16_t* mono, size_t samples) {
+    // Nach dem Ende der Wiedergabe nichts mehr schreiben: der Audio-Task setzt
+    // den Ring beim naechsten Start zurueck (ringReset), waehrend eine HTTP-
+    // Quelle noch in einem blockierenden Aufruf stecken kann.
+    if (!sinkRunning()) return;
+    size_t bytes = samples * sizeof(int16_t);
+    const uint32_t start = millis();
+    while (ringFree() < bytes && sinkRunning() && millis() - start < SINK_WAIT_MAX_MS) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    if (!sinkRunning()) return;
+    ringWrite((const uint8_t*)mono, bytes);
+    s_lastAliveMs = millis();
+#if AUDIO_PROFILE
+    s_profPackets = s_profPackets + 1;
+    s_profBytes   = s_profBytes + (uint32_t)bytes;
+    s_profLastLen = (uint16_t)bytes;
+#endif
+}
+
+static void sinkSetRate(uint32_t hz) {
+    if (hz < 8000 || hz > 96000 || hz == s_streamRate) return;
+    s_streamRate = hz;
+}
+
+static const AudioSink s_sink = { sinkWrite, sinkSetRate, sinkRunning };
+
+// Empfangsport der BabyCam: was die Kamera meldet, sonst die Einstellung.
+static uint16_t effectiveUdpPortIn(const AudioSourceConfig& cfg) {
+    const int cam = camAudioPortIn;
+    return (cam > 0 && cam <= 65535) ? (uint16_t)cam : cfg.udpPortIn;
+}
+
+static uint16_t effectiveUdpPortOut(const AudioSourceConfig& cfg) {
+    const int cam = camAudioPortOut;
+    return (cam > 0 && cam <= 65535) ? (uint16_t)cam : cfg.udpPortOut;
+}
+
+// ------------------------------------------------------------------------------
+// Empfangs-Task: Quelle -> Ringpuffer
+// ------------------------------------------------------------------------------
+// Je Wiedergabe (Generation) eine Sitzung mit der beim Start eingefrorenen
+// Konfiguration. BabyCam: UDP-Pakete sind schon Mono-PCM und gehen direkt in
+// den Ring. HTTP: AudioSourceHttp_Run() blockiert, bis die Wiedergabe endet
+// oder die Verbindung abreisst; danach folgt ein Neuversuch mit Wartezeit.
 static void audioRxTask(void*) {
     WiFiUDP udp;
-    bool bound = false;
+    uint16_t boundPort = 0;
     static uint8_t packet[1500];
+    AudioSourceConfig cfg;
+    uint32_t httpRetryMs = 0;      // naechster HTTP-Versuch frueheste Zeit
+    uint32_t httpBackoff = 2000;
 
     while (true) {
         const bool want = isAudioStreaming && !isPTTActive;
 
         if (!want) {
-            if (bound) { udp.stop(); bound = false; }
+            if (boundPort) { udp.stop(); boundPort = 0; }
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
 
-        if (!bound) {
-            if (WiFi.status() != WL_CONNECTED) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
-            bound = udp.begin(UDP_PORT_IN);
-            if (!bound) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
+        // Neue Wiedergabe: Konfiguration uebernehmen.
+        if (s_rxGen != s_streamGen) {
+            if (boundPort) { udp.stop(); boundPort = 0; }
+            taskENTER_CRITICAL(&s_cfgMux);
+            cfg = s_cfgActive;
+            s_rxGen = s_streamGen;
+            taskEXIT_CRITICAL(&s_cfgMux);
+            httpRetryMs = 0;
+            httpBackoff = 2000;
+        }
+
+        if (WiFi.status() != WL_CONNECTED) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
+
+        // --- HTTP-Strom ---------------------------------------------------------
+        if (cfg.source == AUDIO_SRC_HTTP) {
+            if ((int32_t)(millis() - httpRetryMs) < 0) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+            const bool gotAudio = AudioSourceHttp_Run(cfg, s_sink);
+            // Ton kam an: rasch wieder verbinden. Sonst wachsend warten,
+            // damit eine falsche URL das Log nicht im Sekundentakt fuellt.
+            httpBackoff = gotAudio ? 2000 : ((httpBackoff * 2 > 30000) ? 30000 : httpBackoff * 2);
+            httpRetryMs = millis() + httpBackoff;
+            continue;
+        }
+
+        // --- BabyCam (UDP) ------------------------------------------------------
+        const uint16_t port = effectiveUdpPortIn(cfg);
+        if (boundPort && boundPort != port) {
+            // Die Kamera hat im Status einen anderen Port gemeldet.
+            udp.stop();
+            boundPort = 0;
+        }
+        if (!boundPort) {
+            if (!udp.begin(port)) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
+            boundPort = port;
+            if (port != cfg.udpPortIn) {
+                Serial.printf("[Audio] BabyCam meldet Empfangsport %u (eingestellt %u) - Kamerawert gilt.\n",
+                              port, cfg.udpPortIn);
+            }
         }
 
         const int size = udp.parsePacket();
@@ -543,6 +665,8 @@ static void audioRxTask(void*) {
 // Nur aus dem Besitzer-Task: der Befehl an die Kamera ist synchron und gehoert
 // in die Reihenfolge der I2S-Umschaltungen (siehe BabyCamApi.h).
 static void reassertIfSilent() {
+    // Nur die BabyCam braucht den Befehl; HTTP-Quellen verbindet der RX-Task neu.
+    if (s_cfgActive.source != AUDIO_SRC_BABYCAM_UDP) return;
     const uint32_t now = millis();
     if (now - s_lastAliveMs < AUDIO_SILENCE_REASSERT_MS) return;
     s_lastAliveMs = now;   // auch ohne WLAN: nicht in jedem Durchlauf erneut pruefen
@@ -594,6 +718,57 @@ static void logAudioProfile() {
 #endif
 
 // ------------------------------------------------------------------------------
+// Babyphone-Wiedergabe starten/stoppen - nur aus dem Besitzer-Task
+// ------------------------------------------------------------------------------
+static const char* sourceName(const AudioSourceConfig& c) {
+    if (c.source == AUDIO_SRC_HTTP) return (c.format == AUDIO_FMT_AAC) ? "HTTP AAC" : "HTTP PCM";
+    return "BabyCam UDP";
+}
+
+// Lautsprecher auf Strom, Ring leeren, Konfiguration einfrieren, Quelle starten.
+// false: Lautsprecher nicht verfuegbar (dann ist der Grundzustand wiederhergestellt).
+static bool startBabyStream() {
+    if (!speakerSet(SPK_STREAM)) {
+        // Ohne Lautsprecher keine Wiedergabe - und vor allem nicht der Kamera
+        // signalisieren, dass wir zuhoeren.
+        speakerFallbackToUI();
+        return false;
+    }
+    ringReset();                       // RX-Task schreibt hier nicht (isAudioStreaming false)
+
+    taskENTER_CRITICAL(&s_cfgMux);
+    s_cfgActive = s_cfgPending;
+    taskEXIT_CRITICAL(&s_cfgMux);
+
+    // BabyCam: feste 44,1 kHz. HTTP-PCM: Einstellung, bis ein WAV-Kopf etwas
+    // anderes meldet. AAC: Platzhalter, bis der erste Rahmen dekodiert ist.
+    s_streamRate = (s_cfgActive.source == AUDIO_SRC_HTTP && s_cfgActive.format == AUDIO_FMT_PCM16)
+                       ? s_cfgActive.pcmRate : AUDIO_RATE;
+
+    if (s_cfgActive.source == AUDIO_SRC_BABYCAM_UDP) {
+        BabyCamApi_SetBabyAudio(true);
+        Serial.printf("[Audio] Babyphone-Ton: %s, Empfangsport %u\n",
+                      sourceName(s_cfgActive), effectiveUdpPortIn(s_cfgActive));
+    } else {
+        Serial.printf("[Audio] Babyphone-Ton: %s, %s\n", sourceName(s_cfgActive),
+                      AudioSourceHttp_LogUrl(s_cfgActive.url).c_str());
+    }
+
+    s_lastAliveMs = millis();
+    s_streamGen = s_streamGen + 1;     // vor isAudioStreaming: RX-Task sieht die neue Sitzung
+    isAudioStreaming = true;
+    return true;
+}
+
+// Zulieferer anhalten, Kamera abmelden. Den Lautsprecher stellt der Aufrufer
+// ein (UI-Zustand, aus fuer PTT oder gleich wieder Strom).
+static void stopBabyStream() {
+    isAudioStreaming = false;          // Zulieferer zuerst stoppen
+    vTaskDelay(pdMS_TO_TICKS(10));     // RX-Task die Runde beenden lassen
+    if (s_cfgActive.source == AUDIO_SRC_BABYCAM_UDP) BabyCamApi_SetBabyAudio(false);
+}
+
+// ------------------------------------------------------------------------------
 // Besitzer-Task
 // ------------------------------------------------------------------------------
 static void audioTask(void*) {
@@ -608,16 +783,7 @@ static void audioTask(void*) {
             case CMD_START_BABY:
                 if (isPTTActive || isAudioStreaming) break;
                 micDown();
-                if (!speakerSet(SPK_STREAM)) {
-                    // Ohne Lautsprecher keine Wiedergabe - und vor allem nicht
-                    // der Kamera signalisieren, dass wir zuhoeren.
-                    speakerFallbackToUI();
-                    break;
-                }
-                ringReset();                   // RX-Task schreibt hier noch nicht
-                BabyCamApi_SetBabyAudio(true);
-                s_lastAliveMs = millis();
-                isAudioStreaming = true;
+                startBabyStream();
                 break;
 
             case CMD_STOP_BABY:
@@ -626,21 +792,33 @@ static void audioTask(void*) {
                 // nach dem Loslassen gegen den Benutzerwillen wieder anlaufen.
                 if (isPTTActive) { s_resumeBabyAfterPTT = false; break; }
                 if (!isAudioStreaming) break;
-                isAudioStreaming = false;      // Zulieferer zuerst stoppen
-                vTaskDelay(pdMS_TO_TICKS(10)); // RX-Task die Runde beenden lassen
+                stopBabyStream();
                 speakerSet(SPK_UI);            // Klicks und Alarm bleiben hoerbar
-                BabyCamApi_SetBabyAudio(false);
+                break;
+
+            case CMD_RESTART_BABY:
+                // Neue Quellen-Einstellung. Laeuft gerade nichts, gilt sie
+                // beim naechsten Start von selbst.
+                if (isPTTActive || !isAudioStreaming) break;
+                Serial.println("[Audio] Tonquelle geaendert - Wiedergabe wird neu gestartet.");
+                stopBabyStream();
+                startBabyStream();             // Lautsprecher bleibt im Strom-Zustand
                 break;
 
             case CMD_START_PTT: {
                 if (isPTTActive) break;
+                taskENTER_CRITICAL(&s_cfgMux);
+                s_cfgPtt = s_cfgPending;
+                taskEXIT_CRITICAL(&s_cfgMux);
+                // Gegensprechen gibt es nur mit der BabyCam: nur sie hat einen
+                // Rueckkanal (UDP an die Kamera).
+                if (s_cfgPtt.source != AUDIO_SRC_BABYCAM_UDP) {
+                    Serial.println("[Audio] Gegensprechen nur mit Tonquelle BabyCam (UDP) - ignoriert.");
+                    break;
+                }
                 s_resumeBabyAfterPTT = isAudioStreaming;
 
-                if (isAudioStreaming) {
-                    isAudioStreaming = false;
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    BabyCamApi_SetBabyAudio(false);
-                }
+                if (isAudioStreaming) stopBabyStream();
                 // Halbduplex: der Lautsprecher muss komplett weg, bevor das
                 // Mikrofon denselben I2S-Port belegen kann.
                 speakerSet(SPK_OFF);
@@ -652,12 +830,7 @@ static void audioTask(void*) {
                     speakerFallbackToUI();
                     if (s_resumeBabyAfterPTT) {
                         s_resumeBabyAfterPTT = false;
-                        if (speakerSet(SPK_STREAM)) {
-                            ringReset();
-                            BabyCamApi_SetBabyAudio(true);
-                            s_lastAliveMs = millis();
-                            isAudioStreaming = true;
-                        }
+                        startBabyStream();
                     }
                     break;
                 }
@@ -675,14 +848,7 @@ static void audioTask(void*) {
 
                 if (s_resumeBabyAfterPTT) {
                     s_resumeBabyAfterPTT = false;
-                    if (speakerSet(SPK_STREAM)) {
-                        ringReset();
-                        BabyCamApi_SetBabyAudio(true);
-                        s_lastAliveMs = millis();
-                        isAudioStreaming = true;
-                    } else {
-                        speakerFallbackToUI();
-                    }
+                    startBabyStream();         // faellt bei Fehler selbst auf UI zurueck
                 } else {
                     speakerFallbackToUI();
                 }
@@ -695,7 +861,7 @@ static void audioTask(void*) {
             const int16_t* ready = micRecord();
             if (ready) {
                 if (WiFi.status() == WL_CONNECTED && streamIp.length() > 0) {
-                    udpOut.beginPacket(streamIp.c_str(), UDP_PORT_OUT);
+                    udpOut.beginPacket(streamIp.c_str(), effectiveUdpPortOut(s_cfgPtt));
                     udpOut.write((const uint8_t*)ready, MIC_SAMPLES * sizeof(int16_t));
                     udpOut.endPacket();
                 }
@@ -780,6 +946,7 @@ void AudioStreamLogic_Init() {
         return;
     }
     ringReset();
+    captureConfig();
 
     s_cmdQ = xQueueCreate(8, sizeof(AudioCmd));
     if (!s_cmdQ) {
@@ -795,7 +962,9 @@ void AudioStreamLogic_Init() {
         initCleanup();
         return;
     }
-    if (xTaskCreatePinnedToCore(audioRxTask, "Audio_RX", 6144, NULL, 11, &s_rx, 1) != pdPASS) {
+    // 8 KB Stack: Der Empfang laeuft je nach Quelle ueber HTTPClient und den
+    // AAC-Decoder (Helix rechnet mit lokalen Feldern); 6 KB reichten nur fuer UDP.
+    if (xTaskCreatePinnedToCore(audioRxTask, "Audio_RX", 8192, NULL, 11, &s_rx, 1) != pdPASS) {
         Serial.println("[Audio] FEHLER: Empfangs-Task laesst sich nicht anlegen.");
         vTaskDelete(s_audio);
         s_audio = nullptr;
@@ -808,10 +977,36 @@ void AudioStreamLogic_Init() {
                   (unsigned)((RING_BYTES * 1000UL) / (AUDIO_RATE * 2)));
 }
 
-void AudioStreamLogic_StartBaby() { post(CMD_START_BABY); }
+// Liest die Einstellungen (SharedData.h) in s_cfgPending. Nur aus der
+// Hauptschleife - dort werden die Einstellungen auch geaendert.
+static void captureConfig() {
+    AudioSourceConfig c = {};
+    c.source      = (uint8_t)audioSource;
+    c.format      = (uint8_t)audioFormat;
+    c.pcmChannels = (uint8_t)audioPcmChannels;
+    c.pcmRate     = (uint32_t)audioPcmRate;
+    c.udpPortIn   = (uint16_t)audioUdpPortIn;
+    c.udpPortOut  = (uint16_t)audioUdpPortOut;
+    strlcpy(c.url, babyStreamUrl.c_str(), sizeof(c.url));
+
+    taskENTER_CRITICAL(&s_cfgMux);
+    s_cfgPending = c;
+    taskEXIT_CRITICAL(&s_cfgMux);
+}
+
+void AudioStreamLogic_StartBaby() { captureConfig(); post(CMD_START_BABY); }
 void AudioStreamLogic_StopBaby()  { post(CMD_STOP_BABY);  }
-void AudioStreamLogic_StartPTT()  { post(CMD_START_PTT);  }
+void AudioStreamLogic_StartPTT()  { captureConfig(); post(CMD_START_PTT);  }
 void AudioStreamLogic_StopPTT()   { post(CMD_STOP_PTT);   }
+
+void AudioStreamLogic_ApplyConfig() {
+    captureConfig();
+    post(CMD_RESTART_BABY);
+}
+
+bool AudioStreamLogic_SupportsPTT() {
+    return audioSource == AUDIO_SRC_BABYCAM_UDP;
+}
 
 void AudioStreamLogic_Stop() {
     post(CMD_STOP_PTT);

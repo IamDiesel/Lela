@@ -1,4 +1,6 @@
 #include "HaDialogVacuum.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "HaWebsocketLogic.h"
 #include "SharedData.h"
@@ -19,7 +21,7 @@ void HaDialogVacuum::showVacuumDialog(HAWidget* w) {
     lv_obj_t* panel = lv_obj_create(vacuum_overlay);
     lv_obj_set_size(panel, 650, 480);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
 
     String name = HaWebsocketLogic_GetEntityName(cur_vacuum_entity);
     int bat = HaWebsocketLogic_GetBattery(cur_vacuum_entity);
@@ -27,20 +29,19 @@ void HaDialogVacuum::showVacuumDialog(HAWidget* w) {
     lv_obj_t* lbl_title = lv_label_create(panel);
     lv_label_set_text(lbl_title, name.c_str());
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_title, lv_color_white(), 0);
     lv_obj_align(lbl_title, LV_ALIGN_TOP_LEFT, 10, 10);
 
     if (bat >= 0) {
         lv_obj_t* lbl_bat = lv_label_create(panel);
         lv_label_set_text_fmt(lbl_bat, LV_SYMBOL_CHARGE " %d%%", bat);
-        lv_obj_set_style_text_color(lbl_bat, lv_color_hex(0x2ECC71), 0);
+        lv_obj_set_style_text_color(lbl_bat, lv_color_hex(HaTheme::themed(0x2ECC71)), 0);
         lv_obj_set_style_text_font(lbl_bat, &lv_font_montserrat_20, 0);
         lv_obj_align(lbl_bat, LV_ALIGN_TOP_RIGHT, -60, 15);
     }
 
     lv_obj_t* lbl_status = lv_label_create(panel);
     lv_label_set_text_fmt(lbl_status, "Status: %s", HaWebsocketLogic_GetState(cur_vacuum_entity).c_str());
-    lv_obj_set_style_text_color(lbl_status, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_color(lbl_status, UiTheme::c().muted, 0);
     lv_obj_align(lbl_status, LV_ALIGN_TOP_LEFT, 10, 50);
 
     int btn_y = 110;
@@ -121,7 +122,6 @@ void HaDialogVacuum::showVacuumDialog(HAWidget* w) {
     
     lv_obj_t* lbl_fan = lv_label_create(panel);
     lv_label_set_text(lbl_fan, "Saugkraft:");
-    lv_obj_set_style_text_color(lbl_fan, lv_color_white(), 0); 
     lv_obj_align(lbl_fan, LV_ALIGN_TOP_LEFT, 10, btn_y + 10);
 
     lv_obj_t* dd_fan = lv_dropdown_create(panel);

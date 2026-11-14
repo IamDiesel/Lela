@@ -3,6 +3,9 @@
 #include "BabyCamApi.h"
 #include "BabyService.h"
 #include "ViewVideoPip.h"
+#include "CamResolutionUi.h"
+#include "SettingsUi.h"   // gemeinsame Stile der Bedienelemente (Farbschema)
+#include "UiTheme.h"
 #include <Preferences.h>
 #include <math.h>
 
@@ -18,6 +21,7 @@ static lv_obj_t * slider_zoom = nullptr;
 static lv_obj_t * slider_qual = nullptr;
 static lv_obj_t * slider_speed = nullptr;
 static lv_obj_t * dd_res = nullptr;
+static lv_obj_t * lbl_res = nullptr;   // Titel, traegt den Hinweis (CamResolutionUi_Hint)
 static lv_obj_t * slider_expo = nullptr;
 static lv_obj_t * sw_lowlat = nullptr;
 
@@ -86,16 +90,6 @@ static void settings_action_cb(lv_event_t * e) {
     }
 }
 
-// Aufloesung der Baby-Ansicht. Gesetzt wird sie vom BabyService, sobald das
-// Video laeuft und die Baby-Ansicht der Abnehmer ist (das Overlay hat eine
-// eigene Aufloesung).
-static void dd_res_cb(lv_event_t * e) {
-    char buf[32];
-    lv_dropdown_get_selected_str(dd_res, buf, sizeof(buf));
-    if (String(buf).indexOf('x') <= 0) return;   // Platzhalter "(warte auf Kamera)"
-    BabyService_SetBabyResolution(String(buf));
-}
-
 // --- Video-Overlay ---------------------------------------------------------
 static void dd_pip_cb(lv_event_t * e) {
     lv_obj_t* dd = lv_event_get_target(e);
@@ -155,17 +149,19 @@ static lv_obj_t* create_setting_slider(lv_obj_t* parent, const char* name, lv_ob
     // die vier Regler untereinander eine saubere Spalte bilden.
     lv_obj_t* lbl = lv_label_create(cont);
     lv_label_set_text(lbl, name);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl, UiTheme::c().text, 0);
     lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 10, 0);
 
     lv_obj_t* lbl_val = lv_label_create(cont);
     lv_label_set_text(lbl_val, "0%");
-    lv_obj_set_style_text_color(lbl_val, lv_color_hex(0x4FC3F7), 0);
+    lv_obj_set_style_text_color(lbl_val, UiTheme::c().accent, 0);
     lv_obj_set_style_text_align(lbl_val, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_align(lbl_val, LV_ALIGN_TOP_RIGHT, -10, 0);
 
     *slider_ptr = lv_slider_create(cont);
-    lv_obj_set_size(*slider_ptr, 360, 20); // Etwas schmaler, gibt Rändern mehr Raum
+    SettingsUi::styleSlider(*slider_ptr);
+    lv_obj_set_size(*slider_ptr, 360, 8); // schmal wie in den Einstellungen; Knopf greift weiter
+    lv_obj_set_ext_click_area(*slider_ptr, 20);
     lv_obj_align(*slider_ptr, LV_ALIGN_BOTTOM_MID, 0, -10); // Sauberer Abstand nach unten
     lv_obj_clear_flag(*slider_ptr, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_user_data(*slider_ptr, lbl_val);
@@ -185,10 +181,13 @@ static lv_obj_t* create_setting_dropdown(lv_obj_t* parent, const char* name, con
 
     lv_obj_t* lbl = lv_label_create(cont);
     lv_label_set_text(lbl, name);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl, UiTheme::c().text, 0);
     lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 5, 0);
 
     *dd_ptr = lv_dropdown_create(cont);
+    SettingsUi::styleDropdown(*dd_ptr);
+    lv_obj_set_style_text_font(*dd_ptr, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_pad_ver(*dd_ptr, 10, 0);
     lv_obj_set_size(*dd_ptr, 195, 40);
     lv_obj_align(*dd_ptr, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_dropdown_set_options(*dd_ptr, options);
@@ -207,10 +206,11 @@ static lv_obj_t* create_setting_switch(lv_obj_t* parent, const char* name, lv_ob
     
     lv_obj_t* lbl = lv_label_create(cont);
     lv_label_set_text(lbl, name);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl, UiTheme::c().text, 0);
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 0);
     
     *sw_ptr = lv_switch_create(cont);
+    SettingsUi::styleSwitch(*sw_ptr);
     lv_obj_align(*sw_ptr, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_clear_flag(*sw_ptr, LV_OBJ_FLAG_GESTURE_BUBBLE); 
     lv_obj_add_event_cb(*sw_ptr, settings_action_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -221,6 +221,9 @@ static lv_obj_t* create_setting_switch(lv_obj_t* parent, const char* name, lv_ob
 // PUBLIC FUNCTIONS
 // ==============================================================
 void ViewBabySettings_Create(lv_obj_t* parent) {
+    SettingsUi::initStyles();
+    const UiColors& c = UiTheme::c();
+
     // --- 1. FULLSCREEN OVERLAY (Verdunkelung & Klick-Schutz) ---
     settings_overlay = lv_obj_create(parent);
     lv_obj_set_size(settings_overlay, 1280, 720);
@@ -253,27 +256,28 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
     lv_obj_t* confirm_panel = lv_obj_create(confirm_overlay);
     lv_obj_set_size(confirm_panel, 500, 300);
     lv_obj_center(confirm_panel);
-    lv_obj_set_style_bg_color(confirm_panel, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_border_color(confirm_panel, lv_color_hex(0xAA0000), 0);
-    lv_obj_set_style_border_width(confirm_panel, 3, 0);
+    lv_obj_set_style_bg_color(confirm_panel, c.surface, 0);
+    lv_obj_set_style_border_color(confirm_panel, c.danger, 0);
+    lv_obj_set_style_border_width(confirm_panel, 2, 0);
+    lv_obj_set_style_radius(confirm_panel, 24, 0);
 
     lv_obj_t* lbl_warn = lv_label_create(confirm_panel);
     lv_label_set_text(lbl_warn, LV_SYMBOL_WARNING " Bist du sicher?");
     lv_obj_set_style_text_font(lbl_warn, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(lbl_warn, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl_warn, c.text, 0);
     lv_obj_align(lbl_warn, LV_ALIGN_TOP_MID, 0, 40);
 
     lv_obj_t* btn_yes = lv_btn_create(confirm_panel);
     lv_obj_set_size(btn_yes, 180, 80);
     lv_obj_align(btn_yes, LV_ALIGN_BOTTOM_LEFT, 20, -30);
-    lv_obj_set_style_bg_color(btn_yes, lv_color_hex(0xAA0000), 0);
+    SettingsUi::styleButton(btn_yes, SettingsUi::Btn::Danger);
     lv_obj_t* lbl_yes = lv_label_create(btn_yes); lv_label_set_text(lbl_yes, "JA"); lv_obj_center(lbl_yes);
     lv_obj_add_event_cb(btn_yes, [](lv_event_t* e){ playToneI2S(800, 100, true); BabyCamApi_PowerOff(); lv_obj_add_flag(confirm_overlay, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(settings_overlay, LV_OBJ_FLAG_HIDDEN); }, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t* btn_no = lv_btn_create(confirm_panel);
     lv_obj_set_size(btn_no, 180, 80);
     lv_obj_align(btn_no, LV_ALIGN_BOTTOM_RIGHT, -20, -30);
-    lv_obj_set_style_bg_color(btn_no, lv_color_hex(0x555555), 0);
+    SettingsUi::styleButton(btn_no, SettingsUi::Btn::Tonal);
     lv_obj_t* lbl_no = lv_label_create(btn_no); lv_label_set_text(lbl_no, "NEIN"); lv_obj_center(lbl_no);
     lv_obj_add_event_cb(btn_no, [](lv_event_t* e){ playToneI2S(600, 100, true); lv_obj_add_flag(confirm_overlay, LV_OBJ_FLAG_HIDDEN); }, LV_EVENT_CLICKED, NULL);
 
@@ -282,9 +286,10 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
     settings_modal = lv_obj_create(settings_overlay);
     lv_obj_set_size(settings_modal, 900, 690);   // 690: Platz fuer die Overlay-Zeile
     lv_obj_center(settings_modal);
-    lv_obj_set_style_bg_color(settings_modal, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_border_color(settings_modal, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(settings_modal, 2, 0);
+    lv_obj_set_style_bg_color(settings_modal, c.surface, 0);
+    lv_obj_set_style_border_color(settings_modal, c.divider, 0);
+    lv_obj_set_style_border_width(settings_modal, 1, 0);
+    lv_obj_set_style_radius(settings_modal, 24, 0);
     lv_obj_set_scrollbar_mode(settings_modal, LV_SCROLLBAR_MODE_OFF); 
     lv_obj_add_flag(settings_modal, LV_OBJ_FLAG_CLICKABLE); // Absorbiert Klicks, damit der Hintergrund sie nicht fängt
     lv_obj_clear_flag(settings_modal, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -318,16 +323,22 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
     lv_obj_set_style_border_width(cont_dd, 0, 0);
     lv_obj_set_style_pad_all(cont_dd, 0, 0);
 
-    lv_obj_t* lbl_dd = lv_label_create(cont_dd);
-    lv_label_set_text(lbl_dd, "Kamera Aufloesung:");
-    lv_obj_set_style_text_color(lbl_dd, lv_color_white(), 0);
-    lv_obj_align(lbl_dd, LV_ALIGN_TOP_LEFT, 10, 0);
+    lbl_res = lv_label_create(cont_dd);
+    lv_label_set_text(lbl_res, "Kamera Aufloesung:");
+    lv_obj_set_style_text_color(lbl_res, c.text, 0);
+    lv_obj_align(lbl_res, LV_ALIGN_TOP_LEFT, 10, 0);
+    lv_obj_set_width(lbl_res, 380);
+    lv_label_set_long_mode(lbl_res, LV_LABEL_LONG_DOT);
 
     dd_res = lv_dropdown_create(cont_dd);
+    SettingsUi::styleDropdown(dd_res);
+    lv_obj_set_style_text_font(dd_res, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_pad_ver(dd_res, 10, 0);
     lv_obj_set_size(dd_res, 360, 40);
     lv_obj_align(dd_res, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_clear_flag(dd_res, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_event_cb(dd_res, dd_res_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // Gleiche Einstellung und Bedienung wie in den Einstellungen.
+    lv_obj_add_event_cb(dd_res, CamResolutionUi_OnChanged, LV_EVENT_VALUE_CHANGED, NULL);
 
     // ZEILE 3b: Belichtung und lokale Aufnahme auf der Kamera
     lv_obj_t* row3b = create_transparent_row(settings_modal, 840, 80);
@@ -335,7 +346,7 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
 
     lv_obj_t* btn_rec = lv_btn_create(row3b);
     lv_obj_set_size(btn_rec, 400, 60);
-    lv_obj_set_style_bg_color(btn_rec, lv_color_hex(0x8B1A1A), 0);
+    SettingsUi::styleButton(btn_rec, SettingsUi::Btn::Danger);
     lv_obj_t* lbl_rec = lv_label_create(btn_rec);
     lv_label_set_text(lbl_rec, LV_SYMBOL_VIDEO "  Aufnahme starten/stoppen");
     lv_obj_center(lbl_rec);
@@ -351,6 +362,7 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
 
     lv_obj_t* btn_pip_reset = lv_btn_create(row3c);
     lv_obj_set_size(btn_pip_reset, 400, 60);
+    SettingsUi::styleButton(btn_pip_reset, SettingsUi::Btn::Tonal);
     lv_obj_t* lbl_pip_reset = lv_label_create(btn_pip_reset);
     lv_label_set_text(lbl_pip_reset, LV_SYMBOL_REFRESH "  Overlay-Lage zuruecksetzen");
     lv_obj_center(lbl_pip_reset);
@@ -364,6 +376,7 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
 
     lv_obj_t* btn_lense = lv_btn_create(row4);
     lv_obj_set_size(btn_lense, 400, 70);
+    SettingsUi::styleButton(btn_lense, SettingsUi::Btn::Tonal);
     lv_obj_t* lbl_lense = lv_label_create(btn_lense); 
     lv_label_set_text(lbl_lense, "Cam Front/Main"); 
     lv_obj_center(lbl_lense);
@@ -371,7 +384,7 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
 
     lv_obj_t* btn_pwr = lv_btn_create(row4);
     lv_obj_set_size(btn_pwr, 400, 70);
-    lv_obj_set_style_bg_color(btn_pwr, lv_color_hex(0xAA0000), 0);
+    SettingsUi::styleButton(btn_pwr, SettingsUi::Btn::Danger);
     lv_obj_t* lbl_pwr = lv_label_create(btn_pwr); 
     lv_label_set_text(lbl_pwr, "App Beenden"); 
     lv_obj_center(lbl_pwr);
@@ -380,6 +393,7 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
     // ZEILE 5: Schließen Button (ganz unten, gleiche Hoehe wie Action Buttons)
     lv_obj_t* btn_close = lv_btn_create(settings_modal);
     lv_obj_set_size(btn_close, 840, 70);
+    SettingsUi::styleButton(btn_close, SettingsUi::Btn::Primary);
     lv_obj_t* lbl_close = lv_label_create(btn_close); 
     lv_label_set_text(lbl_close, "Schliessen"); 
     lv_obj_center(lbl_close);
@@ -417,20 +431,12 @@ void ViewBabySettings_Show() {
     if(camScreenOn) lv_obj_add_state(sw_camscreen, LV_STATE_CHECKED); else lv_obj_clear_state(sw_camscreen, LV_STATE_CHECKED);
     if(camStatus == "PLAY") lv_obj_add_state(sw_camstream, LV_STATE_CHECKED); else lv_obj_clear_state(sw_camstream, LV_STATE_CHECKED);
     
-    String opts = "";
-    int selIdx = 0;
-    for(int i=0; i<camResCount; i++) {
-        opts += camResolutions[i];
-        if(i < camResCount-1) opts += "\n";
-        if(camResolutions[i] == currentCamRes) selIdx = i;
-    }
-    // Solange die Kamera noch keine Liste gemeldet hat, wenigstens die
-    // aktuelle Aufloesung anbieten - ein leeres Dropdown sieht aus wie ein
-    // Fehler und laesst sich nicht bedienen.
-    if (opts.length() == 0) opts = (currentCamRes.length() > 0) ? currentCamRes : String("(warte auf Kamera)");
-
-    lv_dropdown_set_options(dd_res, opts.c_str());
-    lv_dropdown_set_selected(dd_res, selIdx);
+    // Kamera-Aufloesung (gemeinsam mit den Einstellungen, siehe CamResolutionUi).
+    // Der Hinweis steht im Titel - der Platz neben dem Dropdown ist belegt.
+    CamResolutionUi_Fill(dd_res);
+    const String resHint = CamResolutionUi_Hint();
+    if (resHint.length() > 0) lv_label_set_text_fmt(lbl_res, "Aufloesung (%s):", resHint.c_str());
+    else                      lv_label_set_text(lbl_res, "Kamera Aufloesung:");
 
     // --- Video-Overlay ---
     int fpsIdx = 0;

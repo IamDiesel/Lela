@@ -142,6 +142,7 @@ static void deserializeWidget(JsonObject wObj, HAWidgetDef& wDef) {
     wDef.mdi_icon = wObj["mdi_icon"] | "";
     wDef.color_on = wObj["color_on"] | "";
     wDef.color_off = wObj["color_off"] | "";
+    wDef.color_adapt = !wObj["color_adapt"].isNull() ? wObj["color_adapt"].as<bool>() : true;
     
     wDef.icon_align = wObj["icon_align"] | LV_ALIGN_TOP_MID;
     wDef.text_align = wObj["text_align"] | LV_ALIGN_BOTTOM_MID;
@@ -237,6 +238,7 @@ static void serializeWidget(JsonObject wObj, const HAWidgetDef& w) {
     if (w.mdi_icon.length() > 0) wObj["mdi_icon"] = w.mdi_icon;
     if (w.color_on.length() > 0) wObj["color_on"] = w.color_on;
     if (w.color_off.length() > 0) wObj["color_off"] = w.color_off;
+    if (!w.color_adapt) wObj["color_adapt"] = false;
     
     if (w.media_content_type.length() > 0) wObj["media_content_type"] = w.media_content_type;
     if (w.media_content_id.length() > 0) wObj["media_content_id"] = w.media_content_id;

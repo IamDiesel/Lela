@@ -4,6 +4,7 @@
 #include "CrashDiag.h"
 #include <WiFi.h>
 #include <M5Unified.h>
+#include "UiTheme.h"
 
 static lv_obj_t * top_bar_obj = nullptr;
 static lv_obj_t * top_label_clock = nullptr;
@@ -30,7 +31,27 @@ static int s_top_babyMode = -1;
 static uint32_t s_last_slow_update = 0;
 static int s_cachedWifiStatus = 0;
 
-void ViewTopbar_Create(lv_obj_t* parent) {
+// Farben der Leiste. Bisherige Werte als Standard; Ansichten, die schon das
+// Farbschema nutzen, uebernehmen die Topbar-Rollen aus UiTheme (im dunklen
+// Schema sind sie identisch mit diesen Werten).
+struct TopbarColors {
+    lv_color_t bar; lv_opa_t barOpa;
+    lv_color_t text, muted, idle, ok, warn, err;
+};
+static TopbarColors s_col;
+
+static void loadColors(bool themed) {
+    if (themed) {
+        const UiColors& c = UiTheme::c();
+        s_col = { c.bar, c.barOpa, c.barText, c.barMuted, c.barIdle, c.barOk, c.barWarn, c.barErr };
+    } else {
+        s_col = { lv_color_hex(0x000000), 150, lv_color_white(), lv_color_hex(0xAAAAAA),
+                  lv_color_hex(0x555555), lv_color_hex(0x00FF00), lv_color_hex(0xFF8800), lv_color_hex(0xFF0000) };
+    }
+}
+
+void ViewTopbar_Create(lv_obj_t* parent, bool themed) {
+    loadColors(themed);
     s_top_clock_min = -1; 
     s_top_iconBleState = -1; 
     s_top_wifiStatus = -1; 
@@ -44,8 +65,8 @@ void ViewTopbar_Create(lv_obj_t* parent) {
     top_bar_obj = lv_obj_create(parent);
     lv_obj_set_size(top_bar_obj, 1280, 80); 
     lv_obj_align(top_bar_obj, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(top_bar_obj, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(top_bar_obj, 150, 0); 
+    lv_obj_set_style_bg_color(top_bar_obj, s_col.bar, 0);
+    lv_obj_set_style_bg_opa(top_bar_obj, s_col.barOpa, 0); 
     lv_obj_set_style_border_width(top_bar_obj, 0, 0);
     lv_obj_clear_flag(top_bar_obj, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(top_bar_obj, LV_OBJ_FLAG_CLICKABLE);
@@ -55,13 +76,14 @@ void ViewTopbar_Create(lv_obj_t* parent) {
     lv_obj_set_width(top_label_status, 380); // Genug Platz links
     lv_label_set_long_mode(top_label_status, LV_LABEL_LONG_SCROLL_CIRCULAR); // Scrollen wenn zu lang
     lv_obj_set_style_text_font(top_label_status, &lv_font_montserrat_20, 0); 
-    lv_obj_set_style_text_color(top_label_status, lv_color_hex(0xFF5555), 0); // Rot zur Warnung
+    lv_obj_set_style_text_color(top_label_status,   // Rot zur Warnung
+        (themed && !UiTheme::isDark()) ? UiTheme::c().danger : lv_color_hex(0xFF5555), 0);
     lv_label_set_text(top_label_status, ""); 
     lv_obj_align(top_label_status, LV_ALIGN_TOP_LEFT, 20, 25); 
 
     top_label_clock = lv_label_create(top_bar_obj); 
     lv_obj_set_style_text_font(top_label_clock, &lv_font_montserrat_24, 0); 
-    lv_obj_set_style_text_color(top_label_clock, lv_color_hex(0xAAAAAA), 0); 
+    lv_obj_set_style_text_color(top_label_clock, s_col.muted, 0); 
     lv_label_set_text(top_label_clock, "--:--"); 
     lv_obj_align(top_label_clock, LV_ALIGN_TOP_MID, 0, 20); 
     
@@ -79,7 +101,7 @@ void ViewTopbar_Create(lv_obj_t* parent) {
     // im Modus "Nur Audio" gibt es sonst keinen sichtbaren Hinweis darauf.
     top_icon_baby = lv_label_create(top_bar_obj);
     lv_obj_set_style_text_font(top_icon_baby, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(top_icon_baby, lv_color_hex(0x00A0FF), 0);
+    lv_obj_set_style_text_color(top_icon_baby, themed ? UiTheme::c().accent : lv_color_hex(0x00A0FF), 0);
     lv_label_set_text(top_icon_baby, "");
     lv_obj_align(top_icon_baby, LV_ALIGN_TOP_MID, 270, 20);
 
@@ -90,7 +112,7 @@ void ViewTopbar_Create(lv_obj_t* parent) {
     if (CrashDiag_AudioMayBeMuted()) {
         top_label_audio_warn = lv_label_create(top_bar_obj);
         lv_obj_set_style_text_font(top_label_audio_warn, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(top_label_audio_warn, lv_color_hex(0xFF8800), 0);
+        lv_obj_set_style_text_color(top_label_audio_warn, s_col.warn, 0);
         lv_obj_set_style_text_align(top_label_audio_warn, LV_TEXT_ALIGN_RIGHT, 0);
         lv_label_set_text(top_label_audio_warn,
                           LV_SYMBOL_WARNING " Nach Absturz: Ton evtl. stumm\n"
@@ -103,21 +125,27 @@ void ViewTopbar_Create(lv_obj_t* parent) {
     top_icon_bat = lv_label_create(top_bar_obj); 
     lv_obj_set_style_text_font(top_icon_bat, &lv_font_montserrat_24, 0); 
     lv_label_set_text(top_icon_bat, LV_SYMBOL_BATTERY_FULL); 
-    lv_obj_set_style_text_color(top_icon_bat, lv_color_white(), 0); 
+    lv_obj_set_style_text_color(top_icon_bat, s_col.text, 0); 
     lv_obj_align(top_icon_bat, LV_ALIGN_TOP_MID, 130, 20); 
 
     top_icon_charge = lv_label_create(top_bar_obj); 
     lv_obj_set_style_text_font(top_icon_charge, &lv_font_montserrat_16, 0); 
     lv_label_set_text(top_icon_charge, LV_SYMBOL_CHARGE); 
-    lv_obj_set_style_text_color(top_icon_charge, lv_color_white(), 0); 
+    lv_obj_set_style_text_color(top_icon_charge, s_col.text, 0); 
     lv_obj_align_to(top_icon_charge, top_icon_bat, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(top_icon_charge, LV_OBJ_FLAG_HIDDEN);
 
     top_label_bat_pct = lv_label_create(top_bar_obj); 
     lv_obj_set_style_text_font(top_label_bat_pct, &lv_font_montserrat_24, 0); 
     lv_label_set_text(top_label_bat_pct, "100%"); 
-    lv_obj_set_style_text_color(top_label_bat_pct, lv_color_white(), 0); 
+    lv_obj_set_style_text_color(top_label_bat_pct, s_col.text, 0); 
     lv_obj_align_to(top_label_bat_pct, top_icon_bat, LV_ALIGN_OUT_RIGHT_MID, 8, 0); 
+
+    // Sofort mit den aktuellen Werten fuellen. Sonst zeigt die neue Leiste
+    // beim Bildschirmwechsel ein Bild lang die Platzhalter (grau, "100%"),
+    // bis der erste Update-Durchlauf nach dem Zeichnen kommt. So sieht die
+    // Leiste vor und nach dem Wechsel gleich aus.
+    ViewTopbar_Update();
 }
 
 void ViewTopbar_Update() {
@@ -163,12 +191,12 @@ void ViewTopbar_Update() {
     bool fastBlink = (millis() % 600 < 300);
     int curIconBleState = (matEnabled || kippyEnabled) ? (matEnabled && !connected ? (fastBlink ? 1 : 2) : 3) : 0;
     if (s_top_iconBleState != curIconBleState) {
-        lv_color_t ble_col = (curIconBleState == 1) ? lv_color_hex(0xFF8800) : ((curIconBleState == 3) ? lv_color_hex(0x00FF00) : lv_color_hex(0x555555));
+        lv_color_t ble_col = (curIconBleState == 1) ? s_col.warn : ((curIconBleState == 3) ? s_col.ok : s_col.idle);
         lv_obj_set_style_text_color(top_icon_ble, ble_col, 0); s_top_iconBleState = curIconBleState;
     }
             
     if (s_top_wifiStatus != s_cachedWifiStatus) {
-        lv_color_t wifi_col = (s_cachedWifiStatus == 0) ? lv_color_hex(0x555555) : (s_cachedWifiStatus == 1 ? lv_color_hex(0x00FF00) : lv_color_hex(0xFF0000));
+        lv_color_t wifi_col = (s_cachedWifiStatus == 0) ? s_col.idle : (s_cachedWifiStatus == 1 ? s_col.ok : s_col.err);
         lv_obj_set_style_text_color(top_icon_ha, wifi_col, 0); s_top_wifiStatus = s_cachedWifiStatus;
     }
             
@@ -183,11 +211,11 @@ void ViewTopbar_Update() {
         lv_label_set_text_fmt(top_label_bat_pct, "%d%%", batteryPercent);
 
         if (isBatteryCharging) {
-            lv_obj_set_style_text_color(top_icon_bat, lv_color_hex(0x00FF00), 0);
-            lv_obj_set_style_text_color(top_label_bat_pct, lv_color_hex(0x00FF00), 0);
+            lv_obj_set_style_text_color(top_icon_bat, s_col.ok, 0);
+            lv_obj_set_style_text_color(top_label_bat_pct, s_col.ok, 0);
             lv_obj_clear_flag(top_icon_charge, LV_OBJ_FLAG_HIDDEN);
         } else {
-            lv_color_t color = batteryPercent < 15 ? lv_color_hex(0xFF0000) : lv_color_white();
+            lv_color_t color = batteryPercent < 15 ? s_col.err : s_col.text;
             lv_obj_set_style_text_color(top_icon_bat, color, 0);
             lv_obj_set_style_text_color(top_label_bat_pct, color, 0);
             lv_obj_add_flag(top_icon_charge, LV_OBJ_FLAG_HIDDEN);

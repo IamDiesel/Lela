@@ -18,6 +18,14 @@ void AudioStreamLogic_StartPTT();
 void AudioStreamLogic_StopPTT();
 void AudioStreamLogic_Stop();
 
+// Neue Einstellung der Tonquelle (SharedData.h, audioSource ff.) uebernehmen.
+// Laeuft der Babyphone-Ton, wird er mit der neuen Quelle neu gestartet; sonst
+// gilt sie beim naechsten Start. Aus der Hauptschleife rufen.
+void AudioStreamLogic_ApplyConfig();
+
+// true, wenn die eingestellte Tonquelle Gegensprechen kann (nur BabyCam/UDP).
+bool AudioStreamLogic_SupportsPTT();
+
 // ------------------------------------------------------------------------------
 // Zugriffsschutz fuer die I2S-Hardware
 // ------------------------------------------------------------------------------

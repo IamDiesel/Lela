@@ -112,6 +112,26 @@ void GuiManager::switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type) 
     lvgl_port_unlock();
 }
 
+void GuiManager::reloadCurrentScreen() {
+    // Nur Ansichten, die das Farbschema schon nutzen und sich ohne
+    // Nebenwirkungen neu aufbauen lassen (Katzenmatte: reine Anzeige globaler
+    // Werte). HA (Verbindung, Widgets) und Baby (Sichtbarkeit fuer den
+    // BabyService, laufender Stream) uebernehmen ein neues Schema beim
+    // naechsten Betreten.
+    if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_DASHBOARD &&
+        currentScreen != SCREEN_CATMAT) return;
+    if (!lvgl_port_lock(portMAX_DELAY)) return;
+    ViewQuickSettings::hide();   // liegt auf der System-Ebene, haette alte Farben
+    lv_obj_t* nextScr = nullptr;
+    switch (currentScreen) {
+        case SCREEN_SETTINGS:  nextScr = ViewSettings::build();  break;
+        case SCREEN_DASHBOARD: nextScr = ViewDashboard::build(); break;
+        default:               nextScr = ViewCatMat::build();    break;
+    }
+    if (nextScr != nullptr) lv_scr_load_anim(nextScr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    lvgl_port_unlock();
+}
+
 void GuiManager::gestureEventWrapper(lv_event_t * e) { 
     GuiManager * manager = (GuiManager *)lv_event_get_user_data(e); 
     manager->handleGesture(e); 

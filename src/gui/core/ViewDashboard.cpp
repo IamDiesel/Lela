@@ -2,6 +2,7 @@
 #include "GuiManager.h"
 #include "SharedData.h"
 #include "ViewTopbar.h"
+#include "UiTheme.h"
 #include <WiFi.h>
 
 static lv_obj_t * lbl_blocker;
@@ -20,8 +21,11 @@ static bool s_lastCatAlarm = false;
 static bool s_lastCatMuted = false;
 static bool s_lastBlinkCat = false;
 
-static void set_scr_opaque_black(lv_obj_t * scr) {
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
+// Farbschema (UiTheme): Die beiden Kacheln behalten ihre Farben (Wiedererkennung,
+// Alarmblinken); HA-Knopf und Wisch-Hinweis schweben darueber und folgen dem
+// Schema ("overlay").
+static void set_scr_background(lv_obj_t * scr) {
+    lv_obj_set_style_bg_color(scr, UiTheme::c().bg, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 }
 
@@ -101,7 +105,8 @@ lv_obj_t* ViewDashboard::build() {
         return nullptr;
     }
 
-    set_scr_opaque_black(scr);
+    set_scr_background(scr);
+    const UiColors& c = UiTheme::c();
     
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE); 
     lv_obj_add_event_cb(scr, GuiManager::gestureEventWrapper, LV_EVENT_GESTURE, &gui);
@@ -140,12 +145,12 @@ lv_obj_t* ViewDashboard::build() {
     lv_obj_set_size(btnHA, 280, 280); 
     lv_obj_align(btnHA, LV_ALIGN_CENTER, 0, 0);
     
-    lv_obj_set_style_bg_color(btnHA, lv_color_hex(0x222222), 0); 
-    lv_obj_set_style_bg_opa(btnHA, 160, 0); 
+    lv_obj_set_style_bg_color(btnHA, c.overlay, 0); 
+    lv_obj_set_style_bg_opa(btnHA, c.overlayOpa, 0); 
     lv_obj_set_style_radius(btnHA, LV_RADIUS_CIRCLE, 0); 
     
     lv_obj_set_style_border_width(btnHA, 4, 0);
-    lv_obj_set_style_border_color(btnHA, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_color(btnHA, c.overlayBorder, 0);
     lv_obj_set_style_shadow_width(btnHA, 0, 0); 
     
     lv_obj_add_event_cb(btnHA, btn_ha_event_cb, LV_EVENT_CLICKED, NULL);
@@ -153,17 +158,17 @@ lv_obj_t* ViewDashboard::build() {
     lblHA = lv_label_create(btnHA);
     lv_label_set_text(lblHA, LV_SYMBOL_HOME "\nHA");
     lv_obj_center(lblHA);
-    lv_obj_set_style_text_color(lblHA, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lblHA, c.text, 0);
     lv_obj_set_style_text_font(lblHA, &lv_font_montserrat_36, 0);
     lv_obj_set_style_text_align(lblHA, LV_TEXT_ALIGN_CENTER, 0);
 
-    ViewTopbar_Create(scr);
+    ViewTopbar_Create(scr, true);
 
     lv_obj_t* swipe_blocker = lv_obj_create(scr);
     lv_obj_set_size(swipe_blocker, 1300, 100); //1280
     lv_obj_align(swipe_blocker, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(swipe_blocker, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_bg_opa(swipe_blocker, 150, 0);
+    lv_obj_set_style_bg_color(swipe_blocker, c.overlay, 0);
+    lv_obj_set_style_bg_opa(swipe_blocker, c.overlayOpa, 0);
     lv_obj_set_style_border_width(swipe_blocker, 0, 0);
     lv_obj_add_flag(swipe_blocker, LV_OBJ_FLAG_CLICKABLE); 
     lv_obj_add_flag(swipe_blocker, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -172,7 +177,7 @@ lv_obj_t* ViewDashboard::build() {
     lbl_blocker = lv_label_create(swipe_blocker);
     lv_label_set_text(lbl_blocker, LV_SYMBOL_SETTINGS "   " LV_SYMBOL_UP);
     lv_obj_set_style_text_font(lbl_blocker, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_blocker, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_color(lbl_blocker, c.muted, 0);
     lv_obj_align(lbl_blocker, LV_ALIGN_TOP_MID, 0, 30);
 
     return scr;

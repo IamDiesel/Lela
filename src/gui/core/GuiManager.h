@@ -15,6 +15,12 @@ public:
     void init();
     void switchScreen(ScreenID newScreen, lv_scr_load_anim_t anim_type);
     ScreenID getCurrentScreen() const;
+
+    // Baut die offene Ansicht neu auf, z.B. nach einem Wechsel des
+    // Farbschemas (UiTheme). Waehrend der Umstellung (D1-D4) nur fuer
+    // Ansichten, die das Schema schon nutzen; die anderen uebernehmen es beim
+    // naechsten Aufbau.
+    void reloadCurrentScreen();
     
     // public, damit Ansichten Globale Gesten abfangen koennen
     static void gestureEventWrapper(lv_event_t * e);

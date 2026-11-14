@@ -116,12 +116,16 @@ void MqttLogic_Update() {
             
             String clientId = "LolaTab5-" + String(esp_random() & 0xffff, HEX);
             
-            Serial.print("[MQTT] Verbinde -> IP: "); Serial.print(mqttBroker);
-            Serial.print(" | Erzwinge Login aus secrets.h mit User: '"); 
-            Serial.print(SECRET_MQTT_USER); Serial.println("'");
-            
-            // WICHTIG: Hier wird das Gedächtnis ignoriert und stur die secrets.h genutzt!
-            bool connectedBroker = mqttClient.connect(clientId.c_str(), SECRET_MQTT_USER, SECRET_MQTT_PASS);
+            // Zugangsdaten aus den Einstellungen; secrets.h ist nur der
+            // Rueckfall, wenn im Web-Setup nichts eingetragen ist (siehe
+            // prefOrSecret in SharedData.cpp). Frueher wurde hier fest
+            // secrets.h benutzt und die Eingabe im Web-Setup ignoriert.
+            const bool userFromSecrets = (mqttUser == SECRET_MQTT_USER);
+            Serial.printf("[MQTT] Verbinde mit %s:%d, Benutzer '%s' (%s)\n",
+                          mqttBroker.c_str(), mqttPort, mqttUser.c_str(),
+                          userFromSecrets ? "secrets.h" : "Web-Setup");
+
+            bool connectedBroker = mqttClient.connect(clientId.c_str(), mqttUser.c_str(), mqttPass.c_str());
             
             if (connectedBroker) {
                 Serial.println("[MQTT] ERFOLGREICH VERBUNDEN!");
@@ -138,7 +142,9 @@ void MqttLogic_Update() {
                 mqttClient.publish(SECRET_MQTT_CATMAT_CMD_SET, "ON");
                 lastProxyKeepAlive = millis();
             } else {
-                Serial.println("[MQTT] FEHLER: Abgelehnt / Nicht autorisiert!");
+                // state(): 4 = Zugangsdaten falsch, 5 = nicht autorisiert,
+                // negative Werte = Netzwerk/Zeitueberschreitung (PubSubClient).
+                Serial.printf("[MQTT] FEHLER: Verbindung abgelehnt (state %d)\n", mqttClient.state());
             }
         }
     } else {

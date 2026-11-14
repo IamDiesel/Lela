@@ -1,4 +1,6 @@
 #include "HaDialogImport.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "HaWebsocketLogic.h"
 #include "SharedData.h"
@@ -52,7 +54,7 @@ void HaDialogImport::showLoadingPopup(const char* text) {
         lv_obj_t* panel = lv_obj_create(loading_overlay);
         lv_obj_set_size(panel, 420, 290);
         lv_obj_center(panel);
-        lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+        UIHelper::themePanel(panel);
         lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE); 
         lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -62,7 +64,6 @@ void HaDialogImport::showLoadingPopup(const char* text) {
 
         loading_label = lv_label_create(panel);
         lv_obj_set_style_text_font(loading_label, &lv_font_montserrat_24, 0);
-        lv_obj_set_style_text_color(loading_label, lv_color_white(), 0);
         lv_obj_align(loading_label, LV_ALIGN_TOP_MID, 0, 110);
 
         // Abbrechen ist jederzeit moeglich.
@@ -91,13 +92,13 @@ void HaDialogImport::showDashboardSelectionPopup() {
     lv_obj_t* panel = lv_obj_create(import_overlay);
     lv_obj_set_size(panel, 600, 400);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE); 
 
     lv_obj_t* lbl = lv_label_create(panel);
     lv_label_set_text(lbl, "1. Waehle das Dashboard:");
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl, UiTheme::c().text, 0);
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 20);
 
     dd_dashboards = lv_roller_create(panel);
@@ -157,13 +158,13 @@ void HaDialogImport::showViewSelectionPopup() {
     lv_obj_t* panel = lv_obj_create(view_overlay);
     lv_obj_set_size(panel, 600, 400);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE); 
 
     lv_obj_t* lbl = lv_label_create(panel);
     lv_label_set_text(lbl, "2. Waehle den HA-Tab (View):");
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_color(lbl, UiTheme::c().text, 0);
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 20);
 
     dd_views = lv_roller_create(panel);

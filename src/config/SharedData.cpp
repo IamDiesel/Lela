@@ -58,7 +58,7 @@ volatile int currentFps = 0;
 int camBatteryPercent = 0;
 String camResolutions[10];
 int camResCount = 0;
-String currentCamRes = "1280x720";
+String currentCamRes = "";   // Ist-Wert laut Kamera; die Einstellung haelt der BabyService
 bool camFlash = false;
 bool camScrFlash = false;
 int camZoom = 0;
@@ -98,8 +98,6 @@ volatile bool requestRollerUpdate = false;
 uint32_t lastCatSeenTime = 0;
 int catRssi = -100;
 bool wifiEnabled = true, matEnabled = true, kippyEnabled = true;
-int prioMaster = 60, prioSlave = 50;
-float effPrioMat = 0, effPrioKippy = 0, effPrioWifi = 0;
 bool isTrackerMode = false, isCatAtHome = false, isTrackerDataValid = false; 
 int radarSetupPhase = 0; 
 bool pendingRadarTeardown = false, pendingWifiDisconnect = false, isBooting = true; 
@@ -171,13 +169,14 @@ float stdDevInterval = 0.0;
 bool displayIsOff = false;
 int brightnessPercent = 80;
 
-int mjpegDropThreshold = 0; 
-int camHackMode = 0; // <--- WIEDER DA!
-bool audioDebugEnabled = false;
-String audioLogs[10];
-int audioLogIdx = 0;
-
-int audioFormat = 0; 
+int audioSource      = AUDIO_SRC_BABYCAM_UDP;
+int audioFormat      = AUDIO_FMT_PCM16;
+int audioPcmRate     = AUDIO_PCM_RATE_DEFAULT;
+int audioPcmChannels = 1;
+int audioUdpPortIn   = AUDIO_UDP_PORT_IN_DEFAULT;
+int audioUdpPortOut  = AUDIO_UDP_PORT_OUT_DEFAULT;
+volatile int camAudioPortIn  = 0;
+volatile int camAudioPortOut = 0;
 volatile bool audioStandaloneMode = false;
 
 uint8_t lastBtPackets[MAX_BT_MSGS][10];
@@ -186,12 +185,60 @@ int btPacketCount = 0;
 
 bool dongleAlarmEnabled = false;
 
-void addAudioLog(String msg) {
-    if(!audioDebugEnabled) return;
-    msg.trim();
-    if(msg.length() == 0) return; 
-    audioLogs[audioLogIdx] = msg;
-    audioLogIdx = (audioLogIdx + 1) % 10;
+// ------------------------------------------------------------------------------
+// Einstellungen mit Rueckfall auf secrets.h
+// ------------------------------------------------------------------------------
+// Regel: Was im Geraet eingestellt wurde (Web-Setup, Einstellungen), gilt.
+// secrets.h liefert nur den Rueckfall, solange nichts eingestellt ist - fehlt
+// der Schluessel oder ist er leer, greift der Wert aus secrets.h. Ein geleertes
+// Feld im Web-Setup fuehrt damit wieder auf secrets.h zurueck.
+static String prefOrSecret(const char* key, const char* fallback) {
+    String v = preferences.isKey(key) ? preferences.getString(key, "") : String();
+    v.trim();
+    return (v.length() > 0) ? v : String(fallback);
+}
+
+static int prefOrSecretInt(const char* key, int fallback) {
+    const int v = preferences.isKey(key) ? preferences.getInt(key, 0) : 0;
+    return (v > 0) ? v : fallback;
+}
+
+// Schluessel entfallener Einstellungen. Werden einmalig entfernt, damit sie
+// keinen Platz im NVS belegen und nicht wieder auftauchen, falls ein Name
+// spaeter neu vergeben wird.
+static void removeObsoleteKeys() {
+    static const char* const OBSOLETE[] = {
+        "camRef",    // Update-Intervall (Snapshot-Abruf, durch MJPEG ersetzt)
+        "mjDrop",    // Latenz-Drop (nie ausgewertet)
+        "audDbg",    // Audio-Debug-Overlay (Anzeige existierte nicht mehr)
+        "prioM",     // Funk-Multiplex Matte (Altlast Einzel-Funkchip)
+        "prioS",     // Funk-Multiplex Kippy/WLAN
+        "camHackM",  // Aufloesungs-Hack (durch BabyCamApi ersetzt)
+    };
+    for (const char* key : OBSOLETE) {
+        if (preferences.isKey(key)) preferences.remove(key);
+    }
+}
+
+// Babyphone-Ton (siehe SharedData.h). Unplausible Werte fallen auf den
+// Standard zurueck - ein falscher Port oder eine krumme Rate wuerden sonst
+// still zu "kein Ton" fuehren.
+static bool validPort(int p) { return p > 0 && p <= 65535; }
+
+static void loadAudioSourceSettings() {
+    audioSource      = preferences.getInt("audSrc", AUDIO_SRC_BABYCAM_UDP);
+    audioFormat      = preferences.getInt("audioFmt", AUDIO_FMT_PCM16);
+    audioPcmRate     = preferences.getInt("audRate", AUDIO_PCM_RATE_DEFAULT);
+    audioPcmChannels = preferences.getInt("audCh", 1);
+    audioUdpPortIn   = preferences.getInt("audPIn", AUDIO_UDP_PORT_IN_DEFAULT);
+    audioUdpPortOut  = preferences.getInt("audPOut", AUDIO_UDP_PORT_OUT_DEFAULT);
+
+    if (audioSource != AUDIO_SRC_HTTP)                  audioSource = AUDIO_SRC_BABYCAM_UDP;
+    if (audioFormat != AUDIO_FMT_AAC)                   audioFormat = AUDIO_FMT_PCM16;
+    if (audioPcmRate < 8000 || audioPcmRate > 48000)    audioPcmRate = AUDIO_PCM_RATE_DEFAULT;
+    if (audioPcmChannels != 2)                          audioPcmChannels = 1;
+    if (!validPort(audioUdpPortIn))                     audioUdpPortIn  = AUDIO_UDP_PORT_IN_DEFAULT;
+    if (!validPort(audioUdpPortOut))                    audioUdpPortOut = AUDIO_UDP_PORT_OUT_DEFAULT;
 }
 
 void Data_Init() {
@@ -207,32 +254,31 @@ void Data_Init() {
     staticSubnet  = preferences.isKey("ipMask") ? preferences.getString("ipMask", "") : "";
     staticDns     = preferences.isKey("ipDns")  ? preferences.getString("ipDns", "")  : "";
     
-    mqttBroker = preferences.getString("mqIP", SECRET_HA_IP); 
-    mqttBroker.trim();
-    if (mqttBroker.length() == 0) mqttBroker = SECRET_HA_IP;
+    removeObsoleteKeys();
 
-    mqttPort = preferences.getInt("mqPort", SECRET_MQTT_PORT);
-    if (mqttPort == 0) mqttPort = SECRET_MQTT_PORT;
+    // Verbindungsdaten: Geraete-Einstellung vor secrets.h (siehe prefOrSecret).
+    // Der Broker liegt ohne eigene Angabe auf dem HA-Rechner.
+    mqttBroker    = prefOrSecret("mqIP", SECRET_HA_IP);
+    mqttPort      = prefOrSecretInt("mqPort", SECRET_MQTT_PORT);
+    mqttUser      = prefOrSecret("mqUser", SECRET_MQTT_USER);
+    mqttPass      = prefOrSecret("mqPass", SECRET_MQTT_PASS);
+    haIP          = prefOrSecret("haIP", SECRET_HA_IP);
+    haPort        = prefOrSecretInt("haPort", SECRET_HA_PORT);
+    savedMatMac   = prefOrSecret("macM", SECRET_MAC_MAT);
+    savedKippyMac = prefOrSecret("macK", SECRET_MAC_KIPPY);
+    streamIp      = prefOrSecret("strIp", SECRET_STREAM_IP);
 
-    mqttUser = preferences.getString("mqUser", SECRET_MQTT_USER);
-    mqttUser.trim();
-    if (mqttUser.length() == 0) mqttUser = SECRET_MQTT_USER;
-
-    mqttPass = preferences.getString("mqPass", SECRET_MQTT_PASS);
-    mqttPass.trim();
-    if (mqttPass.length() == 0) mqttPass = SECRET_MQTT_PASS;
-    
     mqttEnabled = preferences.getBool("mqttEn", true); 
-    savedMatMac = preferences.getString("macM", SECRET_MAC_MAT);
-    savedKippyMac = preferences.getString("macK", SECRET_MAC_KIPPY);
     showFps = preferences.getBool("showFps", false); 
-    haIP = preferences.getString("haIP", SECRET_HA_IP);
-    haPort = preferences.getInt("haPort", SECRET_HA_PORT);
-    
-    streamIp = preferences.getString("strIp", SECRET_STREAM_IP);
+
+    // Kamera. `camEntity` ist ausschliesslich die Video-URL des Expertenmodus;
+    // die BabyCam-URL baut VideoLogic bei jedem Verbindungsaufbau selbst aus
+    // streamIp und aktueller Qualitaet. Rueckfall wie bisher wirksam: der
+    // Snapshot-/Stream-Pfad aus secrets.h (SECRET_CAM_ENTITY ist ein alter
+    // HA-Entitaetsname und als URL unbrauchbar).
     useCustomUrls = preferences.getBool("useCstUrl", false);
-    camEntity = preferences.getString("camEntity", SECRET_CAM_ENTITY);
-    babyStreamUrl = preferences.getString("babyUrl", SECRET_BABY_STREAM_URL);
+    camEntity     = prefOrSecret("camEntity", SECRET_CAM_SNAPSHOT_PATH);
+    babyStreamUrl = prefOrSecret("babyUrl", SECRET_BABY_STREAM_URL);
 
     // Kameraeinstellungen. Sie wurden bisher zwar GESCHRIEBEN (in
     // ViewBabySettings), aber nie zurueckgelesen - nach jedem Neustart standen
@@ -246,14 +292,7 @@ void Data_Init() {
     camQuality = preferences.getInt("camQuality", 50);
     camSpeed   = preferences.getInt("camSpeed", 0);
 
-    if (!useCustomUrls) {
-        camEntity = "http://" + streamIp + ":8080/api-stream/v1/video?id=lela-os-stream&uuid=" + camUuid + "&quality=" + String(camQuality);
-        babyStreamUrl = "http://" + streamIp + ":8080/api-stream/v1/audio";
-    }
-    
-    audioFormat = preferences.getInt("audioFmt", 0);
-    camHackMode = preferences.getInt("camHackM", 0); // <--- LÄDT DEN HACKMODE
-    currentCamRes = preferences.getString("camRes", "1280x720");
+    loadAudioSourceSettings();
 
     volMaster = preferences.getInt("volM", 80);
     volUI = preferences.getInt("volU", 100);
@@ -281,43 +320,21 @@ void Data_Init() {
     
     thresholdVal = preferences.getInt("thr", 150);
     taraOffset = preferences.getUInt("off", 0);
-    isDarkMode = preferences.getBool("dark", true);
+    // isDarkMode setzt UiTheme::init() (Modus Dunkel/Hell/Automatisch).
     graphTimeSeconds = preferences.getInt("gtime", 150);
     showTimeOnX = preferences.getBool("timeX", true);
     currentGraphMode = preferences.getInt("gMode", GRAPH_MODE_PRESSURE);
     autoBleInterval = preferences.getBool("bleAuto", true);
     manualBleIntervalMs = preferences.getInt("bleManMs", 1000);
     brightnessPercent = preferences.getInt("bright", 80);
-    audioDebugEnabled = preferences.getBool("audDbg", false);
-    mjpegDropThreshold = preferences.getInt("mjDrop", 0);
     wifiEnabled = preferences.getBool("wifiEn", true);
     matEnabled = preferences.getBool("matEn", true);
     kippyEnabled = preferences.getBool("kipEn", true);
-    prioMaster = preferences.getInt("prioM", 60);
-    prioSlave = preferences.getInt("prioS", 50);
     useMqttForMat = preferences.getBool("useMqtt", true);
     dongleAlarmEnabled = preferences.getBool("dongleAl", false);
     preferences.end();
 }
 
-
-void calcMultiplex() {
-    if (isStreamActive && !isArmed) { effPrioMat = 0; effPrioKippy = 0; effPrioWifi = 100.0; return; }
-    if (!wifiEnabled && !kippyEnabled && !matEnabled) { effPrioMat = 0; effPrioKippy = 0; effPrioWifi = 0; return; }
-    if (!matEnabled && (!kippyEnabled || !wifiEnabled)) { effPrioMat = 0; effPrioWifi = wifiEnabled ? 100.0 : 0.0; effPrioKippy = kippyEnabled ? 100.0 : 0.0; return; }
-    if (matEnabled) {
-        effPrioMat = (float)prioMaster;
-        float remaining = 100.0 - effPrioMat;
-        if (wifiEnabled && kippyEnabled) { effPrioKippy = remaining * ((float)prioSlave / 100.0); effPrioWifi = remaining - effPrioKippy; } 
-        else if (wifiEnabled) { effPrioWifi = remaining; effPrioKippy = 0; } 
-        else if (kippyEnabled) { effPrioKippy = remaining; effPrioWifi = 0; } 
-        else { effPrioMat = 100.0; effPrioWifi = 0; effPrioKippy = 0; }
-    } else {
-        effPrioMat = 0;
-        effPrioKippy = (float)prioSlave;
-        effPrioWifi = 100.0 - effPrioKippy;
-    }
-}
 
 void audioTask(void *pvParameters) {
     AudioMsg msg;
@@ -442,16 +459,11 @@ namespace SharedData {
         preferences.putBool("mutU", muteUI);
         preferences.putBool("mutA", muteAlarm);
         preferences.putBool("mutB", muteBaby);
-        
-        preferences.putString("wifiSsid", wifiSsid);
-        preferences.putString("wifiPass", wifiPass);
-        preferences.putString("strIp", streamIp);
-        preferences.putBool("useCstUrl", useCustomUrls);
-        preferences.putString("camEntity", camEntity);
-        preferences.putString("babyUrl", babyStreamUrl);
-        preferences.putString("camRes", currentCamRes); 
-        preferences.putInt("camHackM", camHackMode); // <--- SPEICHERT DEN HACKMODE
-        
+        // Bewusst NUR der Mixer: Hier standen frueher auch WLAN-, Kamera- und
+        // Stream-Werte. Jede Lautstaerkeaenderung schrieb sie mit - darunter
+        // die gerade von der Kamera gemeldete Aufloesung in die Einstellung
+        // "camRes" und die Rueckfallwerte aus secrets.h ins NVS. Diese Werte
+        // speichert jeweils die Stelle, an der sie eingestellt werden.
         preferences.end();
     }
 }

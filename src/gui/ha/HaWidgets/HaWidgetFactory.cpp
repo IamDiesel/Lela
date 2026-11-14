@@ -126,6 +126,7 @@ HAWidget* HaWidgetFactory::createWidget(lv_obj_t* parent, int tab_idx, const HAW
             wDef.icon_margin, wDef.text_margin, wDef.state_margin
         );
         new_widget->setSnapToGrid(wDef.snap_to_grid); 
+        new_widget->setColorAdapt(wDef.color_adapt);
         new_widget->setChartConfig(
             wDef.show_chart, wDef.chart_w_pct, wDef.chart_h_pct, 
             wDef.chart_x_ofs, wDef.chart_y_ofs, wDef.chart_min, wDef.chart_max
@@ -167,6 +168,7 @@ HAWidgetDef HaWidgetFactory::createDefFromWidget(HAWidget* w) {
     def.text_margin = w->getTextMargin(); 
     def.state_margin = w->getStateMargin(); 
     def.snap_to_grid = w->getSnapToGrid(); 
+    def.color_adapt = w->getColorAdapt();
     
     def.show_chart = w->getShowChart();
     def.chart_w_pct = w->getChartWPct();

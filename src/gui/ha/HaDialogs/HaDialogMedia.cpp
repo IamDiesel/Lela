@@ -1,4 +1,6 @@
 #include "HaDialogMedia.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 #include "ViewHomeAssistant.h"
 #include "HaWebsocketLogic.h"
 #include "HaConfigLogic.h" // Fuer das Hinzufuegen von Widgets
@@ -78,7 +80,7 @@ static void buildBrowserList() {
         lv_obj_t* row = lv_obj_create(browser_list);
         lv_obj_set_width(row, lv_pct(100));
         lv_obj_set_height(row, 80); 
-        lv_obj_set_style_bg_color(row, lv_color_hex(0x333333), 0);
+        lv_obj_set_style_bg_color(row, HaTheme::control(), 0); lv_obj_set_style_text_color(row, UiTheme::c().text, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
@@ -196,13 +198,12 @@ static void showBrowserOverlay() {
     lv_obj_t* panel = lv_obj_create(browser_overlay);
     lv_obj_set_size(panel, 800, 600);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
     
     lv_obj_t* lbl_title = lv_label_create(panel);
     lv_label_set_text(lbl_title, "Medien Browser");
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(lbl_title, lv_color_white(), 0);
     lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 10);
 
     // Schliessen (oben rechts)
@@ -223,7 +224,7 @@ static void showBrowserOverlay() {
 
     browser_lbl_error = lv_label_create(panel);
     lv_label_set_text(browser_lbl_error, "Keine Medien verfuegbar.");
-    lv_obj_set_style_text_color(browser_lbl_error, lv_color_hex(0xE74C3C), 0);
+    lv_obj_set_style_text_color(browser_lbl_error, lv_color_hex(HaTheme::themed(0xE74C3C)), 0);
     lv_obj_align(browser_lbl_error, LV_ALIGN_TOP_MID, 0, 55);   // ueber der Liste
     lv_obj_add_flag(browser_lbl_error, LV_OBJ_FLAG_HIDDEN);
 
@@ -231,7 +232,7 @@ static void showBrowserOverlay() {
     browser_list = lv_list_create(panel);
     lv_obj_set_size(browser_list, 750, 480);
     lv_obj_align(browser_list, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_bg_color(browser_list, lv_color_hex(0x111111), 0);
+    lv_obj_set_style_bg_color(browser_list, UiTheme::c().bg, 0);
     lv_obj_set_style_pad_all(browser_list, 10, 0);
     lv_obj_add_flag(browser_list, LV_OBJ_FLAG_HIDDEN);
 
@@ -262,13 +263,12 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
     
     lv_obj_set_size(panel, 650, sources.size() > 0 ? 580 : 480);
     lv_obj_center(panel);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x222222), 0);
+    UIHelper::themePanel(panel);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
     lv_obj_t* lbl_header = lv_label_create(panel);
     lv_label_set_text(lbl_header, w->getName().c_str());
     lv_obj_set_style_text_font(lbl_header, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(lbl_header, lv_color_white(), 0);
     lv_obj_align(lbl_header, LV_ALIGN_TOP_MID, 0, 10);
 
     // Ein/Aus (oben links)
@@ -300,7 +300,7 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
     lv_obj_t* lbl_title = lv_label_create(panel);
     lv_label_set_text(lbl_title, title.c_str());
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_title, lv_color_hex(0x00A0FF), 0);
+    lv_obj_set_style_text_color(lbl_title, lv_color_hex(HaTheme::themed(0x00A0FF)), 0);
     lv_label_set_long_mode(lbl_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_width(lbl_title, 450); 
     lv_obj_set_style_text_align(lbl_title, LV_TEXT_ALIGN_CENTER, 0);
@@ -309,14 +309,14 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
     lv_obj_t* lbl_artist = lv_label_create(panel);
     lv_label_set_text(lbl_artist, artist.c_str());
     lv_obj_set_style_text_font(lbl_artist, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(lbl_artist, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_color(lbl_artist, UiTheme::c().muted, 0);
     lv_obj_align(lbl_artist, LV_ALIGN_TOP_MID, 0, 110);
 
     // 1. ZURUECK BUTTON
     lv_obj_t* btn_prev = lv_btn_create(panel);
     lv_obj_set_size(btn_prev, 80, 70);
     lv_obj_align(btn_prev, LV_ALIGN_TOP_MID, -210, 160);
-    lv_obj_set_style_bg_color(btn_prev, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(btn_prev, HaTheme::control(), 0); lv_obj_set_style_text_color(btn_prev, UiTheme::c().text, 0);
     lv_obj_t* lbl_prev = lv_label_create(btn_prev);
     lv_label_set_text(lbl_prev, LV_SYMBOL_PREV);
     lv_obj_set_style_text_font(lbl_prev, &lv_font_montserrat_28, 0);
@@ -372,7 +372,7 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
     lv_obj_t* btn_next = lv_btn_create(panel);
     lv_obj_set_size(btn_next, 80, 70);
     lv_obj_align(btn_next, LV_ALIGN_TOP_MID, 210, 160);
-    lv_obj_set_style_bg_color(btn_next, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(btn_next, HaTheme::control(), 0); lv_obj_set_style_text_color(btn_next, UiTheme::c().text, 0);
     lv_obj_t* lbl_next = lv_label_create(btn_next);
     lv_label_set_text(lbl_next, LV_SYMBOL_NEXT);
     lv_obj_set_style_text_font(lbl_next, &lv_font_montserrat_28, 0);
@@ -427,7 +427,7 @@ void HaDialogMedia::showMediaControlDialog(HAWidget* w) {
 
     lv_obj_t* lbl_vol = lv_label_create(panel);
     lv_label_set_text(lbl_vol, "Lautstaerke");
-    lv_obj_set_style_text_color(lbl_vol, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_color(lbl_vol, UiTheme::c().muted, 0);
     lv_obj_align(lbl_vol, LV_ALIGN_TOP_MID, 0, y_offset);
 
     cur_media_slider = lv_slider_create(panel);

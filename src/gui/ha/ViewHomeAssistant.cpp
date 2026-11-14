@@ -18,6 +18,8 @@
 #include "HaDialogFolder.h" 
 #include "HaDialogMap.h"
 #include "HaTrackHistory.h"
+#include "HaTheme.h"
+#include "UiTheme.h"
 
 #include <algorithm> 
 
@@ -315,12 +317,13 @@ lv_obj_t* ViewHomeAssistant::build() {
         return nullptr;
     }
 
-    lv_obj_set_style_bg_color(screen, isDarkMode ? lv_color_hex(0x111111) : lv_color_white(), 0);
+    const UiColors& c = UiTheme::c();
+    lv_obj_set_style_bg_color(screen, c.bg, 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(screen, GuiManager::gestureEventWrapper, LV_EVENT_GESTURE, &gui);
 
-    ViewTopbar_Create(screen);
+    ViewTopbar_Create(screen, true);
 
     tabview = lv_tabview_create(screen, LV_DIR_TOP, 60);
     lv_obj_set_size(tabview, 1280, 640); 
@@ -329,17 +332,21 @@ lv_obj_t* ViewHomeAssistant::build() {
     lv_obj_set_scroll_dir(lv_tabview_get_content(tabview), LV_DIR_VER);
 
     lv_obj_t * tab_btns = lv_tabview_get_tab_btns(tabview);
-    lv_obj_set_style_bg_color(tab_btns, isDarkMode ? lv_color_hex(0x222222) : lv_color_hex(0xEEEEEE), 0);
+    lv_obj_set_style_bg_color(tab_btns, c.side, 0);
+    lv_obj_set_style_border_color(tab_btns, c.divider, 0);
     lv_obj_set_style_text_font(tab_btns, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(tab_btns, lv_color_hex(0x888888), 0); 
-    lv_obj_set_style_text_color(tab_btns, lv_color_white(), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(tab_btns, c.muted, 0); 
+    lv_obj_set_style_text_color(tab_btns, c.text, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(tab_btns, c.accent, LV_PART_ITEMS | LV_STATE_CHECKED);
 
     helper_loadWidgets();
 
     btn_back = lv_btn_create(screen);
     lv_obj_set_size(btn_back, 160, 50);
     lv_obj_align(btn_back, LV_ALIGN_TOP_LEFT, 20, 15);
-    lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(btn_back, HaTheme::control(), 0);
+    lv_obj_set_style_text_color(btn_back, c.text, 0);
+    lv_obj_set_style_shadow_width(btn_back, 0, 0);
     lv_obj_add_event_cb(btn_back, btn_back_event_cb, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t * lbl_back = lv_label_create(btn_back); 
@@ -350,7 +357,9 @@ lv_obj_t* ViewHomeAssistant::build() {
     lv_obj_set_size(btn_edit, 200, 50);
     lv_obj_align(btn_edit, LV_ALIGN_TOP_RIGHT, -20, 15);
     lv_obj_add_event_cb(btn_edit, btn_edit_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_set_style_bg_color(btn_edit, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(btn_edit, HaTheme::control(), 0);
+    lv_obj_set_style_text_color(btn_edit, c.text, 0);
+    lv_obj_set_style_shadow_width(btn_edit, 0, 0);
     
     label_edit = lv_label_create(btn_edit); 
     lv_label_set_text(label_edit, LV_SYMBOL_EDIT " BEARBEITEN"); 

@@ -29,6 +29,7 @@ static const char* NVS_PIP       = "pip";
 static const char* KEY_PIP_FPS   = "fps";
 static const char* KEY_PIP_RES   = "res";
 static const char* KEY_RES_LIST  = "resList";
+static const char* KEY_RES_IP    = "resIp";
 static const char* NVS_MAIN      = "catmat";
 static const char* KEY_BABY_RES  = "camRes";
 
@@ -48,6 +49,7 @@ static String   s_pipRes;                    // Einstellung, "" = automatisch
 static String   s_babyRes;                   // Einstellung der Baby-Ansicht
 static String   s_appliedRes;                // zuletzt an die Kamera gesendet
 static String   s_knownRes;                  // letzte bekannte Kameraliste ('\n')
+static String   s_knownResIp;                // Kamera-IP, zu der s_knownRes gehoert
 
 // Sicherheitsventil (siehe "Sicherheitsventil" weiter unten)
 static const uint32_t MEM_CHECK_MS        = 250;
@@ -102,9 +104,23 @@ static bool parseRes(const String& res, int* w, int* h) {
     return (*w > 0 && *h > 0);
 }
 
-// Aktuelle Kameraliste, sonst die zuletzt gespeicherte ('\n'-getrennt).
+// Naechster Eintrag einer '\n'-getrennten Liste ab *pos. false am Ende.
+static bool nextEntry(const String& list, int* pos, String* entry) {
+    while (*pos <= (int)list.length()) {
+        int end = list.indexOf('\n', *pos);
+        if (end < 0) end = list.length();
+        *entry = list.substring(*pos, end);
+        *pos = end + 1;
+        if (entry->length() > 0) return true;
+    }
+    return false;
+}
+
+// Aktuelle Kameraliste, sonst die zuletzt gespeicherte ('\n'-getrennt). Die
+// gespeicherte gilt nur fuer die Kamera, von der sie stammt: Eine andere
+// Kamera (neue IP) kann andere Aufloesungen haben.
 static String resolutionList() {
-    if (camResCount <= 0) return s_knownRes;
+    if (camResCount <= 0) return (s_knownResIp == streamIp) ? s_knownRes : String();
     String list;
     for (int i = 0; i < camResCount; i++) {
         if (i > 0) list += '\n';
@@ -118,38 +134,52 @@ static String resolutionList() {
 static void rememberResolutionList() {
     if (camResCount <= 0) return;
     const String list = resolutionList();
-    if (list == s_knownRes) return;
-    s_knownRes = list;
+    if (list == s_knownRes && s_knownResIp == streamIp) return;
+    s_knownRes   = list;
+    s_knownResIp = streamIp;
     Preferences p;
     p.begin(NVS_PIP, false);
     p.putString(KEY_RES_LIST, s_knownRes);
+    p.putString(KEY_RES_IP, s_knownResIp);
     p.end();
 }
 
-// Waehlt die Overlay-Aufloesung: die eingestellte, solange die Kamera sie
-// anbietet - sonst die kleinste (Flaeche) der Liste. Nach einem Linsenwechsel
-// kann die Liste eine andere sein.
-static String effectivePipRes() {
-    const String list = resolutionList();
-    if (list.length() == 0) return s_pipRes;
+// Waehlt eine Aufloesung, die die Kamera auch kann:
+//   1. die gewuenschte, wenn sie in der Liste steht,
+//   2. sonst die groesste kleinere (nach Flaeche) - lieber etwas weniger
+//      Aufloesung als mehr Datenlast, als gewuenscht war,
+//   3. sonst (alles groesser) die kleinste der Liste.
+// Ein leerer oder unlesbarer Wunsch landet bei 3. Ohne Liste (Kamera noch nie
+// erreicht) bleibt der Wunsch unveraendert - die Kamera entscheidet dann.
+static String matchResolution(const String& wanted, const String& list) {
+    if (list.length() == 0) return wanted;
 
-    String smallest;
-    long smallestArea = 0;
-    int start = 0;
-    while (start <= (int)list.length()) {
-        int end = list.indexOf('\n', start);
-        if (end < 0) end = list.length();
-        const String entry = list.substring(start, end);
-        start = end + 1;
+    int ww = 0, wh = 0;
+    const long wantedArea = parseRes(wanted, &ww, &wh) ? (long)ww * wh : 0;
 
-        if (s_pipRes.length() > 0 && entry == s_pipRes) return s_pipRes;
-
+    String below, smallest, entry;
+    long belowArea = 0, smallestArea = 0;
+    int pos = 0;
+    while (nextEntry(list, &pos, &entry)) {
+        if (entry == wanted) return entry;
         int w = 0, h = 0;
         if (!parseRes(entry, &w, &h)) continue;
         const long area = (long)w * h;
+        if (area <= wantedArea && area > belowArea) { belowArea = area; below = entry; }
         if (smallestArea == 0 || area < smallestArea) { smallestArea = area; smallest = entry; }
     }
-    return smallest;
+    return (below.length() > 0) ? below : smallest;
+}
+
+// Overlay: "" (automatisch) = kleinste; sonst wie oben. Nach einem
+// Linsenwechsel kann die Liste eine andere sein.
+static String effectivePipRes() {
+    return matchResolution(s_pipRes, resolutionList());
+}
+
+// Baby-Ansicht: die eingestellte, abgeglichen mit der Liste der Kamera.
+static String effectiveBabyRes() {
+    return matchResolution(s_babyRes, resolutionList());
 }
 
 // Wer bekommt das Videobild? Die Baby-Ansicht hat Vorrang (dort gibt es kein
@@ -184,25 +214,46 @@ static void applyOutput() {
     setOutput(outputFor(BabyMode_HasVideo(effectiveMode()) && !s_memPaused));
 }
 
-// Setzt die Kameraaufloesung passend zum Abnehmer. Erst, wenn die Sitzung
-// steht - vorher verwirft der API-Task Kommandos. Die Kamera startet ihren
-// Stream daraufhin selbst neu; der Netz-Task verbindet sich dann neu.
-static void reconcileResolution() {
+// Fordert die Kameraaufloesung passend zum Abnehmer an - bei JEDEM
+// Verbindungsaufbau (Videostart oder neue Kamerasitzung), nicht nur einmal je
+// Boot. Startet die Kamera-App neu, hat sie wieder ihre Standardaufloesung.
+//
+// Ablauf je Verbindung:
+//   - Ohne Video oder ohne Sitzung wird der gesendete Wert vergessen; der
+//     naechste Aufbau entscheidet also neu.
+//   - Entschieden wird erst mit einer Statusantwort aus DIESER Sitzung: Erst
+//     dann sind Liste und Ist-Aufloesung der Kamera verlaesslich.
+//   - Liefert die Kamera schon das Ziel, wird nichts gesendet. Jede Aenderung
+//     startet ihren Stream neu (~3 s) - das soll nur bei echtem Bedarf passieren.
+// Fremde Kameras (Expertenmodus) haben keine BabyCam-API; ihre Aufloesung
+// steht in der URL.
+static void reconcileResolution(bool wantVideo) {
+    if (!wantVideo || !BabyCamApi_IsSessionReady()) { s_appliedRes = ""; return; }
+    if (useCustomUrls) return;
+
     String target;
-    if (s_babyViewVisible)      target = s_babyRes;
+    if (s_babyViewVisible)      target = effectiveBabyRes();
     else if (s_pipVisible)      target = effectivePipRes();
     else                        return;   // kein Abnehmer: nichts umstellen
 
     if (target.length() == 0 || target == s_appliedRes) return;
-    if (!BabyCamApi_IsSessionReady()) return;
+    if (!BabyCamApi_HasSessionStatus()) return;
+
+    const char* forWhom = s_babyViewVisible ? "Baby-Ansicht" : "Overlay";
+    s_appliedRes = target;
+    if (target == currentCamRes) {
+        Serial.printf("[Baby] Kamera-Aufloesung %s passt bereits (fuer %s)\n", target.c_str(), forWhom);
+        return;
+    }
 
     int w = 0, h = 0;
     if (!parseRes(target, &w, &h)) return;
 
-    Serial.printf("[Baby] Kamera-Aufloesung -> %s (fuer %s)\n", target.c_str(),
-                  s_babyViewVisible ? "Baby-Ansicht" : "Overlay");
+    const String& wanted = s_babyViewVisible ? s_babyRes : s_pipRes;
+    Serial.printf("[Baby] Kamera-Aufloesung %s -> %s (eingestellt: %s, fuer %s)\n",
+                  currentCamRes.c_str(), target.c_str(),
+                  wanted.length() > 0 ? wanted.c_str() : "automatisch", forWhom);
     BabyCamApi_SetResolution(w, h);
-    s_appliedRes = target;
 }
 
 // Gleicht den Babyphone-Ton ab. Pegel- statt flankengesteuert: ein
@@ -304,6 +355,8 @@ void BabyService_Init() {
     // bei jedem Start "nvs_get_str len fail".
     s_pipRes   = p.isKey(KEY_PIP_RES)  ? p.getString(KEY_PIP_RES, "")  : String();
     s_knownRes = p.isKey(KEY_RES_LIST) ? p.getString(KEY_RES_LIST, "") : String();
+    // Listen aus der Zeit vor der IP-Zuordnung gehoeren zur aktuellen Kamera.
+    s_knownResIp = p.isKey(KEY_RES_IP) ? p.getString(KEY_RES_IP, "") : streamIp;
     p.end();
     if (s_pipFps < PIP_FPS_MIN || s_pipFps > PIP_FPS_MAX) s_pipFps = PIP_FPS_DEFAULT;
 
@@ -339,7 +392,7 @@ void BabyService_Update() {
     // 3. Videoausgabe und passende Kameraaufloesung
     const VideoOutput out = outputFor(wantVideo);
     setOutput(out);
-    if (wantVideo) reconcileResolution();
+    reconcileResolution(wantVideo);
 
     // 4. Babyphone-Ton
     reconcileAudio(wantAudio);
@@ -394,8 +447,10 @@ void BabyService_SetDisplayOn(bool on) {
 }
 
 void BabyService_SetBabyResolution(const String& res) {
+    // currentCamRes bleibt unberuehrt: es ist der von der Kamera gemeldete
+    // Ist-Wert. Frueher wurde hier die Einstellung hineingeschrieben - Anzeige
+    // und Einstellung liefen dann ueber die Statusabfrage auseinander.
     s_babyRes = res;
-    currentCamRes = res;   // Anzeige sofort; die Statusabfrage bestaetigt spaeter
     Preferences p;
     p.begin(NVS_MAIN, false);
     p.putString(KEY_BABY_RES, res);
@@ -408,6 +463,14 @@ void BabyService_SetPipResolution(const String& res) {
     p.begin(NVS_PIP, false);
     p.putString(KEY_PIP_RES, res);
     p.end();
+}
+
+String BabyService_GetBabyResolutionSetting() {
+    return s_babyRes;
+}
+
+String BabyService_GetBabyResolution() {
+    return effectiveBabyRes();
 }
 
 String BabyService_GetPipResolutionSetting() {

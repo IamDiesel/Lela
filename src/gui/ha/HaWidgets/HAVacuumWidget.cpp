@@ -1,5 +1,6 @@
 #include "HAVacuumWidget.h"
 #include "HaWebsocketLogic.h"
+#include "HaTheme.h"
 
 HAVacuumWidget::HAVacuumWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off)
     : HAWidget(parent, tab_idx, type, entity, x, y, w, h, name, mdi, c_on, c_off) {
@@ -79,10 +80,10 @@ void HAVacuumWidget::updateState(String state) {
     const uint32_t c_off_val = colorOffOr(0x555555);
 
     if (state == "cleaning" || state == "returning" || state == "error") {
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x333333), 0); 
+        lv_obj_set_style_bg_color(container, HaTheme::cardOn(c_on_val), 0); 
         lv_obj_set_style_text_color(icon_label, lv_color_hex(c_on_val), 0); 
     } else {
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x111111), 0); 
+        lv_obj_set_style_bg_color(container, HaTheme::cardOff(), 0); 
         lv_obj_set_style_text_color(icon_label, lv_color_hex(c_off_val), 0); 
     }
 }
