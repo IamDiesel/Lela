@@ -13,6 +13,12 @@ void lvgl_port_unlock(void) {
     xSemaphoreGiveRecursive(lvgl_mux);
 }
 
+const char* Lvgl_LockHolderName() {
+    if (!lvgl_mux) return "-";
+    const TaskHandle_t holder = xSemaphoreGetMutexHolder(lvgl_mux);
+    return holder ? pcTaskGetName(holder) : "-";
+}
+
 // Ausgesparte Flaeche, siehe Header. Nur von der Hauptschleife geschrieben,
 // nur im Flush (ebenfalls Hauptschleife) gelesen.
 static lv_area_t s_reserved;

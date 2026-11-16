@@ -8,6 +8,7 @@
 #include "AudioStreamLogic.h"
 #include "BabyCamApi.h"
 #include "HeapMonitor.h"
+#include "secrets.h"          // Vorgabe fuer die Kamera-IP
 #include <Preferences.h>
 #include <esp_heap_caps.h>
 
@@ -50,6 +51,7 @@ static String   s_babyRes;                   // Einstellung der Baby-Ansicht
 static String   s_appliedRes;                // zuletzt an die Kamera gesendet
 static String   s_knownRes;                  // letzte bekannte Kameraliste ('\n')
 static String   s_knownResIp;                // Kamera-IP, zu der s_knownRes gehoert
+static bool     s_videoRestart = false;      // neue Kamera-IP: Empfang neu aufbauen
 
 // Sicherheitsventil (siehe "Sicherheitsventil" weiter unten)
 static const uint32_t MEM_CHECK_MS        = 250;
@@ -385,9 +387,18 @@ void BabyService_Update() {
     // 2. Videoempfang. Start/Stop sind idempotent und billig, siehe V-03 in
     //    VideoLogic: der Start holt sich so automatisch nach, sobald ein
     //    auslaufender Vorgaenger-Task weg ist.
+    //    Nach einem Wechsel der Kamera-IP einmal stoppen: Der Netz-Task hinge
+    //    sonst an der alten Adresse, solange deren Verbindung noch steht. Der
+    //    naechste Durchlauf startet ihn wieder.
     isStreamActive = wantVideo;
-    if (wantVideo) VideoLogic_Start();
-    else           VideoLogic_Stop();
+    if (s_videoRestart) {
+        s_videoRestart = false;
+        VideoLogic_Stop();
+    } else if (wantVideo) {
+        VideoLogic_Start();
+    } else {
+        VideoLogic_Stop();
+    }
 
     // 3. Videoausgabe und passende Kameraaufloesung
     const VideoOutput out = outputFor(wantVideo);
@@ -444,6 +455,27 @@ void BabyService_SetPipVisible(bool visible) {
 void BabyService_SetDisplayOn(bool on) {
     s_displayOn = on;
     applyOutput();
+}
+
+void BabyService_SetCameraIp(const String& ip) {
+    String value = ip;
+    value.trim();
+
+    // Leer heisst "Vorgabe": Schluessel entfernen statt leer speichern (wie
+    // beim Laden in SharedData, prefOrSecret).
+    Preferences p;
+    p.begin(NVS_MAIN, false);
+    if (value.length() > 0)     p.putString("strIp", value);
+    else if (p.isKey("strIp"))  p.remove("strIp");
+    p.end();
+
+    const String effective = value.length() > 0 ? value : String(SECRET_STREAM_IP);
+    if (effective == streamIp) return;
+
+    Serial.printf("[Baby] Kamera-IP %s -> %s\n", streamIp.c_str(), effective.c_str());
+    streamIp = effective;
+    s_appliedRes = "";        // die neue Kamera hat ihre eigene Aufloesung
+    s_videoRestart = true;    // siehe BabyService_Update
 }
 
 void BabyService_SetBabyResolution(const String& res) {

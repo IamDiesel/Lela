@@ -88,6 +88,22 @@ void CrashDiag_SaveForColdRestart(bool planned);
 // true, wenn dieser Start ein automatischer Kaltstart nach einem Warmstart war.
 bool CrashDiag_WasAutoColdRestart();
 
+// true, wenn dieser Start auf ein ungewolltes Ende des vorherigen Laufs folgt:
+// Absturz, Watchdog oder vom HangGuard beendeter Haenger - mit oder ohne
+// Stromlos-Phase dazwischen. Nicht nach Einschalten, Reset-Knopf, Upload oder
+// gewolltem Neustart.
+bool CrashDiag_WasUnplannedRestart();
+
+// Merkwort fuer die Wiederaufnahme nach einem ungewollten Neustart. CrashDiag
+// kennt die Bedeutung nicht - es bewahrt die 32 Bit nur auf (RTC-Speicher,
+// ueber die Stromlos-Phase per NVS). Geschrieben und gedeutet wird es von der
+// Oberflaeche (SessionResume). 0 = nichts gemerkt.
+void     CrashDiag_SetResumeWord(uint32_t word);
+uint32_t CrashDiag_PrevResumeWord();   // Wort des vorherigen Laufs
+
+// Laufzeit des vorherigen Laufs beim letzten Lebenszeichen (0 nach Kaltstart).
+uint32_t CrashDiag_PrevUptimeMs();
+
 // true, wenn seit dem letzten Kaltstart mindestens ein Absturz war.
 //
 // Befund 14.10.2026: Nach einem Absturz kann die Audio-Ausgabe stumm bleiben,

@@ -10,6 +10,10 @@ void Set_Backlight(uint8_t val);
 bool lvgl_port_lock(uint32_t timeout_ms);
 void lvgl_port_unlock(void);
 
+// Name des Tasks, der die LVGL-Sperre gerade haelt ("-" = frei). Nur fuer die
+// Diagnose (HangGuard): Momentaufnahme ohne eigene Sperre.
+const char* Lvgl_LockHolderName();
+
 // ------------------------------------------------------------------------------
 // Ausgesparte Flaeche
 // ------------------------------------------------------------------------------

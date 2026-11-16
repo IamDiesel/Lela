@@ -8,6 +8,9 @@
 #include "HaTheme.h"
 #include "CrashDiag.h"
 #include "ColdRestart.h"
+#include "HangGuard.h"
+#include "CameraTab5.h"
+#include "ViewCameraPreview.h"
 #include "AudioStreamLogic.h"
 #include "DebugFlags.h"
 #include "AudioCodecTab5.h"
@@ -16,6 +19,8 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
+
+#include "WifiConnect.h"
 
 using namespace SettingsUi;
 
@@ -32,7 +37,7 @@ static void formatUptime(char* buf, size_t len) {
 static String ipText() {
     if (WiFi.status() != WL_CONNECTED) return "Kein WLAN";
     String s = WiFi.localIP().toString();
-    if (staticIpEnabled) s += " (fest)";
+    if (WifiConnect_IsStaticIp()) s += " (fest)";
     return s;
 }
 
@@ -198,6 +203,17 @@ static void audioResetClicked(lv_event_t* e) {
     AudioStreamLogic_ResetAudio((uint8_t)(uintptr_t)lv_event_get_user_data(e));
 }
 
+// Kamera Stufe 1: Sensor ansprechen; Ergebnis im Knopf und im Monitor.
+static void cameraProbeClicked(lv_event_t* e) {
+    const CameraProbeResult r = CameraTab5_Probe();
+    char text[40];
+    if (!r.clockOk)        snprintf(text, sizeof(text), "Takt-Fehler");
+    else if (!r.ack)       snprintf(text, sizeof(text), "Keine Antwort");
+    else if (r.isSc202cs)  snprintf(text, sizeof(text), "OK: SC2356");
+    else                   snprintf(text, sizeof(text), "ID 0x%04X", r.chipId);
+    lv_label_set_text(lv_obj_get_child(lv_event_get_target(e), 0), text);
+}
+
 static void crashClicked(lv_event_t*) {
     if (s_crashArmedMs != 0 && millis() - s_crashArmedMs < 4000) {
         CrashDiag_TriggerCrash();
@@ -236,6 +252,13 @@ void SettingsDiag_Build(lv_obj_t* parent) {
     snprintf(start, sizeof(start), "%lu", (unsigned long)CrashDiag_GetPanicCount());
     addValue(row(card, "Abstuerze seit Kaltstart"), start);
 
+    // Letzter eingefrorener Zustand, den der Waechter beendet hat (HangGuard).
+    const uint32_t hangs = HangGuard_Count();
+    Row hangRow = row(card, "Letzter Haenger",
+                      hangs ? HangGuard_LastReport() : "Keiner aufgezeichnet (Waechter HangGuard)");
+    snprintf(start, sizeof(start), "%lu insgesamt", (unsigned long)hangs);
+    addValue(hangRow, start);
+
 #if DIAG_TEST_TOOLS
     card = section(pg, "TESTWERKZEUGE",
                    "Nur zur Fehlersuche (DebugFlags.h: DIAG_TEST_TOOLS). Registerauszug des "
@@ -268,6 +291,19 @@ void SettingsDiag_Build(lv_obj_t* parent) {
     r = row(card, "Absturz ausloesen", "Schreibzugriff auf Adresse 0 - zweimal tippen");
     s_crashArmedMs = 0;
     s_btnCrash = addButton(r.obj, "Absturz", Btn::Danger, crashClicked);
+
+    card = section(pg, "KAMERA",
+                   "QR-Einrichtung, Ausbaustufen siehe CameraTab5.h. Meldungen im Monitor ([Kamera]).");
+    r = row(card, "Sensor pruefen", "Takt 24 MHz an G36, Reset, Chip-ID (SC2356 = 0xEB52)");
+    addButton(r.obj, "Pruefen", Btn::Tonal, cameraProbeClicked);
+    r = row(card, "Vorschau", "1280x720 ueber CSI + ISP, verkleinert angezeigt");
+    addButton(r.obj, "Oeffnen", Btn::Tonal, [](lv_event_t*) {
+        CameraViewConfig cfg = {};
+        cfg.title     = "Kamera-Vorschau (Test)";
+        cfg.closeText = "Schliessen";
+        cfg.showStats = true;
+        ViewCameraPreview_Open(cfg);
+    });
 #endif
 
     refreshDiag();

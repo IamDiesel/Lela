@@ -39,8 +39,10 @@
 #include "VideoLogic.h"
 #include "VideoDecoder.h"
 #include "VideoOverlay.h"
+#include "PpaGeometry.h"
 #include "SharedData.h"
 #include "Dma2dGuard.h"
+#include "HangGuard.h"
 #include "BabyCamApi.h"
 #include "ViewBaby.h"
 
@@ -491,6 +493,34 @@ static bool readFrameBody(WiFiClient* s, uint8_t* dst, size_t len, uint32_t dead
     return (got == len);
 }
 
+// Liest len Bytes und wirft sie weg.
+//
+// Fuer Bilder, die niemand abnimmt (kein freier Eingabepuffer). Der Rumpf MUSS
+// trotzdem vom Socket: sonst liest die naechste Runde Bilddaten als Kopfzeilen,
+// die Verbindung gilt als unbrauchbar und wird neu aufgebaut - bei stehendem
+// Decoder im 2,5-Sekunden-Takt, mit Anmeldung und Statusabfrage an die Kamera
+// (so gesehen im Log vom 15.11.2026).
+static bool skipFrameBody(WiFiClient* s, size_t len, uint32_t deadlineMs) {
+    static uint8_t scratch[1024];   // nur aus dem Netz-Task benutzt
+    while (len > 0) {
+        const size_t chunk = (len < sizeof(scratch)) ? len : sizeof(scratch);
+        if (!readFrameBody(s, scratch, chunk, deadlineMs)) return false;
+        len -= chunk;
+    }
+    return true;
+}
+
+// Meldet hoechstens alle 5 s, dass Bilder uebersprungen werden, weil der
+// Decoder keinen Puffer freigibt. Im Normalbetrieb kommt das nicht vor: der
+// Decoder gibt jeden Puffer direkt nach dem Dekodieren zurueck.
+static void logNoFreeSlot() {
+    static uint32_t lastLog = 0;
+    const uint32_t now = millis();
+    if (lastLog != 0 && now - lastLog < 5000) return;
+    lastLog = now;
+    Serial.println("[Video] Decoder nimmt keine Bilder ab - Bild uebersprungen, Verbindung bleibt.");
+}
+
 // Plausibilitaet UND wahre Bildlaenge.
 //
 // Die Content-Length der Kamera ist NICHT die Laenge des JPEG: hinter dem
@@ -749,9 +779,15 @@ static void videoNetTask(void*) {
 
             // Freien Slot holen. Wartet der Decoder, blockiert das hier kurz -
             // das ist gewollte Rueckstaufuehrung statt wachsender Latenz.
+            // Kein Puffer (oder ein zu kleiner): das Bild verwerfend lesen,
+            // damit der Bytestrom im Tritt bleibt - siehe skipFrameBody().
+            // Der Strom selbst lebt, also zaehlt das Bild fuer die Stall-Frist.
             uint8_t slot;
             if (xQueueReceive(s_freeQ, &slot, pdMS_TO_TICKS(1000)) != pdTRUE) {
                 statInc(s_statDropped);
+                logNoFreeSlot();
+                if (!skipFrameBody(stream, (size_t)len, deadline)) break;
+                lastFrameMs = millis();
                 continue;
             }
 
@@ -760,6 +796,8 @@ static void videoNetTask(void*) {
             if (!buf || (size_t)len > cap) {
                 xQueueSend(s_freeQ, &slot, 0);
                 statInc(s_statDropped);
+                if (!skipFrameBody(stream, (size_t)len, deadline)) break;
+                lastFrameMs = millis();
                 continue;
             }
 
@@ -846,38 +884,107 @@ static void videoNetTask(void*) {
 // Display frueher zu einem zweiten DMA2D-Nutzer in derselben Runde.
 static lgfx::PPASrm* s_ppa = nullptr;
 
+// ------------------------------------------------------------------------------
+// Geometrie eines PPA-Auftrags
+// ------------------------------------------------------------------------------
+// Ausschnitt, Faktor und Zielgroesse kommen aus PpaGeometry: Der PPA skaliert
+// in Schritten von 1/16 (abgerundet - das Bild wird nie groesser als sein
+// Feld), und am Bildrand soll keine winzige Rest-Kachel entstehen - an einer
+// solchen kann ein Auftrag haengen bleiben (PpaGeometry.h, Befund 15.11.2026).
+//
+// Gerechnet wird nur, wenn sich Bild oder Feld aendern. Je Ausgabeweg ein
+// eigener Merker, weil Vollbild und Overlay verschiedene Felder haben.
+struct PpaFitCache {
+    uint16_t srcW = 0, srcH = 0, boxW = 0, boxH = 0;
+    PpaFit   fit;
+};
+
+// Fuer den HangGuard-Bericht (hangContext): der letzte PPA-Auftrag.
+static volatile uint16_t s_hangPpaOutW = 0, s_hangPpaOutH = 0;
+static volatile uint32_t s_hangPpaTailBits = 0;
+
+static const PpaFit& ppaFitFor(PpaFitCache& cache, const char* target,
+                               const DecodedFrame& f, int boxW, int boxH) {
+    if (cache.srcW != f.width || cache.srcH != f.height ||
+        cache.boxW != (uint16_t)boxW || cache.boxH != (uint16_t)boxH) {
+        cache.srcW = f.width;
+        cache.srcH = f.height;
+        cache.boxW = (uint16_t)boxW;
+        cache.boxH = (uint16_t)boxH;
+        cache.fit  = PpaGeometry_Fit(f.width, f.height, (uint16_t)boxW, (uint16_t)boxH,
+                                     VIDEO_PPA_SAFE_FIT != 0);
+
+        // Neue Geometrie einmal melden - hoechstens alle 2 s, damit das
+        // Ziehen am Overlay-Rahmen die Konsole nicht flutet.
+        static uint32_t lastLog = 0;
+        const uint32_t now = millis();
+        const PpaFit& fit = cache.fit;
+        if (fit.valid && (lastLog == 0 || now - lastLog > 2000)) {
+            lastLog = now;
+            Serial.printf("[Video] PPA %s: %ux%u -> Ausschnitt %ux%u, Faktor %u/16, Ziel %ux%u, "
+                          "Rest-Kachel %lu Bit%s\n",
+                          target, (unsigned)f.width, (unsigned)f.height,
+                          (unsigned)fit.srcW, (unsigned)fit.srcH, (unsigned)fit.scale16,
+                          (unsigned)fit.outW, (unsigned)fit.outH, (unsigned long)fit.tailBits,
+                          fit.adjusted ? " (angepasst)"
+                                       : (fit.tailBits < PPA_SAFE_TAIL_BITS ? " (klein!)" : ""));
+        }
+    }
+    return cache.fit;
+}
+
+// Uebergibt den Auftrag. Zielposition in Querformat-Koordinaten (dstX, dstY).
+//
+// Ausschnitt: LGFX_PPA beschreibt ihn ueber Anfang (src_x, src_y) und Ende
+// (src_w, src_h) - die Blockgroesse ist die Differenz, und src_w gilt zugleich
+// als Zeilenlaenge des Puffers. Deshalb bleibt src_w die volle Bildbreite.
+//
+// Zielposition: LGFX_PPA rechnet die Querformat-Koordinaten bei gedrehtem
+// Panel nur durch VERTAUSCHEN von x und y in den hochkant liegenden
+// Bildspeicher um - die Spiegelung der y-Achse fehlt. Ohne Ausgleich landete
+// ein Bild fuer unten rechts oben rechts (gemessen am Geraet). Deshalb wird
+// hier die gespiegelte Zeile uebergeben.
+static void ppaPush(const DecodedFrame& f, const PpaFit& fit, int dstX, int dstY) {
+    const int ppaY = PANEL_H - dstY - (int)fit.outH;
+    if (dstX < 0 || ppaY < 0) return;
+
+    s_hangPpaOutW     = fit.outW;
+    s_hangPpaOutH     = fit.outH;
+    s_hangPpaTailBits = fit.tailBits;
+
+    const float z = (float)fit.scale16 / 16.0f;   // Sechzehntel: exakt darstellbar
+    s_ppa->pushImageSRM(dstX, ppaY, fit.srcX, fit.srcY, 0, z, z,
+                        f.width, (uint32_t)fit.srcY + fit.srcH, (uint16_t*)f.pixels);
+}
+
+// Vollbild: so gross wie moeglich, Seitenverhaeltnis erhalten, mittig. Die
+// Raender bleiben schwarz (renderFrame loescht den Schirm beim Eintritt).
 static void pushFramePPA(const DecodedFrame& f) {
     if (!s_ppa) s_ppa = new lgfx::PPASrm(&M5.Display, false);
     if (!s_ppa) return;
 
-    const float zx = (float)PANEL_W / (float)f.width;
-    const float zy = (float)PANEL_H / (float)f.height;
-    const float z  = (zx < zy) ? zx : zy;    // Seitenverhaeltnis erhalten
+    static PpaFitCache cache;
+    const PpaFit& fit = ppaFitFor(cache, "Vollbild", f, PANEL_W, PANEL_H);
+    if (!fit.valid) return;
 
-    s_ppa->pushImageSRM((PANEL_W - (int)(f.width  * z)) / 2,
-                        (PANEL_H - (int)(f.height * z)) / 2,
-                        0, 0, 0, z, z,
-                        f.width, f.height, (uint16_t*)f.pixels);
+    ppaPush(f, fit, (PANEL_W - (int)fit.outW) / 2, (PANEL_H - (int)fit.outH) / 2);
 }
 
 // Video-Overlay: das Bild in das Zielrechteck einpassen.
 //
-// Der PPA skaliert in Schritten von 1/16 (Festkomma mit vier Nachkommabits).
-// Der Faktor wird deshalb auf 1/16 ABGERUNDET - so wird das Bild nie groesser
-// als das Rechteck. Was es kleiner bleibt, wird schwarz gefuellt: LVGL zeichnet
-// in dieser Flaeche nicht (Lvgl_SetReservedArea), dort stuende sonst Altes.
+// Was das Bild kleiner bleibt als das Rechteck, wird schwarz gefuellt: LVGL
+// zeichnet in dieser Flaeche nicht (Lvgl_SetReservedArea), dort stuende sonst
+// Altes.
 static void pushFramePip(const DecodedFrame& f, const PipRect& r) {
     if (!s_ppa) s_ppa = new lgfx::PPASrm(&M5.Display, false);
     if (!s_ppa) return;
 
-    const float zx = (float)r.w / (float)f.width;
-    const float zy = (float)r.h / (float)f.height;
-    float z = (zx < zy) ? zx : zy;
-    z = floorf(z * 16.0f) / 16.0f;
-    if (z <= 0.0f) return;   // Rechteck kleiner als 1/16 des Bildes - unsinnig
+    static PpaFitCache cache;
+    const PpaFit& fit = ppaFitFor(cache, "Overlay", f, r.w, r.h);
+    if (!fit.valid) return;   // Rechteck kleiner als 1/16 des Bildes - unsinnig
 
-    const int dw = (int)(f.width  * z);
-    const int dh = (int)(f.height * z);
+    const int dw = (int)fit.outW;
+    const int dh = (int)fit.outH;
     const int dx = r.x + (r.w - dw) / 2;
     const int dy = r.y + (r.h - dh) / 2;
 
@@ -887,15 +994,7 @@ static void pushFramePip(const DecodedFrame& f, const PipRect& r) {
     if (dx > r.x)              M5.Display.fillRect(r.x, dy, dx - r.x, dh, TFT_BLACK);
     if (dx + dw < r.x + r.w)   M5.Display.fillRect(dx + dw, dy, r.x + r.w - (dx + dw), dh, TFT_BLACK);
 
-    // Zielposition fuer den PPA. LGFX_PPA rechnet die Querformat-Koordinaten
-    // bei gedrehtem Panel nur durch VERTAUSCHEN von x und y in den hochkant
-    // liegenden Bildspeicher um - die Spiegelung der y-Achse fehlt. Ohne
-    // Ausgleich landete ein Bild unten rechts oben rechts (gemessen am Geraet).
-    // Im Vollbild faellt das nicht auf: dort ist dy = 0 und dh = 720, beide
-    // Formeln liefern 0. Deshalb hier die gespiegelte Zeile uebergeben.
-    const int ppaY = PANEL_H - dy - dh;
-    if (ppaY < 0) return;
-    s_ppa->pushImageSRM(dx, ppaY, 0, 0, 0, z, z, f.width, f.height, (uint16_t*)f.pixels);
+    ppaPush(f, fit, dx, dy);
 }
 #endif
 
@@ -922,6 +1021,7 @@ static void pushFrameFast(int x, int y, int w, int h, const uint8_t* pixels) {
 static void renderPip(const DecodedFrame& f) {
 #if VIDEO_USE_PPA
     const uint32_t tLock = micros();
+    HangGuard_Activity(HangSlot::VideoDecoder, "LVGL-Sperre (Overlay)");
     if (!lvgl_port_lock(100)) {
         s_statLockUs += (micros() - tLock);
         return;
@@ -931,6 +1031,7 @@ static void renderPip(const DecodedFrame& f) {
     const PipRect r = s_pipRect;
     if (s_output == VideoOutput::Pip && r.w > 0 && r.h > 0) {
         const uint32_t tPush = micros();
+        HangGuard_Activity(HangSlot::VideoDecoder, "PPA (Overlay)");
         pushFramePip(f, r);
         s_statPushUs += (micros() - tPush);
         const uint32_t now = millis();
@@ -961,6 +1062,7 @@ static void renderFrame(const DecodedFrame& f) {
         }
 
         const uint32_t tLock = micros();
+        HangGuard_Activity(HangSlot::VideoDecoder, "LVGL-Sperre (Vollbild)");
         if (!lvgl_port_lock(100)) {         // Bild verwerfen statt kollidieren
             s_statLockUs += (micros() - tLock);
             return;
@@ -988,8 +1090,10 @@ static void renderFrame(const DecodedFrame& f) {
         const uint32_t tPush = micros();
 #if VIDEO_USE_PPA
         (void)x; (void)y;
+        HangGuard_Activity(HangSlot::VideoDecoder, "PPA (Vollbild)");
         pushFramePPA(f);
 #else
+        HangGuard_Activity(HangSlot::VideoDecoder, "M5GFX (Vollbild)");
         pushFrameFast(x < 0 ? 0 : x, y < 0 ? 0 : y, f.width, f.height, f.pixels);
 #endif
         s_statPushUs += (micros() - tPush);
@@ -1007,11 +1111,13 @@ static void renderFrame(const DecodedFrame& f) {
     }
 
     const uint32_t tLockW = micros();
+    HangGuard_Activity(HangSlot::VideoDecoder, "LVGL-Sperre (Fenster)");
     const bool gotLock = lvgl_port_lock(50);
     s_statLockUs += (micros() - tLockW);
 
     if (gotLock) {
         const uint32_t tPushW = micros();
+        HangGuard_Activity(HangSlot::VideoDecoder, "Bild an LVGL (Fenster)");
         lv_img_dsc_t* d = &s_imgDsc[f.slot];
         d->header.w  = f.width;
         d->header.h  = f.height;
@@ -1024,6 +1130,10 @@ static void renderFrame(const DecodedFrame& f) {
     }
 }
 
+// Fuer den HangGuard-Bericht (hangContext): welches Bild war in Arbeit?
+static volatile uint32_t s_hangJpegBytes = 0;
+static volatile uint16_t s_hangLastW = 0, s_hangLastH = 0;
+
 static void videoDecodeTask(void*) {
     // Zwei Fenster: die Bildrate fuer das Overlay soll mitlaufen, die
     // Profilzeile aber nicht die Konsole fluten.
@@ -1033,6 +1143,9 @@ static void videoDecodeTask(void*) {
     uint32_t profFrames    = 0;
 
     while (s_running) {
+        // Wartet auf ein Bild - das darf dauern (HangGuard: keine Taetigkeit).
+        HangGuard_Activity(HangSlot::VideoDecoder, nullptr);
+
         FrameRef ref;
         if (xQueueReceive(s_fullQ, &ref, pdMS_TO_TICKS(200)) != pdTRUE) {
             continue;
@@ -1091,7 +1204,10 @@ static void videoDecodeTask(void*) {
 
         DecodedFrame frame;
         const uint32_t t0 = micros();
+        HangGuard_Activity(HangSlot::VideoDecoder, "JPEG-Decoder");
+        s_hangJpegBytes = ref.size;
         const bool ok = jpeg && VideoDecoder_Decode(jpeg, ref.size, &frame);
+        if (ok) { s_hangLastW = frame.width; s_hangLastH = frame.height; }
         const uint32_t t1 = micros();
 
         // Slot sofort zurueckgeben: der Netzpfad soll nicht auf die Anzeige warten.
@@ -1185,6 +1301,7 @@ static void videoDecodeTask(void*) {
         }
     }
 
+    HangGuard_Activity(HangSlot::VideoDecoder, nullptr);
     Serial.println("[Video] Decoder-Task beendet.");
     s_decTask = nullptr;
     vTaskDelete(NULL);
@@ -1193,7 +1310,29 @@ static void videoDecodeTask(void*) {
 // ==============================================================================
 // Oeffentliche Schnittstelle
 // ==============================================================================
+// Zusatzangaben fuer den HangGuard-Bericht. Laeuft im Waechter-Task: nur lesen.
+// "JPEG" = Groesse des Bildes, das gerade bzw. zuletzt in den Decoder ging;
+// "zuletzt" = Masse des letzten erfolgreich dekodierten Bildes; Fehler =
+// Decoder-Fehler/abgelehnte Bilder; DMA2D = erzwungene Kanal-Resets (Dma2dGuard).
+static void hangContext(char* buf, size_t len) {
+    int n = snprintf(buf, len, "%d fps, JPEG %lu B, zuletzt %ux%u, Fehler %lu/%lu, DMA2D %lu", currentFps,
+                     (unsigned long)s_hangJpegBytes, (unsigned)s_hangLastW, (unsigned)s_hangLastH,
+                     (unsigned long)VideoDecoder_GetErrorCount(),
+                     (unsigned long)VideoDecoder_GetRejectCount(),
+                     (unsigned long)(g_dma2dGuardTxTimeouts + g_dma2dGuardRxTimeouts));
+#if VIDEO_USE_PPA
+    // Letzter PPA-Auftrag: Zielgroesse und Rest-Kachel (PpaGeometry.h).
+    if (n > 0 && (size_t)n < len && s_hangPpaOutW != 0) {
+        snprintf(buf + n, len - n, ", PPA %ux%u Rest %lu",
+                 (unsigned)s_hangPpaOutW, (unsigned)s_hangPpaOutH, (unsigned long)s_hangPpaTailBits);
+    }
+#else
+    (void)n;
+#endif
+}
+
 void VideoLogic_Init() {
+    HangGuard_SetContext(HangSlot::VideoDecoder, hangContext);
     if (!VideoDecoder_Init()) {
         Serial.println("[Video] Decoder nicht verfuegbar - Video bleibt aus.");
         return;

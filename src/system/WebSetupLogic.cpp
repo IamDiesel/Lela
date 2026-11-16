@@ -149,8 +149,12 @@ void WebSetupLogic_Init() {
         html += "</style>";
         // Kleine Helfer (kein externes Skript - das Portal laeuft auch ohne Internet).
         html += "<script>";
+        // Gemerktes Netz gewaehlt: Zugangsdaten und SEINE IP-Einstellung einsetzen.
         html += "function pickNet(s){var o=s.options[s.selectedIndex];if(!o.dataset.s)return;";
-        html += "document.getElementById('ssid').value=o.dataset.s;document.getElementById('pw').value=o.dataset.p;}";
+        html += "document.getElementById('ssid').value=o.dataset.s;document.getElementById('pw').value=o.dataset.p;";
+        html += "document.getElementById('ipFix').checked=(o.dataset.f=='1');";
+        html += "document.getElementsByName('ipAddr')[0].value=o.dataset.a;document.getElementsByName('ipGw')[0].value=o.dataset.g;";
+        html += "document.getElementsByName('ipMask')[0].value=o.dataset.m;document.getElementsByName('ipDns')[0].value=o.dataset.d;ipToggle();}";
         html += "function showPw(c,id){document.getElementById(id).type=c.checked?'text':'password';}";
         html += "function forgetNet(){var s=document.getElementById('known');var o=s.options[s.selectedIndex];if(!o.dataset.s)return;";
         html += "document.getElementById('forgetSsid').value=o.dataset.s;document.getElementById('forgetForm').submit();}";
@@ -183,7 +187,10 @@ void WebSetupLogic_Init() {
             html += "<option value=''>&ndash; neues Netz eingeben &ndash;</option>";
             for (size_t i = 0; i < known.size(); i++) {
                 const String s = htmlEscape(known[i].ssid);
+                const WifiIpConfig& kip = known[i].ip;
                 html += "<option value='" + String((unsigned)i) + "' data-s='" + s + "' data-p='" + htmlEscape(known[i].pass) + "'";
+                html += " data-f='" + String(kip.fixed ? "1" : "0") + "' data-a='" + htmlEscape(kip.ip) + "' data-g='" + htmlEscape(kip.gateway) + "'";
+                html += " data-m='" + htmlEscape(kip.subnet) + "' data-d='" + htmlEscape(kip.dns) + "'";
                 if (known[i].ssid == wifiSsid) html += " selected";
                 html += ">" + s + "</option>";
             }
@@ -196,16 +203,19 @@ void WebSetupLogic_Init() {
         html += "<label>Passwort</label><input type='password' id='pw' name='wifiPass' value='" + htmlEscape(wifiPass) + "'>";
         html += "<label class='chk'><input type='checkbox' onclick=\"showPw(this,'pw')\"> Passwort anzeigen</label>";
 
+        // Die IP-Einstellung gehoert zum Netz (WifiNetworks): hier die des
+        // aktuellen; pickNet() setzt beim Wechsel die des gewaehlten ein.
+        const WifiIpConfig ipCfg = WifiNetworks_IpConfigFor(wifiSsid);
         html += "<h2>Netzwerk (IP-Adresse)</h2>";
         html += "<label class='chk'><input type='checkbox' id='ipFix' name='ipFix' value='1' onclick='ipToggle()'";
-        if (staticIpEnabled) html += " checked";
+        if (ipCfg.fixed) html += " checked";
         html += "> Feste IP-Adresse statt DHCP</label>";
-        html += "<p class='hint'>Startet ca. 2 s schneller. Die Adresse vorher im Router fest f&uuml;r dieses Ger&auml;t reservieren.</p>";
-        html += "<div id='ipBox' style='display:" + String(staticIpEnabled ? "block" : "none") + ";'>";
-        html += "<label>IP-Adresse</label><input type='text' name='ipAddr' placeholder='z. B. 192.168.2.125' value='" + htmlEscape(ipFieldValue(staticIp, WiFi.localIP())) + "'>";
-        html += "<label>Gateway (Router)</label><input type='text' name='ipGw' placeholder='z. B. 192.168.2.1' value='" + htmlEscape(ipFieldValue(staticGateway, WiFi.gatewayIP())) + "'>";
-        html += "<label>Subnetzmaske</label><input type='text' name='ipMask' placeholder='255.255.255.0' value='" + htmlEscape(ipFieldValue(staticSubnet, WiFi.subnetMask())) + "'>";
-        html += "<label>DNS (leer = Gateway)</label><input type='text' name='ipDns' value='" + htmlEscape(staticDns) + "'>";
+        html += "<p class='hint'>Gilt f&uuml;r das oben eingetragene Netz. Startet ca. 2 s schneller. Die Adresse vorher im Router fest f&uuml;r dieses Ger&auml;t reservieren.</p>";
+        html += "<div id='ipBox' style='display:" + String(ipCfg.fixed ? "block" : "none") + ";'>";
+        html += "<label>IP-Adresse</label><input type='text' name='ipAddr' placeholder='z. B. 192.168.2.125' value='" + htmlEscape(ipFieldValue(ipCfg.ip, WiFi.localIP())) + "'>";
+        html += "<label>Gateway (Router)</label><input type='text' name='ipGw' placeholder='z. B. 192.168.2.1' value='" + htmlEscape(ipFieldValue(ipCfg.gateway, WiFi.gatewayIP())) + "'>";
+        html += "<label>Subnetzmaske</label><input type='text' name='ipMask' placeholder='255.255.255.0' value='" + htmlEscape(ipFieldValue(ipCfg.subnet, WiFi.subnetMask())) + "'>";
+        html += "<label>DNS (leer = Gateway)</label><input type='text' name='ipDns' value='" + htmlEscape(ipCfg.dns) + "'>";
         html += "</div>";
 
         // Ab hier Felder mit Rueckfall auf secrets.h (siehe storedText()).
@@ -472,28 +482,21 @@ void WebSetupLogic_Init() {
 
         // Feste IP: Haekchen fehlt im Formular = aus. Nur gueltige Angaben
         // einschalten - sonst bliebe das Geraet nach dem Neustart ohne Netz.
+        // Sie gehoert zum eingetragenen Netz (WifiNetworks): im Eintrag, wenn es
+        // schon gemerkt ist, sonst vorgemerkt bis zur ersten Verbindung.
         String ipNote = "";
         if (server.hasArg("ipAddr")) {
-            staticIp = server.arg("ipAddr");           staticIp.trim();
-            staticGateway = server.arg("ipGw");        staticGateway.trim();
-            staticSubnet = server.arg("ipMask");       staticSubnet.trim();
-            staticDns = server.arg("ipDns");           staticDns.trim();
-            staticIpEnabled = server.hasArg("ipFix");
-            if (staticIpEnabled) {
-                IPAddress ip, gw, mask, dns;
-                const bool ok = ip.fromString(staticIp) && gw.fromString(staticGateway) &&
-                                mask.fromString(staticSubnet) && mask[0] == 255 &&
-                                (staticDns.length() == 0 || dns.fromString(staticDns));
-                if (!ok) {
-                    staticIpEnabled = false;
-                    ipNote = "<p style='color:#E67E22;'>Feste IP unvollst&auml;ndig oder ung&uuml;ltig &ndash; es bleibt bei DHCP.</p>";
-                }
+            WifiIpConfig cfg;
+            cfg.ip = server.arg("ipAddr");        cfg.ip.trim();
+            cfg.gateway = server.arg("ipGw");     cfg.gateway.trim();
+            cfg.subnet = server.arg("ipMask");    cfg.subnet.trim();
+            cfg.dns = server.arg("ipDns");        cfg.dns.trim();
+            cfg.fixed = server.hasArg("ipFix");
+            if (cfg.fixed && !WifiIpConfig_Valid(cfg)) {
+                cfg.fixed = false;
+                ipNote = "<p style='color:#E67E22;'>Feste IP unvollst&auml;ndig oder ung&uuml;ltig &ndash; es bleibt bei DHCP.</p>";
             }
-            preferences.putBool("ipFix", staticIpEnabled);
-            preferences.putString("ipAddr", staticIp);
-            preferences.putString("ipGw", staticGateway);
-            preferences.putString("ipMask", staticSubnet);
-            preferences.putString("ipDns", staticDns);
+            WifiNetworks_SetIpConfig(wifiSsid, cfg);
         }
         preferences.end();
 

@@ -189,6 +189,8 @@ static bool      s_scanActive = false;
 
 static void selectRow(int index) {
     s_selected = index;
+    // Eine Auswahl gilt erst mit "Uebernehmen" - bis dahin ungespeichert.
+    if (index >= 0) markDirty(); else clearDirty();
     for (int i = 0; i < MAX_SCAN_DEVICES; i++) {
         if (!s_rows[i]) continue;
         lv_obj_set_style_bg_opa(s_rows[i], i == index ? LV_OPA_COVER : LV_OPA_TRANSP, 0);

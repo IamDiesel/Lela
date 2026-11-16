@@ -74,6 +74,8 @@ static SettingsPage areaOf(SettingsPage p) {
         case SettingsPage::Camera:
         case SettingsPage::Audio:        return SettingsPage::Baby;
         case SettingsPage::Wifi:
+        case SettingsPage::WifiEdit:
+        case SettingsPage::WifiNew:
         case SettingsPage::WebSetup:     return SettingsPage::Net;
         case SettingsPage::BleScanMat:
         case SettingsPage::BleScanKippy: return SettingsPage::Cat;
@@ -81,6 +83,13 @@ static SettingsPage areaOf(SettingsPage p) {
         case SettingsPage::Screenshot:   return SettingsPage::System;
         default:                         return p;
     }
+}
+
+// Wohin "Zurueck" fuehrt: zum Bereich - ausser bei einer Unterseite, die selbst
+// von einer Unterseite aus geoeffnet wird.
+static SettingsPage parentOf(SettingsPage p) {
+    if (p == SettingsPage::WifiEdit || p == SettingsPage::WifiNew) return SettingsPage::Wifi;
+    return areaOf(p);
 }
 
 // ------------------------------------------------------------------------------
@@ -101,6 +110,8 @@ static void buildPage(SettingsPage p) {
         case SettingsPage::Camera:       SettingsCamera_Build(s_content);         break;
         case SettingsPage::Audio:        SettingsAudio_Build(s_content);          break;
         case SettingsPage::Wifi:         SettingsWifi_Build(s_content);           break;
+        case SettingsPage::WifiEdit:     SettingsWifiEdit_Build(s_content);       break;
+        case SettingsPage::WifiNew:      SettingsWifiNew_Build(s_content);        break;
         case SettingsPage::WebSetup:     SettingsWebSetup_Build(s_content);       break;
         case SettingsPage::BleScanMat:   SettingsBleScan_Build(s_content, false); break;
         case SettingsPage::BleScanKippy: SettingsBleScan_Build(s_content, true);  break;
@@ -116,7 +127,7 @@ static void updatePage(SettingsPage p) {
         case SettingsPage::Net:          SettingsNet_Update();        break;
         case SettingsPage::System:       SettingsSystem_Update();     break;
         case SettingsPage::Camera:       SettingsCamera_Update();     break;
-        case SettingsPage::Wifi:         SettingsWifi_Update();       break;
+        case SettingsPage::WifiNew:      SettingsWifiNew_Update();    break;
         case SettingsPage::WebSetup:     SettingsWebSetup_Update();   break;
         case SettingsPage::BleScanMat:
         case SettingsPage::BleScanKippy: SettingsBleScan_Update();    break;
@@ -149,20 +160,68 @@ static void doNavigate(void*) {
     showPage(s_pending);
 }
 
-void Settings_Navigate(SettingsPage page) {
+static void navigateNow(SettingsPage page) {
     s_pending = page;
     if (s_navPending) return;   // ein ausstehender Wechsel nimmt das neue Ziel mit
     s_navPending = true;
     lv_async_call(doNavigate, nullptr);
 }
 
+// ------------------------------------------------------------------------------
+// Ungespeicherte Aenderungen
+// ------------------------------------------------------------------------------
+// Seiten mit "Uebernehmen" verlieren ihre Eingaben beim Verlassen. Wurde dort
+// etwas geaendert, fragt jeder Weg nach, der die Seite verlaesst, ohne zu
+// speichern: Seitenleiste, Zurueck-Link, Verweis auf eine andere Seite, Kopf
+// "Einstellungen" und die Wischgeste zum Dashboard. Nicht gefragt wird, wenn
+// das Geraet selbst den Bildschirm wechselt (Alarm) - dort darf nichts warten.
+static void askDiscard(void (*onDiscard)(void*), void* userData) {
+    SettingsUi::confirm("Aenderungen verwerfen?",
+                        "Die Eingaben auf dieser Seite sind noch nicht uebernommen. "
+                        "Beim Verlassen gehen sie verloren.",
+                        "Weiter bearbeiten", "Verwerfen", SettingsUi::Btn::Danger,
+                        onDiscard, userData);
+}
+
+static void discardAndNavigate(void* target) {
+    SettingsUi::clearDirty();
+    navigateNow((SettingsPage)(uintptr_t)target);
+}
+
+static void discardAndLeave(void*) {
+    SettingsUi::clearDirty();
+    gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE);
+}
+
+void Settings_Navigate(SettingsPage page) {
+    if (SettingsUi::hasUnsavedChanges()) {
+        askDiscard(discardAndNavigate, (void*)(uintptr_t)page);
+        return;
+    }
+    navigateNow(page);
+}
+
 void Settings_Back() {
-    Settings_Navigate(areaOf(s_current));
+    SettingsUi::clearDirty();
+    navigateNow(parentOf(s_current));
 }
 
 void Settings_BackCb(lv_event_t*) {
     playToneI2S(600, 60, true);
+    Settings_Navigate(parentOf(s_current));
+}
+
+void Settings_DiscardCb(lv_event_t*) {
+    playToneI2S(600, 60, true);
     Settings_Back();
+}
+
+void ViewSettings::requestLeave() {
+    if (SettingsUi::hasUnsavedChanges()) {
+        askDiscard(discardAndLeave, nullptr);
+        return;
+    }
+    gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE);
 }
 
 // ------------------------------------------------------------------------------
@@ -178,7 +237,7 @@ static void navClicked(lv_event_t* e) {
 
 static void backToDashboard(lv_event_t*) {
     playToneI2S(800, 100, true);
-    gui.switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE);
+    ViewSettings::requestLeave();
 }
 
 // Reiner Layout-Container, NICHT klickbar: sonst schluckt z. B. die
@@ -320,6 +379,7 @@ static void updateNavStatus() {
 // Bluetooth-Suche sonst weiter.
 static void screenDeleted(lv_event_t* e) {
     if (lv_event_get_target(e) != s_screen) return;   // bereits ersetzt (Neuaufbau)
+    SettingsUi::closeConfirm();   // eine offene Rueckfrage gehoerte zu diesem Bildschirm
     leavePage(s_current);
     s_screen = nullptr;
     s_content = nullptr;

@@ -22,11 +22,20 @@ static lv_style_t s_dd, s_ddList, s_ddSel;
 static lv_style_t s_slMain, s_slInd, s_slKnob, s_pill;
 static lv_style_t s_ta, s_taFocus, s_taCursor, s_taPlaceholder;
 static lv_style_t s_segTrack, s_segItem, s_segItemOn;
-static lv_style_t s_chip, s_dot, s_actions;
+static lv_style_t s_chip, s_dot, s_actions, s_btnRow;
 static lv_style_t s_kbMain, s_kbItems, s_kbItemsOn;
 
 static lv_obj_t* s_kb   = nullptr;   // Tastatur (gehoert dem Bildschirm)
 static lv_obj_t* s_page_obj = nullptr;   // aktuelle Seite (fuer den Tastatur-Platz)
+
+// Ungespeicherte Aenderungen der aktuellen Seite (siehe Header).
+static bool s_guarded = false;   // Seite hat eine Leiste "Uebernehmen"
+static bool s_dirty   = false;   // seit dem Aufbau wurde etwas veraendert
+
+// Offene Rueckfrage (liegt auf lv_layer_top, gehoert keinem Bildschirm).
+static lv_obj_t* s_confirm = nullptr;
+static void    (*s_confirmOk)(void*) = nullptr;
+static void*     s_confirmData = nullptr;
 
 // Leert einen Stil und fuellt ihn neu (Farbwechsel ohne neue Allokation je Objekt).
 static void fresh(lv_style_t* s) {
@@ -44,6 +53,9 @@ void begin() {
     // Zeiger des vorherigen Aufbaus sind ungueltig (Bildschirm geloescht).
     s_kb = nullptr;
     s_page_obj = nullptr;
+    s_guarded = false;
+    s_dirty = false;
+    closeConfirm();   // gehoerte zum vorherigen Aufbau
     initStyles();
 }
 
@@ -171,8 +183,19 @@ void initStyles() {
     lv_style_set_transform_height(&s_btnPressed, 0);
     lv_style_set_bg_opa(&s_btnPressed, LV_OPA_80);
 
+    // Gesperrt: nur noch ein Umriss in der Farbe der tonalen Knoepfe, Schrift
+    // gedaempft - sichtbar schwaecher als jeder bedienbare Knopf, in beiden
+    // Schemata.
+    // Der Farbfilter des LVGL-Standardthemas wird dabei abgeschaltet: Es laeuft
+    // im hellen Modus (lv_conf.h) und mischt gesperrte Objekte zu 50 % mit
+    // Hellgrau. Im dunklen Schema wurde ein gesperrter Knopf dadurch HELLER als
+    // die bedienbaren und wirkte hervorgehoben, das Symbol darauf grau in grau.
     fresh(&s_btnDisabled);
-    lv_style_set_bg_color(&s_btnDisabled, c.surface2);
+    lv_style_set_color_filter_opa(&s_btnDisabled, LV_OPA_TRANSP);
+    lv_style_set_bg_opa(&s_btnDisabled, LV_OPA_TRANSP);
+    lv_style_set_border_width(&s_btnDisabled, 2);
+    lv_style_set_border_color(&s_btnDisabled, c.surface2);
+    lv_style_set_border_opa(&s_btnDisabled, LV_OPA_COVER);
     lv_style_set_text_color(&s_btnDisabled, c.off);
 
     // --- Schalter --------------------------------------------------------------
@@ -326,10 +349,26 @@ void initStyles() {
     lv_style_set_width(&s_dot, 8);
     lv_style_set_height(&s_dot, 8);
 
+    // Knopfzeile im Fluss einer Ansicht (buttonRow): ohne eigene Raender.
+    fresh(&s_btnRow);
+    lv_style_set_bg_opa(&s_btnRow, LV_OPA_TRANSP);
+    flat(&s_btnRow);
+    lv_style_set_pad_all(&s_btnRow, 0);
+    lv_style_set_pad_column(&s_btnRow, 12);
+
+    // Leiste unter dem scrollenden Inhalt: Raender wie die Seite, oben eine
+    // Trennlinie zum Inhalt, der darueber "verschwindet".
     fresh(&s_actions);
     lv_style_set_bg_opa(&s_actions, LV_OPA_TRANSP);
     flat(&s_actions);
-    lv_style_set_pad_all(&s_actions, 0);
+    lv_style_set_border_width(&s_actions, 1);
+    lv_style_set_border_side(&s_actions, LV_BORDER_SIDE_TOP);
+    lv_style_set_border_color(&s_actions, c.divider);
+    lv_style_set_border_opa(&s_actions, LV_OPA_COVER);
+    lv_style_set_pad_left(&s_actions, 36);
+    lv_style_set_pad_right(&s_actions, 36);
+    lv_style_set_pad_top(&s_actions, 14);
+    lv_style_set_pad_bottom(&s_actions, 16);
     lv_style_set_pad_column(&s_actions, 12);
 
     fresh(&s_kbMain);
@@ -389,6 +428,29 @@ static void noGesture(lv_obj_t* o) {
 // Seite selbst einen eigenen Ton, gewinnt dieser.
 static void addClickTone(lv_obj_t* o) {
     UiSound_AttachClick(o);
+}
+
+// ------------------------------------------------------------------------------
+// Ungespeicherte Aenderungen
+// ------------------------------------------------------------------------------
+// Jedes Bedienelement mit Wert meldet seine Aenderung hierher. Ausgewertet
+// wird das nur auf Seiten mit Leiste (s_guarded) - auf allen anderen wirken
+// die Bedienelemente sofort, dort gibt es nichts zu verlieren.
+static void dirtyEvent(lv_event_t* e) {
+    if (lv_obj_has_flag(lv_event_get_target(e), LV_OBJ_FLAG_USER_1)) return;   // setTransient
+    s_dirty = true;
+}
+
+static void trackChanges(lv_obj_t* control) {
+    lv_obj_add_event_cb(control, dirtyEvent, LV_EVENT_VALUE_CHANGED, nullptr);
+}
+
+bool hasUnsavedChanges() { return s_guarded && s_dirty; }
+void markDirty()         { s_dirty = true; }
+void clearDirty()        { s_dirty = false; }
+
+void setTransient(lv_obj_t* control) {
+    if (control) lv_obj_add_flag(control, LV_OBJ_FLAG_USER_1);
 }
 
 // ------------------------------------------------------------------------------
@@ -456,15 +518,29 @@ void setKeyboard(lv_obj_t* kb) {
 lv_obj_t* page(lv_obj_t* parent) {
     keyboardHide();
     lv_obj_clean(parent);
-    lv_obj_t* p = lv_obj_create(parent);
+
+    // Rahmen: oben die scrollende Spalte (nimmt den Platz, der bleibt), darunter
+    // bei Bedarf die feste Leiste (actions). Der Rahmen selbst scrollt nicht.
+    lv_obj_t* frame = plainBox(parent);
+    lv_obj_set_size(frame, lv_pct(100), lv_pct(100));
+    lv_obj_set_flex_flow(frame, LV_FLEX_FLOW_COLUMN);
+
+    lv_obj_t* p = lv_obj_create(frame);
     lv_obj_remove_style_all(p);
     lv_obj_add_style(p, &s_page, 0);
-    lv_obj_set_size(p, lv_pct(100), lv_pct(100));
+    lv_obj_set_width(p, lv_pct(100));
+    lv_obj_set_flex_grow(p, 1);
     lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(p, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(p, LV_SCROLLBAR_MODE_ACTIVE);
     s_page_obj = p;
+    s_guarded = false;
+    s_dirty = false;
     return p;
+}
+
+lv_obj_t* pageHost(lv_obj_t* pg) {
+    return lv_obj_get_parent(lv_obj_get_parent(pg));   // Seite -> Rahmen -> Gastgeber
 }
 
 void header(lv_obj_t* pg, const char* title, const char* sub, const char* backText, lv_event_cb_t backCb) {
@@ -643,6 +719,7 @@ lv_obj_t* addSwitch(const Row& r, bool on, lv_event_cb_t cb, void* userData) {
     noGesture(sw);
     if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
     if (cb) lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, userData);
+    trackChanges(sw);
     addClickTone(sw);
     return sw;
 }
@@ -657,6 +734,7 @@ lv_obj_t* addDropdown(const Row& r, const char* options, uint16_t selected, lv_e
     noGesture(dd);
 
     if (cb) lv_obj_add_event_cb(dd, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    trackChanges(dd);
     addClickTone(dd);   // Oeffnen der Liste; die Auswahl darin meldet VALUE_CHANGED
     return dd;
 }
@@ -670,6 +748,7 @@ lv_obj_t* addSlider(const Row& r, int min, int max, int value, lv_event_cb_t cb,
     lv_slider_set_value(sl, value, LV_ANIM_OFF);
     noGesture(sl);
     if (cb) lv_obj_add_event_cb(sl, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    trackChanges(sl);
     UiSound_AttachSlider(sl);
 
     lv_obj_t* pill = text(r.obj, "", &s_pill);
@@ -695,6 +774,7 @@ lv_obj_t* addTextarea(const Row& r, const char* t, const char* placeholder, lv_c
     if (placeholder) lv_textarea_set_placeholder_text(ta, placeholder);
     noGesture(ta);
     lv_obj_add_event_cb(ta, textareaEvent, LV_EVENT_ALL, digitsOnly ? (void*)1 : nullptr);
+    trackChanges(ta);   // nach dem Anfangstext: der zaehlt nicht als Aenderung
     addClickTone(ta);
     return ta;
 }
@@ -764,6 +844,7 @@ lv_obj_t* segmented(lv_obj_t* parent, const char* const* items, uint8_t count, u
         addClickTone(it);
     }
     if (cb) lv_obj_add_event_cb(seg, cb, LV_EVENT_VALUE_CHANGED, userData);
+    trackChanges(seg);
     return seg;
 }
 
@@ -781,13 +862,102 @@ lv_obj_t* note(lv_obj_t* parent, const char* t) {
     return l;
 }
 
-lv_obj_t* actions(lv_obj_t* pg) {
-    lv_obj_t* a = plainBox(pg);
-    lv_obj_add_style(a, &s_actions, 0);
+lv_obj_t* buttonRow(lv_obj_t* parent) {
+    lv_obj_t* a = plainBox(parent);
+    lv_obj_add_style(a, &s_btnRow, 0);
     lv_obj_set_size(a, lv_pct(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(a, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(a, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     return a;
+}
+
+lv_obj_t* actions(lv_obj_t* pg) {
+    // Nur fuer Seiten aus page(): Dort gibt es den Rahmen, in den die Leiste
+    // gehoert. Fuer alles andere ist buttonRow gedacht - wer trotzdem hier
+    // landet, bekommt die Zeile an Ort und Stelle statt im falschen Elternobjekt
+    // (so standen die Knoepfe der Schnelleinstellungen am 16.11.2026 oben rechts).
+    if (pg != s_page_obj) return buttonRow(pg);
+
+    // Im Rahmen, nicht in der scrollenden Spalte: so bleibt die Leiste stehen.
+    lv_obj_t* a = plainBox(lv_obj_get_parent(pg));
+    lv_obj_add_style(a, &s_actions, 0);
+    lv_obj_set_size(a, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(a, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(a, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Ab hier ist die Seite fertig aufgebaut: was sich jetzt noch aendert,
+    // ist eine Aenderung durch den Nutzer (oder fuer ihn).
+    s_guarded = true;
+    s_dirty = false;
+    return a;
+}
+
+// ------------------------------------------------------------------------------
+// Rueckfrage
+// ------------------------------------------------------------------------------
+void closeConfirm() {
+    if (s_confirm) lv_obj_del(s_confirm);
+    s_confirm = nullptr;
+    s_confirmOk = nullptr;
+    s_confirmData = nullptr;
+}
+
+// Beide Knoepfe schliessen den Kasten; nur "OK" (user_data != nullptr) ruft
+// danach die Aktion. Geloescht wird aufgeschoben - der Knopf, dessen Ereignis
+// gerade laeuft, gehoert zum Kasten.
+static void confirmClicked(lv_event_t* e) {
+    void (*onOk)(void*) = lv_event_get_user_data(e) ? s_confirmOk : nullptr;
+    void* data = s_confirmData;
+    if (s_confirm) lv_obj_del_async(s_confirm);
+    s_confirm = nullptr;
+    s_confirmOk = nullptr;
+    s_confirmData = nullptr;
+    if (onOk) onOk(data);
+}
+
+void confirm(const char* title, const char* message, const char* cancelText,
+             const char* okText, Btn okKind, void (*onOk)(void*), void* userData) {
+    closeConfirm();
+    initStyles();
+    keyboardHide();
+    const UiColors& c = UiTheme::c();
+
+    // Unsichtbare Flaeche ueber dem ganzen Bildschirm: faengt Beruehrungen ab,
+    // zeichnet aber nichts (kein Abdunkeln - das waere ein Vollbild-Neuzeichnen).
+    lv_obj_t* shield = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(shield);
+    lv_obj_set_size(shield, lv_pct(100), lv_pct(100));
+    lv_obj_clear_flag(shield, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(shield, LV_OBJ_FLAG_CLICKABLE);
+    noGesture(shield);
+    s_confirm = shield;
+    s_confirmOk = onOk;
+    s_confirmData = userData;
+
+    lv_obj_t* box = plainBox(shield);
+    lv_obj_add_style(box, &s_card, 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_border_color(box, c.divider, 0);
+    lv_obj_set_style_pad_all(box, 28, 0);
+    lv_obj_set_style_pad_row(box, 14, 0);
+    lv_obj_set_size(box, 600, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_center(box);
+
+    lv_obj_t* t = text(box, title, &s_label);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_24, 0);
+    lv_obj_set_width(t, lv_pct(100));
+    lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
+    if (message && message[0]) note(box, message);
+
+    lv_obj_t* bar = plainBox(box);
+    lv_obj_set_size(bar, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_top(bar, 10, 0);
+    lv_obj_set_style_pad_column(bar, 12, 0);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    addButton(bar, cancelText, Btn::Tonal, confirmClicked, nullptr);
+    addButton(bar, okText, okKind, confirmClicked, (void*)1);
 }
 
 lv_obj_t* qrCard(lv_obj_t* pg, const char* data, const char* steps, const char* hint) {

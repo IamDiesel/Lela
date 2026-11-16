@@ -113,6 +113,21 @@
 #define VIDEO_USE_PPA 1
 
 // ------------------------------------------------------------------------------
+// VIDEO_PPA_SAFE_FIT - PPA-Auftraege ohne winzige Rest-Kachel (media/PpaGeometry.h)
+//
+// Befund 15.11.2026: Im Vollbild blieb ein Skalier-Auftrag an den PPA haengen
+// (Bild steht, Touch tot, Ton laeuft) - bei 800x450, nie bei 1280x720. Der
+// Verdacht: eine sehr kleine letzte Kachel am Bildrand (bekannter Hardware-
+// fehler, in IDF 5.5.3 umgangen; hier IDF 5.4.2). PpaGeometry kuerzt den
+// Bildausschnitt deshalb bei Bedarf um wenige Zeilen (450 -> 448).
+//
+// 1 = Absicherung aktiv (Standard).
+// 0 = Geometrie wie vor der Absicherung - nur, um den Haenger gezielt
+//     nachzustellen (der HangGuard faengt ihn ab und nennt die Stelle).
+// ------------------------------------------------------------------------------
+#define VIDEO_PPA_SAFE_FIT 1
+
+// ------------------------------------------------------------------------------
 // VIDEO_JPEG_IN_SRAM - JPEG-Eingabepuffer im internen SRAM
 // ------------------------------------------------------------------------------
 // Der Gedanke ist richtig: die Eingabepuffer werden je Bild einmal von der CPU
@@ -185,6 +200,18 @@
 // (.pio/libdeps ist ein Build-Artefakt).
 // Tritt Displayflackern auf: Panel_DSI.cpp.orig zurueckkopieren.
 // ==============================================================================
+
+// ------------------------------------------------------------------------------
+// HANG_GUARD - Waechter gegen ein eingefrorenes Geraet (system/HangGuard.h)
+//
+// Erkennt, wenn Oberflaeche, Hauptschleife oder Video-Decoder haengen, sichert
+// einen Kurzbericht und startet das Geraet neu (Coredump + ColdRestart).
+// Kein Testwerkzeug, sondern Schutz fuer den Dauerbetrieb (Babyphone).
+//
+// 1 = aktiv (Standard).
+// 0 = aus, z.B. wenn beim Debuggen absichtlich lange angehalten wird.
+// ------------------------------------------------------------------------------
+#define HANG_GUARD 1
 
 // ------------------------------------------------------------------------------
 // DIAG_TEST_TOOLS - Testwerkzeuge auf der Seite Einstellungen > System > Diagnose

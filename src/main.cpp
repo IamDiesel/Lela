@@ -78,6 +78,8 @@
 #include "CrashDiag.h"   // Absturz-Diagnose ueber Neustarts (Experiment E-1)
 #include "ColdRestart.h" // Kaltstart statt Warmstart (stummer Lautsprecher)
 #include "BootJingle.h"  // Start-Jingle "Mrrp? + Spieluhr"
+#include "HangGuard.h"   // Waechter gegen ein eingefrorenes Geraet
+#include "SessionResume.h" // Babyphone nach ungewolltem Neustart fortsetzen
 #include "WifiConnect.h"
 
 
@@ -153,10 +155,11 @@ void setup() {
     Serial.println("[SYSTEM] Konfiguriere WLAN-Pins fuer M5Tab5...");
     WiFi.setPins(12, 13, 11, 10, 9, 8, 15);
     
-    if (wifiSsid != "") {
-        Serial.println("[SYSTEM] Starte WLAN asynchron im Hintergrund...");
-        // Startet die Verbindung und misst die Dauer (siehe WifiConnect.h).
-        WifiConnect_Begin(wifiSsid, wifiPass);
+    // Startfolge: zuerst das zuletzt verbundene Netz, danach die gemerkten nach
+    // Prioritaet (WifiConnect.h). Ist das WLAN abgeschaltet oder kein Netz
+    // bekannt, startet nichts - der Bootscreen wartet dann auch nicht darauf.
+    if (wifiEnabled && WifiConnect_BootStart()) {
+        Serial.println("[SYSTEM] WLAN startet asynchron im Hintergrund...");
         WiFi.setTxPower(WIFI_POWER_19_5dBm);
         WiFi.setSleep(false);
         wifiStarted = true; // Verhindert, dass SystemLogic es doppelt startet
@@ -265,10 +268,15 @@ void setup() {
     updateStaticStatus("Starte Hintergrunddienste...");
     SystemLogic_Update(); 
     bootMark("setup() fertig");
+
+    // Erst jetzt: setup() selbst darf lange dauern, die Ueberwachung gilt dem
+    // laufenden Betrieb.
+    HangGuard_Init();
 }
 
 
 void loop() {
+    HangGuard_LoopAlive();
     M5.update(); 
     CrashDiag_Update();   // Lebenszeichen fuer die Absturz-Diagnose
     ColdRestart_Update(); // Schleifenschutz nach stabiler Laufzeit zuruecksetzen
@@ -290,6 +298,7 @@ void loop() {
     }
     
     if (lvgl_port_lock(0)) {
+        HangGuard_UiAlive();
         
         // LVGL darf erst zeichnen, wenn der native Splash beendet ist!
         if (!vidFSMode && !nativeSplashActive) {
@@ -301,37 +310,70 @@ void loop() {
         // ==============================================================
         if (!nativeSplashActive && gui.getCurrentScreen() == (ScreenID)99) {
             static BootState current_boot_state = BOOT_STATE_INIT;
-            static uint32_t lvgl_anim_start_time = 0;
             
-            if (lvgl_anim_start_time == 0) lvgl_anim_start_time = millis();
             
             BootState new_state = current_boot_state;
+            const char* info = "";
 
             // Nur auf das WLAN warten. Home Assistant verbindet sich erst beim
             // Oeffnen der HA-App - frueher wartete der Start hier zusaetzlich
             // auf HA und lief dabei jedes Mal in die 2,5-s-Toleranz.
-            // DONE/TIMEOUT sind endgueltig: die Schlussanimation laeuft dann
-            // vollstaendig durch (siehe ViewBootScreen::setBootState).
-            if (current_boot_state == BOOT_STATE_DONE || current_boot_state == BOOT_STATE_TIMEOUT) {
-                new_state = current_boot_state;
-            } else if (WiFi.status() == WL_CONNECTED) {
-                new_state = BOOT_STATE_DONE;
-            } else {
-                new_state = BOOT_STATE_WIFI;
-            }
-
-            // Hard-Timeout-Schutz (Greift nur noch, wenn der Router gar nicht antwortet)
-            if (new_state != BOOT_STATE_DONE && millis() - lvgl_anim_start_time > 15000) {
-                new_state = BOOT_STATE_TIMEOUT;
+            //
+            // Der Bootscreen folgt der Startfolge von WifiConnect (zuletzt
+            // verbundenes Netz, dann die gemerkten nach Prioritaet). Die
+            // Zeitlimits je Versuch liegen dort; ein eigenes Gesamtlimit gibt
+            // es hier nicht mehr. DONE/FAILED/SKIPPED sind endgueltig: die
+            // Schlussanimation laeuft dann vollstaendig durch (siehe
+            // ViewBootScreen::setBootState).
+            const WifiBootStatus wifi = WifiConnect_BootStatus();
+            const bool final_state = (current_boot_state == BOOT_STATE_DONE ||
+                                      current_boot_state == BOOT_STATE_FAILED ||
+                                      current_boot_state == BOOT_STATE_SKIPPED);
+            if (!final_state) {
+                switch (wifi.state) {
+                    case WifiBootState::Trying:
+                        new_state = BOOT_STATE_WIFI;
+                        break;
+                    case WifiBootState::Connected:
+                        new_state = BOOT_STATE_DONE;
+                        info = wifi.ssid.c_str();
+                        break;
+                    case WifiBootState::Failed:
+                        new_state = BOOT_STATE_FAILED;
+                        info = (wifi.count > 1) ? "Kein gemerktes Netz erreichbar. Starte ohne WLAN..."
+                                                : "WLAN braucht zu lange. Starte ohne Verbindung...";
+                        break;
+                    case WifiBootState::Aborted:
+                        new_state = BOOT_STATE_SKIPPED;
+                        info = "Starte ohne WLAN...";
+                        break;
+                    case WifiBootState::Idle:
+                        // Keine Startfolge: WLAN aus oder noch kein Netz eingerichtet.
+                        new_state = BOOT_STATE_SKIPPED;
+                        info = wifiEnabled ? "Kein WLAN eingerichtet. Starte Dashboard..."
+                                           : "WLAN ist aus. Starte Dashboard...";
+                        break;
+                }
             }
 
             // Bei Zustandswechsel: Gib das Kommando an den Bildschirm!
             if (new_state != current_boot_state) {
                 current_boot_state = new_state;
-                ViewBootScreen::setBootState(new_state, wifiSsid.c_str());
+                ViewBootScreen::setBootState(new_state, info);
+            }
+
+            // WLAN-Phase: Text und Knoepfe folgen dem laufenden Versuch.
+            static uint8_t shown_attempt = 0;
+            if (current_boot_state == BOOT_STATE_WIFI && wifi.state == WifiBootState::Trying &&
+                wifi.attempt != shown_attempt) {
+                shown_attempt = wifi.attempt;
+                ViewBootScreen::setWifiAttempt(wifi.ssid.c_str(), wifi.attempt, wifi.count);
             }
         }
         
+        // Babyphone-Zustand merken bzw. nach Absturz/Haenger fortsetzen.
+        SessionResume_Update();
+
         static uint32_t fs_start_time = 0;
         if (vidFSMode) {
             if (fs_start_time == 0) fs_start_time = millis();

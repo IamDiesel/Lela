@@ -23,17 +23,27 @@ enum class SettingsPage : uint8_t {
     Cat = 0, Baby, Net, Display, System,
     // Unterseiten
     Camera, Audio, Wifi, WebSetup, BleScanMat, BleScanKippy, Diag, Screenshot,
+    // Unterseite einer Unterseite: "Zurueck" fuehrt zu Wifi (ViewSettings: parentOf)
+    WifiEdit, WifiNew,
 };
 static constexpr uint8_t SETTINGS_AREA_COUNT = 5;
 
 // --- Navigation (ViewSettings.cpp) ---------------------------------------------
 // Aufgeschoben (lv_async_call): darf aus dem Event-Callback eines Objekts der
 // aktuellen Seite kommen, die dabei geloescht wird.
+//
+// Ungespeicherte Aenderungen (Seiten mit "Uebernehmen", SettingsUi::
+// hasUnsavedChanges): Navigate und BackCb fragen vor dem Verlassen nach.
+// Back und DiscardCb verlassen die Seite ohne Rueckfrage - sie stehen fuer
+// "gespeichert" bzw. "ausdruecklich verworfen".
 void Settings_Navigate(SettingsPage page);
-// Zurueck zum Bereich der aktuellen Unterseite.
+// Zurueck zum Bereich der aktuellen Unterseite, ohne Rueckfrage (nach dem
+// Speichern oder nach einer Aktion, die die Seite abschliesst).
 void Settings_Back();
-// Event-Callback-Form von Settings_Back (Zurueck-Link, Verwerfen).
+// Zurueck-Link im Seitenkopf: mit Rueckfrage.
 void Settings_BackCb(lv_event_t* e);
+// Knopf "Verwerfen"/"Abbrechen" der Leiste: ohne Rueckfrage.
+void Settings_DiscardCb(lv_event_t* e);
 
 // --- Seiten -----------------------------------------------------------------------
 // Je Seite: Aufbau, Live-Aktualisierung (jeder Durchlauf der Hauptschleife;
@@ -52,8 +62,10 @@ void SettingsAudio_Build(lv_obj_t* parent);
 
 void SettingsNet_Build(lv_obj_t* parent);
 void SettingsNet_Update();
-void SettingsWifi_Build(lv_obj_t* parent);
-void SettingsWifi_Update();
+void SettingsWifi_Build(lv_obj_t* parent);       // Liste der gemerkten Netze
+void SettingsWifiNew_Build(lv_obj_t* parent);    // neues Netz eintragen
+void SettingsWifiNew_Update();                   // Ergebnis der Suche "In der Naehe"
+void SettingsWifiEdit_Build(lv_obj_t* parent);   // ein gemerktes Netz: feste IP, vergessen
 void SettingsWebSetup_Build(lv_obj_t* parent);
 void SettingsWebSetup_Update();   // Setup von selbst beendet (Zeitlimit) -> Auswahl
 void SettingsWebSetup_Leave();    // Seite verlassen -> laufendes Setup beenden

@@ -7,6 +7,7 @@
 #include "SharedData.h"
 #include "CamResolutionUi.h"
 #include "CameraScanner.h"
+#include "BabyService.h"
 #include "AudioStreamLogic.h"
 #include "secrets.h"
 #include <Preferences.h>
@@ -146,13 +147,13 @@ static void cameraSave(lv_event_t*) {
     Preferences p;
     p.begin("catmat", false);
     p.putBool("useCstUrl", useCustomUrls);
-    saveOrClear(p, "strIp", ip);
     saveOrClear(p, "camEntity", url);
     p.end();
 
-    // Wirksame Werte wie beim Laden (SharedData: prefOrSecret). Die BabyCam-URL
-    // baut VideoLogic bei jedem Verbindungsaufbau selbst aus der IP.
-    streamIp  = ip.length()  ? ip  : String(SECRET_STREAM_IP);
+    // Die IP gehoert dem BabyService (speichern, wirksam machen, Empfang neu
+    // aufbauen) - derselbe Weg wie die Kamerasuche in der Baby-Ansicht. Die
+    // BabyCam-URL baut VideoLogic bei jedem Verbindungsaufbau aus der IP.
+    BabyService_SetCameraIp(ip);
     camEntity = url.length() ? url : String(SECRET_CAM_SNAPSHOT_PATH);
     Settings_Back();
 }
@@ -179,7 +180,7 @@ void SettingsCamera_Build(lv_obj_t* parent) {
     s_taUrl = addTextarea(r, storedText("camEntity").c_str(), "http://...  (leer = secrets.h)", 480);
 
     lv_obj_t* bar = actions(pg);
-    addButton(bar, "Verwerfen", Btn::Tonal, Settings_BackCb);
+    addButton(bar, "Verwerfen", Btn::Tonal, Settings_DiscardCb);
     addButton(bar, "Uebernehmen", Btn::Primary, cameraSave);
 }
 
@@ -305,7 +306,7 @@ void SettingsAudio_Build(lv_obj_t* parent) {
     s_ddCh = addDropdown(r, "Mono\nStereo", audioPcmChannels == 2 ? 1 : 0, nullptr);
 
     lv_obj_t* bar = actions(pg);
-    addButton(bar, "Verwerfen", Btn::Tonal, Settings_BackCb);
+    addButton(bar, "Verwerfen", Btn::Tonal, Settings_DiscardCb);
     addButton(bar, "Uebernehmen", Btn::Primary, audioSave);
 
     audioVisibility();

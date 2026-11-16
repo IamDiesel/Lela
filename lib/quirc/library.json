@@ -1,0 +1,16 @@
+{
+  "name": "quirc",
+  "version": "2026.10.28",
+  "description": "QR-Code-Erkennung (Daniel Beer), unveraendert uebernommen aus github.com/dlbeer/quirc Commit f2e4271ae43a15d9263704e07bc86cba5697d74d (lib/). Siehe README.md.",
+  "license": "ISC",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "src",
+    "flags": [
+      "-DQUIRC_FLOAT_TYPE=float",
+      "-DQUIRC_USE_TGMATH"
+    ]
+  }
+}

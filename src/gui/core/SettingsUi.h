@@ -8,7 +8,14 @@
 //        ├─ section "TITEL" ── card ── row ─ [Titel / Beschreibung / Chip]  [Bedienelement]
 //        │                          └─ row ...
 //        │  (Fussnote unter der Karte)
-//        └─ actions [Verwerfen] [Uebernehmen]        (nur Unterseiten)
+//   actions [Verwerfen] [Uebernehmen]   (nur Unterseiten; steht fest am unteren
+//                                        Rand, scrollt nicht mit)
+//
+// Seiten mit "Uebernehmen": Was dort geaendert wird, gilt erst nach dem
+// Speichern. Damit das nicht unbemerkt verloren geht, ist die Leiste immer
+// sichtbar, und die Bausteine merken sich, ob seit dem Aufbau etwas geaendert
+// wurde (hasUnsavedChanges). Die Navigation (ViewSettings) fragt dann nach,
+// bevor sie die Seite verlaesst.
 //
 // Gestaltung: flach (keine Schatten, Verlaeufe, Transparenz), Radius 20 fuer
 // Karten, Pillenform fuer Knoepfe, Zeilen ab 80 px, Beruehrflaechen >= 50 px.
@@ -97,8 +104,41 @@ uint8_t segmentedSelected(lv_obj_t* seg);
 // Gedaempfter Fliesstext (Hinweise, Diagnose).
 lv_obj_t* note(lv_obj_t* parent, const char* text);
 
-// Leiste rechtsbuendig am Seitenende fuer Verwerfen/Uebernehmen.
+// Leiste fuer Verwerfen/Uebernehmen, rechtsbuendig. Sie steht fest unter dem
+// scrollenden Inhalt und ist damit immer sichtbar. Als LETZTES beim Aufbau
+// rufen: Eine Seite mit Leiste gilt als Seite "mit Uebernehmen", und ab diesem
+// Aufruf zaehlen Aenderungen an ihren Bedienelementen als ungespeichert.
 lv_obj_t* actions(lv_obj_t* page);
+
+// Knopfzeile rechtsbuendig an Ort und Stelle - fuer Ansichten, die die
+// Bausteine ohne page() nutzen (Schnelleinstellungen). Sie liegt im Fluss des
+// uebergebenen Objekts und hat nichts mit "Uebernehmen" zu tun.
+lv_obj_t* buttonRow(lv_obj_t* parent);
+
+// Das Objekt, in dem die Seite liegt (was page() als parent bekam).
+lv_obj_t* pageHost(lv_obj_t* page);
+
+// --- Ungespeicherte Aenderungen -------------------------------------------------
+// true: Die Seite hat eine Leiste (actions) und seit dem Aufbau wurde ein
+// Schalter, Regler, Textfeld, eine Auswahl oder ein Segment veraendert - auch
+// durch die Seite selbst (z.B. gefundene Kamera-IP ins Feld uebernommen).
+bool hasUnsavedChanges();
+// Fuer Aenderungen, die nicht ueber die Bausteine laufen (z.B. Auswahl einer
+// Listenzeile, die erst "Uebernehmen" speichert).
+void markDirty();
+// Nach dem Speichern oder dem ausdruecklichen Verwerfen.
+void clearDirty();
+// Bedienelement ohne zu speichernden Wert ("Passwort anzeigen"): zaehlt nicht.
+void setTransient(lv_obj_t* control);
+
+// --- Rueckfrage -------------------------------------------------------------------
+// Kasten in der Bildschirmmitte ueber allem (lv_layer_top), sperrt die
+// Bedienung dahinter. cancelText schliesst nur; okText schliesst und ruft
+// onOk(userData). Eine noch offene Rueckfrage wird ersetzt.
+void confirm(const char* title, const char* message, const char* cancelText,
+             const char* okText, Btn okKind, void (*onOk)(void*), void* userData = nullptr);
+// Offene Rueckfrage ohne Antwort schliessen (Bildschirmwechsel).
+void closeConfirm();
 
 // Karte mit QR-Code links und Anleitung rechts. Der QR-Code ist immer schwarz
 // auf weiss mit Ruhezone - so lesen ihn alle Kamera-Apps, auch im dunklen Schema.

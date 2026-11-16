@@ -3,6 +3,7 @@
 // ==============================================================================
 
 #include "VideoDecoder.h"
+#include "JpegHeaderCheck.h"
 #include "DebugFlags.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -217,15 +218,38 @@ uint8_t* VideoDecoder_GetInputBuffer(uint8_t slot, size_t* capacity) {
 // passen. Die Kamera darf eine angeforderte Aufloesung ablehnen, die
 // gelieferten Masse sind also nicht vorhersagbar.
 // ------------------------------------------------------------------------------
+// Ein abgelehntes Bild darf nicht stumm bleiben, die Konsole aber auch nicht
+// fluten: hoechstens eine Zeile alle 5 s, mit der Zahl der seither
+// abgelehnten Bilder. Nur wenn ein USB-Host lauscht (siehe [VideoProf]).
+static void logRejected(JpegCheck check, size_t len) {
+    static uint32_t lastLogMs = 0;
+    static uint32_t sinceLast = 0;
+    sinceLast++;
+    const uint32_t now = millis();
+    if (now - lastLogMs < 5000) return;
+    lastLogMs = now;
+    if (Serial) {
+        Serial.printf("[VideoDecoder] Bild abgelehnt: %s (%u Bytes; %lu seit der letzten Meldung)\n",
+                      JpegHeader_Text(check), (unsigned)len, (unsigned long)sinceLast);
+    }
+    sinceLast = 0;
+}
+
 bool VideoDecoder_Probe(const uint8_t* jpeg, size_t len, uint16_t* w, uint16_t* h) {
     if (!s_ready || !jpeg || len < 128 || len > VIDEO_MAX_JPEG_BYTES) {
         s_rejects++;
         return false;
     }
 
-    jpeg_decode_picture_info_t info = {};
-    if (jpeg_decoder_get_info(jpeg, len, &info) != ESP_OK) {
+    // Kopfdaten streng pruefen, BEVOR der Treiber sie sieht: sein Parser
+    // vertraut den Laengenangaben und kann an einem beschaedigten Bild endlos
+    // rechnen (JpegHeaderCheck.h). Die Masse kommen aus derselben Pruefung -
+    // jpeg_decoder_get_info() des Treibers wird nicht mehr gebraucht.
+    JpegHeaderInfo info;
+    const JpegCheck check = JpegHeader_Check(jpeg, len, &info);
+    if (check != JpegCheck::Ok) {
         s_rejects++;
+        logRejected(check, len);
         return false;
     }
 

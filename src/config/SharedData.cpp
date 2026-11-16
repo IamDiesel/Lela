@@ -28,11 +28,6 @@ String apPassword = "";
 
 String wifiSsid = "";
 String wifiPass = "";
-bool   staticIpEnabled = false;
-String staticIp = "";
-String staticGateway = "";
-String staticSubnet = "";
-String staticDns = "";
 String mqttBroker = ""; 
 int mqttPort = SECRET_MQTT_PORT;
 String mqttUser = "";
@@ -249,12 +244,8 @@ void Data_Init() {
     wifiSsid = preferences.getString("wifiSsid", "");
     wifiPass = preferences.getString("wifiPass", "");
 
-    // Feste IP (isKey: fehlende Schluessel nicht als Fehler loggen lassen)
-    staticIpEnabled = preferences.getBool("ipFix", false);
-    staticIp      = preferences.isKey("ipAddr") ? preferences.getString("ipAddr", "") : "";
-    staticGateway = preferences.isKey("ipGw")   ? preferences.getString("ipGw", "")   : "";
-    staticSubnet  = preferences.isKey("ipMask") ? preferences.getString("ipMask", "") : "";
-    staticDns     = preferences.isKey("ipDns")  ? preferences.getString("ipDns", "")  : "";
+    // Die feste IP gehoert seit 16.11.2026 zum einzelnen Netz (WifiNetworks);
+    // eine fruehere Einstellung von hier uebernimmt WifiNetworks beim ersten Zugriff.
     
     removeObsoleteKeys();
 

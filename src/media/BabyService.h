@@ -95,6 +95,12 @@ const char* BabyService_Describe();
 // Baby-Ansicht) lesen und schreiben ihn hier. `currentCamRes` ist dagegen
 // nur der Ist-Wert, den die Kamera meldet.
 
+// IP-Adresse der BabyCam. Leer = Vorgabe aus secrets.h. Wird gespeichert
+// (dieselbe Einstellung wie Einstellungen > Babyphone > Kamera-Verbindung) und
+// wirkt sofort: Ein laufender Videoempfang wird neu aufgebaut, die Aufloesung
+// mit der neuen Kamera neu abgeglichen. Nur aus dem loopTask.
+void   BabyService_SetCameraIp(const String& ip);
+
 // Aufloesung fuer die Baby-Ansicht, Format "BxH". Wird gespeichert.
 void   BabyService_SetBabyResolution(const String& res);
 String BabyService_GetBabyResolutionSetting();    // gespeicherter Wunsch

@@ -22,3 +22,4 @@ BabyCamApi.cpp.bak-vor-umbau
 sdkconfig.defaults
 VideoLogic.cpp.bak-vor-umbau
 tools/read_coredump.ps1
+Claude outputs/boot_jingle_vorschau.wav

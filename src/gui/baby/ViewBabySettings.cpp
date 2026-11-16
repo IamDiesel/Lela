@@ -7,7 +7,9 @@
 #include "SettingsUi.h"   // gemeinsame Stile der Bedienelemente (Farbschema)
 #include "UiSound.h"      // Klick der Regler (Anfassen/Loslassen)
 #include "UiTheme.h"
+#include "CameraScanner.h"
 #include <Preferences.h>
+#include <WiFi.h>
 #include <math.h>
 
 static lv_obj_t * settings_overlay = nullptr;
@@ -108,6 +110,115 @@ static void dd_pip_cb(lv_event_t * e) {
             BabyService_SetPipResolution(String(buf));
         }
     }
+}
+
+// ==============================================================
+// KAMERA IM NETZ SUCHEN
+// ==============================================================
+// Dieselbe Suche wie unter Einstellungen > Babyphone > Kamera-Verbindung
+// (CameraScanner), hier direkt aus der Baby-Ansicht: In einem anderen WLAN hat
+// die Kamera eine andere Adresse, und ohne Bild ist man genau hier.
+// Uebernommen wird ueber BabyService_SetCameraIp - eine Einstellung, zwei
+// Zugaenge; die Einstellungsseite zeigt danach dieselbe Adresse.
+static lv_obj_t* btn_find    = nullptr;
+static lv_obj_t* find_panel  = nullptr;   // Ergebnisliste, liegt ueber dem Einstellungs-Kasten
+static bool      s_findPending = false;   // diese Ansicht wartet auf das Suchergebnis
+
+static void findSetLabel(const char* text) {
+    if (btn_find) lv_label_set_text(lv_obj_get_child(btn_find, 0), text);
+}
+
+static void findClosePanel() {
+    // Aufgeschoben: wird auch aus Ereignissen eigener Kinder gerufen.
+    if (find_panel) lv_obj_del_async(find_panel);
+    find_panel = nullptr;
+}
+
+static void findUseClicked(lv_event_t* e) {
+    const size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e);
+    if (i < CameraScanner::foundCameras.size()) {
+        BabyService_SetCameraIp(CameraScanner::foundCameras[i].ip);
+    }
+    findClosePanel();
+}
+
+static void findShowResults() {
+    findClosePanel();
+    const UiColors& c = UiTheme::c();
+
+    find_panel = lv_obj_create(settings_overlay);
+    lv_obj_set_size(find_panel, 760, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(find_panel, 620, 0);
+    lv_obj_center(find_panel);
+    lv_obj_set_style_bg_color(find_panel, c.bg, 0);
+    lv_obj_set_style_border_color(find_panel, c.accent, 0);
+    lv_obj_set_style_border_width(find_panel, 2, 0);
+    lv_obj_set_style_radius(find_panel, 24, 0);
+    lv_obj_set_style_pad_all(find_panel, 24, 0);
+    lv_obj_set_style_pad_row(find_panel, 16, 0);
+    lv_obj_set_flex_flow(find_panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(find_panel, LV_DIR_VER);
+    lv_obj_add_flag(find_panel, LV_OBJ_FLAG_CLICKABLE);          // Tipp nicht an den Hintergrund
+    lv_obj_clear_flag(find_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+    lv_obj_t* title = lv_label_create(find_panel);
+    lv_label_set_text(title, "BabyCam im Netz");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(title, c.text, 0);
+
+    if (CameraScanner::foundCameras.empty()) {
+        SettingsUi::note(find_panel, "Keine BabyCam gefunden. Laeuft die App, und ist das Handy im selben WLAN?");
+    } else {
+        lv_obj_t* card = SettingsUi::section(find_panel, "GEFUNDEN",
+            "Antippen uebernimmt die Adresse. Sie gilt auch unter Einstellungen > Babyphone > Kamera-Verbindung.");
+        for (size_t i = 0; i < CameraScanner::foundCameras.size(); i++) {
+            const CamDevice& d = CameraScanner::foundCameras[i];
+            const bool current = (d.ip == streamIp);
+            SettingsUi::linkRow(card, d.name.length() > 0 ? d.name.c_str() : "BabyCam", d.ip.c_str(),
+                                current ? "Aktuell" : "Uebernehmen", findUseClicked, (void*)(uintptr_t)i);
+        }
+    }
+
+    // Knopfzeile rechtsbuendig, wie die Leisten der Einstellungen.
+    lv_obj_t* bar = lv_obj_create(find_panel);
+    lv_obj_remove_style_all(bar);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(bar, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    SettingsUi::addButton(bar, "Schliessen", SettingsUi::Btn::Tonal,
+                          [](lv_event_t*) { findClosePanel(); });
+}
+
+static void findClicked(lv_event_t*) {
+    if (CameraScanner::isScanning) return;
+    if (WiFi.status() != WL_CONNECTED) {
+        playToneI2S(400, 150, true);
+        findSetLabel("Kein WLAN");
+        return;
+    }
+    playToneI2S(800, 100, true);
+    CameraScanner::scanFinishedEvent = false;
+    s_findPending = true;
+    findSetLabel("Sucht ...");
+    lv_obj_add_state(btn_find, LV_STATE_DISABLED);
+    CameraScanner::startScan();
+}
+
+// Aus der Hauptschleife: Ergebnis der eigenen Suche abholen. Nur dieser eine
+// Uebergang - laufende Aktualisierungen stoeren hier offene Dropdowns (siehe
+// ViewBabySettings_Update).
+static void findPoll() {
+    if (!s_findPending || !CameraScanner::scanFinishedEvent) return;
+    s_findPending = false;
+    CameraScanner::scanFinishedEvent = false;
+    if (!btn_find || !settings_overlay) return;
+
+    lv_obj_clear_state(btn_find, LV_STATE_DISABLED);
+    findSetLabel("Kamera suchen");
+    // Einstellungen inzwischen geschlossen: Ergebnis nicht ungefragt einblenden.
+    if (lv_obj_has_flag(settings_overlay, LV_OBJ_FLAG_HIDDEN)) return;
+    findShowResults();
 }
 
 // ==============================================================
@@ -376,19 +487,28 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
         ViewVideoPip::resetLayout();
     }, LV_EVENT_CLICKED, NULL);
 
-    // ZEILE 4: Action Buttons (Front/Main & Beenden)
+    // ZEILE 4: Action Buttons (Front/Main, Kamera suchen, Beenden)
     lv_obj_t* row4 = create_transparent_row(settings_modal, 840, 70);
 
     lv_obj_t* btn_lense = lv_btn_create(row4);
-    lv_obj_set_size(btn_lense, 400, 70);
+    lv_obj_set_size(btn_lense, 270, 70);
     SettingsUi::styleButton(btn_lense, SettingsUi::Btn::Tonal);
     lv_obj_t* lbl_lense = lv_label_create(btn_lense); 
     lv_label_set_text(lbl_lense, "Cam Front/Main"); 
     lv_obj_center(lbl_lense);
     lv_obj_add_event_cb(btn_lense, [](lv_event_t* e){ playToneI2S(800, 100, true); BabyCamApi_ToggleLense(); }, LV_EVENT_CLICKED, NULL);
 
+    btn_find = lv_btn_create(row4);
+    lv_obj_set_size(btn_find, 270, 70);
+    SettingsUi::styleButton(btn_find, SettingsUi::Btn::Tonal);
+    lv_obj_t* lbl_find = lv_label_create(btn_find);
+    lv_label_set_text(lbl_find, "Kamera suchen");
+    lv_obj_center(lbl_find);
+    lv_obj_add_event_cb(btn_find, findClicked, LV_EVENT_CLICKED, NULL);
+    find_panel = nullptr;   // gehoerte zum vorherigen Bildschirm
+
     lv_obj_t* btn_pwr = lv_btn_create(row4);
-    lv_obj_set_size(btn_pwr, 400, 70);
+    lv_obj_set_size(btn_pwr, 270, 70);
     SettingsUi::styleButton(btn_pwr, SettingsUi::Btn::Danger);
     lv_obj_t* lbl_pwr = lv_label_create(btn_pwr); 
     lv_label_set_text(lbl_pwr, "App Beenden"); 
@@ -407,7 +527,15 @@ void ViewBabySettings_Create(lv_obj_t* parent) {
 
 void ViewBabySettings_Show() {
     if (!settings_overlay) return;
-    
+
+    // Eine Ergebnisliste vom letzten Mal nicht wieder zeigen.
+    findClosePanel();
+    if (!CameraScanner::isScanning) {
+        s_findPending = false;   // z.B. von der Einstellungsseite abgeholt
+        lv_obj_clear_state(btn_find, LV_STATE_DISABLED);
+        findSetLabel("Kamera suchen");
+    }
+
     // Aktuelle Werte einspielen
     lv_slider_set_value(slider_zoom, camZoom, LV_ANIM_OFF);
     lv_slider_set_value(slider_qual, camQuality, LV_ANIM_OFF);
@@ -476,7 +604,10 @@ void ViewBabySettings_Show() {
 }
 
 void ViewBabySettings_Update() {
-    // LEER! Die UI-Updates wurden aus der Loop verbannt.
+    // Nur das Ergebnis der Kamerasuche abholen (ein einmaliger Uebergang).
+    findPoll();
+
+    // Sonst LEER! Die UI-Updates wurden aus der Loop verbannt.
     // Das verhinderte das Dropdown daran, offen zu bleiben, 
     // weil das Parent ständig über die Dropdown-Liste gezeichnet wurde.
 }

@@ -10,6 +10,9 @@
 #include "WifiNetworks.h"
 #include "WifiConnect.h"
 #include "WebSetupLogic.h"
+#include "WifiQr.h"
+#include "QrScanner.h"
+#include "ViewCameraPreview.h"
 #include <Preferences.h>
 #include <WiFi.h>
 #include <vector>
@@ -116,11 +119,24 @@ static void connectKnown(lv_event_t* e) {
     }
 }
 
-static void forgetKnown(lv_event_t* e) {
+// Netz, das die Unterseite "Netz bearbeiten" zeigt (SettingsWifiEdit_Build).
+static String s_editSsid;
+
+static void editKnown(lv_event_t* e) {
     const size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e);
     if (i >= s_known.size()) return;
-    playToneI2S(600, 100, true);
-    WifiNetworks_Forget(s_known[i]);
+    playToneI2S(800, 60, true);
+    s_editSsid = s_known[i];
+    Settings_Navigate(SettingsPage::WifiEdit);
+}
+
+// Prioritaet aendern. user_data: Index * 2, +1 fuer "nach unten".
+static void moveKnown(lv_event_t* e) {
+    const uintptr_t code = (uintptr_t)lv_event_get_user_data(e);
+    const size_t i = (size_t)(code / 2);
+    if (i >= s_known.size()) return;
+    playToneI2S(800, 60, true);
+    WifiNetworks_Move(s_known[i], (code & 1) ? +1 : -1);
     Settings_Navigate(SettingsPage::Wifi);   // Liste neu aufbauen
 }
 
@@ -159,29 +175,113 @@ static void connectNew(lv_event_t*) {
     Settings_Back();
 }
 
+// ------------------------------------------------------------------------------
+// Neues Netz per QR-Code (Kamera). Der gefundene Code fuellt nur Name und
+// Passwort aus - verbunden wird erst mit "Verbinden", das Passwort laesst sich
+// vorher mit "Passwort anzeigen" pruefen.
+// ------------------------------------------------------------------------------
+static Row        s_qrScanRow;
+static bool       s_qrScanFound = false;
+static WifiQrData s_qrScanData;
+
+// Je Kamerabild (ViewCameraPreview, onFrame): an den QR-Leser geben und
+// dessen Fund pruefen. true = WLAN-Code gefunden, Kamera schliessen.
+static bool qrScanFrame(const uint16_t* frame) {
+    QrScanner_Offer(frame);
+    String text;
+    if (!QrScanner_TakeResult(text)) return false;
+    if (WifiQr_Parse(text, s_qrScanData)) {
+        s_qrScanFound = true;
+        return true;
+    }
+    ViewCameraPreview_SetHint("Das ist kein WLAN-Code. Am Handy: WLAN > Netz teilen > QR-Code anzeigen.");
+    return false;
+}
+
+static void qrScanClosed(bool) {
+    QrScanner_Stop();
+    if (!s_qrScanFound || !s_taSsid || !s_taPass) return;
+    lv_textarea_set_text(s_taSsid, s_qrScanData.ssid.c_str());
+    lv_textarea_set_text(s_taPass, s_qrScanData.password.c_str());
+    s_qrScanData = WifiQrData();   // Passwort nicht laenger als noetig im Speicher
+    playToneI2S(1000, 100, true);
+    setDesc(s_qrScanRow, "Uebernommen - pruefen und mit \"Verbinden\" bestaetigen");
+}
+
+static void qrScanClicked(lv_event_t*) {
+    s_qrScanFound = false;
+    if (!QrScanner_Start()) {
+        setDesc(s_qrScanRow, "QR-Leser konnte nicht starten (Speicher)");
+        return;
+    }
+    CameraViewConfig cfg = {};
+    cfg.title     = "WLAN per QR-Code";
+    cfg.hint      = "Am Handy das WLAN teilen (QR-Code anzeigen) und vor die Kamera des Tablets halten.";
+    cfg.closeText = "Abbrechen";
+    cfg.mirror    = true;      // wie ein Spiegel: das Handy erscheint dort, wo man es haelt
+    cfg.onFrame   = qrScanFrame;
+    cfg.onClosed  = qrScanClosed;
+    ViewCameraPreview_Open(cfg);
+}
+
 void SettingsWifi_Build(lv_obj_t* parent) {
     s_known.clear();
     s_near.clear();
 
     lv_obj_t* pg = page(parent);
-    header(pg, "WLAN-Netz", "Gemerktes Netz waehlen oder ein neues verbinden", "Verbindungen", Settings_BackCb);
+    header(pg, "WLAN-Netz", "Gemerkte Netze, ihre Reihenfolge und neue Netze", "Verbindungen", Settings_BackCb);
 
     lv_obj_t* card = section(pg, "GEMERKTE NETZE",
-                             "Netze werden nach einer erfolgreichen Verbindung mit Passwort gemerkt (hoechstens 8).");
+                             "Die Reihenfolge ist die Prioritaet: Beim Einschalten wird zuerst das zuletzt "
+                             "verbundene Netz probiert, danach diese Liste von oben nach unten. Netze werden "
+                             "nach einer erfolgreichen Verbindung gemerkt (hoechstens 8).");
     const std::vector<WifiNetwork> nets = WifiNetworks_List();
     const bool online = WiFi.status() == WL_CONNECTED;
     if (nets.empty()) row(card, "Noch keine Netze gemerkt");
     for (size_t i = 0; i < nets.size(); i++) {
         s_known.push_back(nets[i].ssid);
         const bool current = nets[i].ssid == wifiSsid;
-        Row r = row(card, nets[i].ssid.c_str());
+        const String desc = nets[i].ip.fixed ? String("Feste IP ") + nets[i].ip.ip : String("IP automatisch (DHCP)");
+        Row r = row(card, nets[i].ssid.c_str(), desc.c_str());
         if (current) chip(r, online ? "Verbunden" : "Aktuell, verbindet ...", online ? Chip::Ok : Chip::Warn);
+
+        // Reihenfolge der Knoepfe: was in jeder Zeile vorkommt, steht rechts -
+        // so liegen "Bearbeiten" und die Pfeile aller Zeilen untereinander.
+        // "Verbinden" fehlt beim aktuellen Netz und steht deshalb ganz links.
         if (!current) addButton(r.obj, "Verbinden", Btn::Tonal, connectKnown, (void*)(uintptr_t)i);
-        addButton(r.obj, "Vergessen", Btn::Danger, forgetKnown, (void*)(uintptr_t)i);
+        addButton(r.obj, "Bearbeiten", Btn::Tonal, editKnown, (void*)(uintptr_t)i);
+
+        // Prioritaet: eine Stelle hoeher / tiefer. Am Rand der Liste gesperrt.
+        lv_obj_t* up = addButton(r.obj, LV_SYMBOL_UP, Btn::Tonal, moveKnown, (void*)(uintptr_t)(i * 2));
+        lv_obj_t* down = addButton(r.obj, LV_SYMBOL_DOWN, Btn::Tonal, moveKnown, (void*)(uintptr_t)(i * 2 + 1));
+        if (i == 0)               lv_obj_add_state(up, LV_STATE_DISABLED);
+        if (i + 1 == nets.size()) lv_obj_add_state(down, LV_STATE_DISABLED);
     }
 
-    card = section(pg, "NEUES NETZ", "Nach erfolgreicher Verbindung wird das Netz gemerkt. "
-                                     "Gelingt sie nicht, bleibt das bisherige in der Liste.");
+    // Ein weiteres Netz wird auf einer eigenen Seite eingetragen: Dort gibt es
+    // etwas zu bestaetigen ("Verbinden"), hier wirkt jeder Knopf sofort.
+    card = section(pg, "WEITERES NETZ");
+    linkRow(card, "Neues Netz verbinden", "Per QR-Code vom Handy, aus der Suche oder von Hand",
+            "", openPage, (void*)(uintptr_t)SettingsPage::WifiNew);
+
+    // Felder der Seite "Neues Netz" gibt es hier nicht (qrScanClosed prueft sie).
+    s_taSsid = nullptr;
+    s_taPass = nullptr;
+}
+
+// ==============================================================================
+// Unterseite "Neues Netz": per QR-Code, aus der Suche oder von Hand
+// ==============================================================================
+void SettingsWifiNew_Build(lv_obj_t* parent) {
+    s_near.clear();
+
+    lv_obj_t* pg = page(parent);
+    header(pg, "Neues Netz", "Per QR-Code, aus der Suche oder von Hand eintragen", "WLAN-Netz", Settings_BackCb);
+
+    lv_obj_t* card = section(pg, "ZUGANGSDATEN", "Nach erfolgreicher Verbindung wird das Netz gemerkt und steht am Ende "
+                                                 "der Liste. Gelingt sie nicht, bleibt die Liste unveraendert.");
+    s_qrScanRow = row(card, "Per QR-Code", "WLAN-Code vom Handy mit der Kamera einlesen");
+    addButton(s_qrScanRow.obj, "Scannen", Btn::Tonal, qrScanClicked);
     Row r = row(card, "In der Naehe", "Netze suchen und antippen");
     s_btnScan = addButton(r.obj, "Suchen", Btn::Tonal, scanClicked);
     r = row(card, "Name (SSID)");
@@ -189,20 +289,120 @@ void SettingsWifi_Build(lv_obj_t* parent) {
     r = row(card, "Passwort");
     s_taPass = addTextarea(r, "", "Passwort", 420, false, true);
     r = row(card, "Passwort anzeigen");
-    addSwitch(r, false, showPassChanged);
+    setTransient(addSwitch(r, false, showPassChanged));   // nur Anzeige, nichts zu speichern
 
     s_nearCard = section(pg, "IN DER NAEHE");
     lv_obj_add_flag(lv_obj_get_parent(s_nearCard), LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* bar = actions(pg);
-    addButton(bar, "Abbrechen", Btn::Tonal, Settings_BackCb);
+    addButton(bar, "Abbrechen", Btn::Tonal, Settings_DiscardCb);
     addButton(bar, "Verbinden", Btn::Primary, connectNew);
 
     // Eine noch laufende Suche einer frueheren Seite gilt nicht mehr.
     if (s_scanRunning) { WiFi.scanDelete(); s_scanRunning = false; }
 }
 
-void SettingsWifi_Update() {
+// ==============================================================================
+// Unterseite "Netz bearbeiten": IP-Einstellung eines gemerkten Netzes, vergessen
+// ==============================================================================
+static lv_obj_t* s_swFixed  = nullptr;
+static lv_obj_t* s_taIpAddr = nullptr;
+static lv_obj_t* s_taIpGw   = nullptr;
+static lv_obj_t* s_taIpMask = nullptr;
+static lv_obj_t* s_taIpDns  = nullptr;
+static Row       s_fixedRow;
+
+static String fieldText(lv_obj_t* ta) {
+    String s = lv_textarea_get_text(ta);
+    s.trim();
+    return s;
+}
+
+// Gespeicherter Wert - sonst, wenn dieses Netz gerade verbunden ist, der
+// aktuelle: dann genuegt meist der Schalter.
+static String ipFieldDefault(const String& saved, bool connectedHere, IPAddress current) {
+    if (saved.length() > 0) return saved;
+    if (connectedHere && current != IPAddress((uint32_t)0)) return current.toString();
+    return "";
+}
+
+static void editSave(lv_event_t*) {
+    WifiIpConfig cfg;
+    cfg.fixed   = lv_obj_has_state(s_swFixed, LV_STATE_CHECKED);
+    cfg.ip      = fieldText(s_taIpAddr);
+    cfg.gateway = fieldText(s_taIpGw);
+    cfg.subnet  = fieldText(s_taIpMask);
+    cfg.dns     = fieldText(s_taIpDns);
+
+    // Nur gueltige Angaben einschalten - sonst bliebe das Geraet in diesem
+    // Netz ohne Verbindung.
+    if (cfg.fixed && !WifiIpConfig_Valid(cfg)) {
+        playToneI2S(400, 150, true);
+        setDesc(s_fixedRow, "Unvollstaendig oder ungueltig: Adresse, Gateway und Maske pruefen");
+        return;
+    }
+    playToneI2S(800, 100, true);
+
+    const WifiIpConfig old = WifiNetworks_IpConfigFor(s_editSsid);
+    const bool changed = old.fixed != cfg.fixed || old.ip != cfg.ip || old.gateway != cfg.gateway ||
+                         old.subnet != cfg.subnet || old.dns != cfg.dns;
+    WifiNetworks_SetIpConfig(s_editSsid, cfg);
+
+    // Betrifft es das aktuelle Netz: neu anmelden, damit die Einstellung gilt.
+    WifiNetwork net;
+    if (changed && s_editSsid == wifiSsid && WifiNetworks_Find(s_editSsid, &net)) {
+        WifiConnect_SwitchTo(net.ssid, net.pass);
+    }
+    Settings_Back();
+}
+
+static void forgetConfirmed(void*) {
+    WifiNetworks_Forget(s_editSsid);
+    Settings_Back();
+}
+
+static void editForget(lv_event_t*) {
+    playToneI2S(600, 100, true);
+    const String title = String("Netz '") + s_editSsid + "' vergessen?";
+    confirm(title.c_str(), "Passwort und IP-Einstellung dieses Netzes werden geloescht.",
+            "Abbrechen", "Vergessen", Btn::Danger, forgetConfirmed);
+}
+
+void SettingsWifiEdit_Build(lv_obj_t* parent) {
+    lv_obj_t* pg = page(parent);
+    header(pg, "Netz bearbeiten", s_editSsid.c_str(), "WLAN-Netz", Settings_BackCb);
+
+    WifiNetwork net;
+    if (!WifiNetworks_Find(s_editSsid, &net)) {
+        row(section(pg, nullptr), "Dieses Netz ist nicht mehr gemerkt");
+        return;
+    }
+    const bool connectedHere = (net.ssid == wifiSsid) && WiFi.status() == WL_CONNECTED;
+
+    lv_obj_t* card = section(pg, "IP-ADRESSE",
+                             "Mit fester Adresse entfaellt die Anfrage beim Router (DHCP) - das Netz steht rund "
+                             "2 s schneller. Die Adresse vorher im Router fest fuer dieses Geraet reservieren.");
+    s_fixedRow = row(card, "Feste IP-Adresse", "Aus = automatisch vom Router (DHCP)");
+    s_swFixed = addSwitch(s_fixedRow, net.ip.fixed, nullptr);
+    Row r = row(card, "IP-Adresse");
+    s_taIpAddr = addTextarea(r, ipFieldDefault(net.ip.ip, connectedHere, WiFi.localIP()).c_str(), "z.B. 192.168.2.125", 300);
+    r = row(card, "Gateway (Router)");
+    s_taIpGw = addTextarea(r, ipFieldDefault(net.ip.gateway, connectedHere, WiFi.gatewayIP()).c_str(), "z.B. 192.168.2.1", 300);
+    r = row(card, "Subnetzmaske");
+    s_taIpMask = addTextarea(r, ipFieldDefault(net.ip.subnet, connectedHere, WiFi.subnetMask()).c_str(), "255.255.255.0", 300);
+    r = row(card, "DNS", "Leer = Gateway");
+    s_taIpDns = addTextarea(r, net.ip.dns.c_str(), "leer = Gateway", 300);
+
+    card = section(pg, "NETZ");
+    r = row(card, "Netz vergessen", "Loescht Passwort und IP-Einstellung");
+    addButton(r.obj, "Vergessen", Btn::Danger, editForget);
+
+    lv_obj_t* bar = actions(pg);
+    addButton(bar, "Verwerfen", Btn::Tonal, Settings_DiscardCb);
+    addButton(bar, "Uebernehmen", Btn::Primary, editSave);
+}
+
+void SettingsWifiNew_Update() {
     if (!s_scanRunning || !s_btnScan) return;
     const int16_t n = WiFi.scanComplete();
     if (n == WIFI_SCAN_RUNNING) return;
@@ -262,7 +462,7 @@ static void endSetupClicked(lv_event_t*) {
 
 static void showQrNow(void*) {
     if (!s_webPage || gui.getCurrentScreen() != SCREEN_SETTINGS) return;
-    lv_obj_t* pg = page(lv_obj_get_parent(s_webPage));
+    lv_obj_t* pg = page(pageHost(s_webPage));
     s_webPage = pg;
     s_qrActive = true;
     header(pg, s_qrTitle, "Mit der Handykamera scannen", "Verbindungen", Settings_BackCb);

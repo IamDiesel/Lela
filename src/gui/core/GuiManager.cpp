@@ -186,7 +186,8 @@ void GuiManager::handleGesture(lv_event_t * e) {
         }
         else if (currentScreen == SCREEN_SETTINGS) { 
             if (dir == LV_DIR_RIGHT || dir == LV_DIR_LEFT) {
-                switchScreen(SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_NONE); 
+                // Ueber die Ansicht: sie fragt bei ungespeicherten Aenderungen nach.
+                ViewSettings::requestLeave();
             }
         }
         else if (currentScreen == SCREEN_HA) { 

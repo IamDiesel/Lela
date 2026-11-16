@@ -210,7 +210,7 @@ void ViewQuickSettings::toggle(GuiManager* guiManager) {
     segmented(r.obj, BABY_MODE_TEXT, BABY_MODE_COUNT, (uint8_t)BabyService_GetMode(), babyModeChanged);
 
     // Bildschirm aus / Ausschalten
-    lv_obj_t* bar = actions(panel);
+    lv_obj_t* bar = buttonRow(panel);
     addButton(bar, LV_SYMBOL_EYE_CLOSE "  Bildschirm aus", Btn::Tonal, ViewPower::btn_screen_off_event_cb, guiManager);
     addButton(bar, LV_SYMBOL_POWER "  Ausschalten", Btn::Danger, ViewPower::btn_shutdown_event_cb);
 }

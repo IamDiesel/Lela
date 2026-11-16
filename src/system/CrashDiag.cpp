@@ -13,7 +13,9 @@
 
 // Magic zur Gueltigkeitspruefung des RTC-Blocks. Nach einem Kaltstart enthaelt
 // der RTC-Speicher Zufallswerte, die Magic stimmt dann nicht mehr.
-static const uint32_t CRASHDIAG_MAGIC = 0xC0FFEE42;
+// Bei jeder Aenderung an CrashDiagState hochzaehlen: der Block ueberlebt auch
+// einen Firmware-Upload und wuerde sonst mit altem Aufbau gelesen.
+static const uint32_t CRASHDIAG_MAGIC = 0xC0FFEE43;
 
 // Zustand im RTC-Speicher: ueberlebt Panic-/Software-Reset, nicht aber
 // einen echten Stromausfall.
@@ -26,6 +28,7 @@ typedef struct {
     uint8_t  lastStreamActive;// Video aktiv beim letzten Lebenszeichen
     uint8_t  lastFullscreen;  // Vollbild aktiv beim letzten Lebenszeichen
     uint16_t lastFps;         // zuletzt gemessene Bildrate
+    uint32_t resumeWord;      // Merkwort der Oberflaeche (CrashDiag_SetResumeWord)
 } CrashDiagState;
 
 RTC_NOINIT_ATTR static CrashDiagState s_state;
@@ -39,6 +42,7 @@ static esp_reset_reason_t s_reason = ESP_RST_UNKNOWN;
 // Automatischer Kaltstart (ColdRestart): Grund des Warmstarts davor und der
 // daraus gebildete Text fuer Bericht und Diagnose-Seite.
 static bool s_autoCold = false;
+static bool s_autoPlanned = false;   // ... und der war gewollt (System > Neustart)
 
 // Roher Reset-Grund des Chips (ROM, wie "rst:0x.." im Boot-Log) und der Text
 // fuer Bericht und Diagnose-Seite: "<Grund> [rst 0x..]" bzw. nach einem
@@ -49,7 +53,7 @@ static char     s_reasonText[80] = "";
 // Uebergabe ueber den Stromausfall hinweg (NVS, siehe SaveForColdRestart).
 static const char*    CARRY_NS    = "crashdiag";
 static const char*    CARRY_KEY   = "carry";
-static const uint32_t CARRY_MAGIC = 0xC01D0001;
+static const uint32_t CARRY_MAGIC = 0xC01D0002;   // mit CrashDiagState hochzaehlen
 
 typedef struct {
     uint32_t       magic;
@@ -121,6 +125,7 @@ static void applyCarryOver() {
     // Die Hardware war stromlos (s_wasColdStart bleibt), die Vorgeschichte
     // stammt aber aus dem Warmstart davor.
     s_autoCold         = true;
+    s_autoPlanned      = carry.planned != 0;
     s_prev             = carry.prev;
     s_state.bootCount  = carry.bootCount + 1;
     s_state.panicCount = carry.panicCount;
@@ -187,6 +192,7 @@ void CrashDiag_Init() {
     s_state.lastStreamActive = 0;
     s_state.lastFullscreen   = 0;
     s_state.lastFps          = 0;
+    s_state.resumeWord       = 0;
 
     applyCarryOver();
     if (!s_autoCold) {
@@ -302,6 +308,25 @@ const char* CrashDiag_ResetReasonText() {
 
 bool CrashDiag_WasAutoColdRestart() {
     return s_autoCold;
+}
+
+bool CrashDiag_WasUnplannedRestart() {
+    // Nach dem automatischen Kaltstart zaehlt dessen Anlass; sonst der
+    // Reset-Grund dieses (Warm-)Starts.
+    if (s_autoCold) return !s_autoPlanned;
+    return !s_wasColdStart && isCrashReason(s_reason);
+}
+
+void CrashDiag_SetResumeWord(uint32_t word) {
+    s_state.resumeWord = word;
+}
+
+uint32_t CrashDiag_PrevResumeWord() {
+    return s_prev.resumeWord;
+}
+
+uint32_t CrashDiag_PrevUptimeMs() {
+    return s_prev.lastUptimeMs;
 }
 
 void CrashDiag_SaveForColdRestart(bool planned) {
