@@ -103,3 +103,8 @@ void AudioCodec_Reset(AudioResetKind kind);
 // Pad-Steuerung und IO-MUX/GPIO-Matrix der I2S-Pins.
 // Zum Vergleich Kaltstart / nach Absturz.
 void AudioCodec_Dump(const char* tag);
+
+// Eine Zeile: Empfangsseite des I2S (Mikrofon) mit Takt-Registern. Ohne
+// I2C-Zugriffe, deshalb auch bei jedem Gegensprechen brauchbar. Aus den Werten
+// lassen sich Taktquelle, Teiler, Bit-Takt und Kanalwahl nachrechnen.
+void AudioCodec_DumpI2sRx(const char* tag);

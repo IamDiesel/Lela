@@ -24,6 +24,7 @@
 #include "BabyService.h"
 #include "SettingsUi.h"
 #include "UiTheme.h"
+#include "DisplayBrightness.h"
 #include <M5Unified.h>
 #include <Preferences.h>
 
@@ -104,14 +105,13 @@ static void volumeRow(lv_obj_t* card, const char* label, int* vol, bool* mute, i
 // Uebrige Bedienung
 // ------------------------------------------------------------------------------
 static void brightnessChanged(lv_event_t* e) {
-    brightnessPercent = lv_slider_get_value(lv_event_get_target(e));
-    M5.Display.setBrightness((brightnessPercent * 255) / 100);
+    DisplayBrightness_Set(lv_slider_get_value(lv_event_get_target(e)));
     setPercent(s_brightPill, brightnessPercent);
 }
 
 static void brightnessReleased(lv_event_t*) {
     playToneI2S(1000, 15, true);
-    Preferences p; p.begin("catmat", false); p.putInt("bright", brightnessPercent); p.end();
+    DisplayBrightness_Save();
 }
 
 static void mixerToggle(lv_event_t*) {
@@ -188,7 +188,8 @@ void ViewQuickSettings::toggle(GuiManager* guiManager) {
     // Helligkeit und Lautstaerke
     lv_obj_t* card = section(panel, nullptr);
     Row r = row(card, "Helligkeit");
-    lv_obj_t* sl = addSlider(r, 5, 100, brightnessPercent, brightnessChanged, &s_brightPill);
+    lv_obj_t* sl = addSlider(r, DISPLAY_BRIGHTNESS_MIN_PERCENT, DISPLAY_BRIGHTNESS_MAX_PERCENT,
+                             brightnessPercent, brightnessChanged, &s_brightPill);
     lv_obj_set_width(sl, 180);
     lv_obj_add_event_cb(sl, brightnessReleased, LV_EVENT_RELEASED, nullptr);
     setPercent(s_brightPill, brightnessPercent);

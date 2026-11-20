@@ -94,7 +94,10 @@ static void sweep(uint16_t boxW, uint16_t boxH, Tally& t) {
             CHECK(fit.srcY == 0, "%ux%u: Hoehe nicht unten gekuerzt", w, h);
             CHECK(fit.scale16 >= 1, "%ux%u: Faktor 0", w, h);
             if (plain.valid) {
-                CHECK(fit.scale16 + 2 >= plain.scale16 && fit.scale16 * 8u >= plain.scale16 * 7u,
+                // Hoechstens 2/16 und ein Achtel kleiner - ausser im Notfall (Rest-Kachel
+                // sonst unter Espressifs Grenze): dann bis zur Haelfte.
+                const bool mild = fit.scale16 + 2 >= plain.scale16 && fit.scale16 * 8u >= plain.scale16 * 7u;
+                CHECK(mild || (fit.tailBits >= PPA_FIFO_BITS && fit.scale16 * 2u >= plain.scale16),
                       "%ux%u in %ux%u: Faktor %u statt %u", w, h, boxW, boxH, fit.scale16, plain.scale16);
                 CHECK(fit.tailBits >= plain.tailBits, "%ux%u in %ux%u: Rest kleiner als vorher", w, h, boxW, boxH);
                 if (plain.tailBits >= PPA_SAFE_TAIL_BITS) {

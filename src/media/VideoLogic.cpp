@@ -495,13 +495,17 @@ static bool readFrameBody(WiFiClient* s, uint8_t* dst, size_t len, uint32_t dead
 
 // Liest len Bytes und wirft sie weg.
 //
-// Fuer Bilder, die niemand abnimmt (kein freier Eingabepuffer). Der Rumpf MUSS
+// Fuer Bilder, die niemand abnimmt: kein freier Eingabepuffer - oder es zeigt
+// gerade niemand ein Bild (Nebenweg in videoNetTask). Der Rumpf MUSS
 // trotzdem vom Socket: sonst liest die naechste Runde Bilddaten als Kopfzeilen,
 // die Verbindung gilt als unbrauchbar und wird neu aufgebaut - bei stehendem
 // Decoder im 2,5-Sekunden-Takt, mit Anmeldung und Statusabfrage an die Kamera
 // (so gesehen im Log vom 15.11.2026).
 static bool skipFrameBody(WiFiClient* s, size_t len, uint32_t deadlineMs) {
-    static uint8_t scratch[1024];   // nur aus dem Netz-Task benutzt
+    // Nur aus dem Netz-Task benutzt. 4 KB: ein Bild des Overlays (5-11 KB)
+    // ist damit in zwei, drei Lesezugriffen vom Socket - jeder einzelne kostet
+    // einen Gang durch den Netzwerkstack.
+    static uint8_t scratch[4096];
     while (len > 0) {
         const size_t chunk = (len < sizeof(scratch)) ? len : sizeof(scratch);
         if (!readFrameBody(s, scratch, chunk, deadlineMs)) return false;
@@ -775,6 +779,21 @@ static void videoNetTask(void*) {
                     Serial.printf("[Video] Kamera sendet %d-Byte-Bloecke statt %d - "
                                   "Bildrate sinkt entsprechend.\n", len, CAM_BLOCK_NORMAL);
                 }
+            }
+
+            // Nebenweg ohne Abnehmer: Zeigt gerade niemand ein Bild
+            // (Einstellungen, QuickSettings, Dialoge), bleibt die Verbindung
+            // bestehen - beim Zurueckkehren ist mit dem naechsten Bild der
+            // Kamera sofort wieder eines da. Das Bild selbst wird aber direkt
+            // vom Socket verworfen: kein Eingabepuffer, kein Kopieren ins
+            // PSRAM, keine Laengenpruefung, kein Wecken des Decoder-Tasks (der
+            // auf dem Kern der Oberflaeche laeuft). Anlass: Der Empfang ohne
+            // Anzeige bremste das Zeichnen der Einstellungen um rund 28 %
+            // (Messung 16.11.2026). Kein Fehler, also kein "verworfen"-Zaehler.
+            if (s_output == VideoOutput::None) {
+                if (!skipFrameBody(stream, (size_t)len, deadline)) break;
+                lastFrameMs = millis();   // der Strom lebt (Stall-Frist)
+                continue;
             }
 
             // Freien Slot holen. Wartet der Decoder, blockiert das hier kurz -
@@ -1148,13 +1167,20 @@ static void videoDecodeTask(void*) {
 
         FrameRef ref;
         if (xQueueReceive(s_fullQ, &ref, pdMS_TO_TICKS(200)) != pdTRUE) {
+            // Ohne Abnehmer verwirft schon der Netz-Task die Bilder (Nebenweg
+            // dort), hier kommt also nichts an. Die Bildrate gilt dann als 0 -
+            // sonst stuende im Overlay oder in der Baby-Ansicht beim
+            // Zurueckkehren ein veralteter Wert.
+            if (s_output == VideoOutput::None) {
+                currentFps = 0;
+                fpsStart   = millis();
+                fpsFrames  = 0;
+            }
             continue;
         }
 
-        // Niemand will ein Bild: Slot zurueck, nicht dekodieren. Der Empfang
-        // laeuft weiter, damit die Anzeige beim Zurueckkehren sofort ein Bild
-        // hat. Die Bildrate gilt dann als 0 - sonst stuende im Overlay oder
-        // in der Baby-Ansicht ein veralteter Wert.
+        // Niemand will ein Bild, aber eines war schon unterwegs (Wechsel der
+        // Ausgabe waehrend des Empfangs): Slot zurueck, nicht dekodieren.
         if (s_output == VideoOutput::None) {
             xQueueSend(s_freeQ, &ref.slot, 0);
             currentFps = 0;

@@ -81,6 +81,7 @@
 #include "HangGuard.h"   // Waechter gegen ein eingefrorenes Geraet
 #include "SessionResume.h" // Babyphone nach ungewolltem Neustart fortsetzen
 #include "WifiConnect.h"
+#include "DisplayBrightness.h"
 
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
@@ -165,8 +166,8 @@ void setup() {
         wifiStarted = true; // Verhindert, dass SystemLogic es doppelt startet
     }
 
-    // Saubere Helligkeitsberechnung direkt beim Start
-    M5.Display.setBrightness((brightnessPercent * 255) / 100);
+    // Gespeicherte Helligkeit direkt beim Start anwenden
+    DisplayBrightness_Apply();
 
     BleLogic_Init();
 

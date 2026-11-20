@@ -6,7 +6,6 @@
 #include <stdbool.h>
 
 void Lvgl_Init();
-void Set_Backlight(uint8_t val);
 bool lvgl_port_lock(uint32_t timeout_ms);
 void lvgl_port_unlock(void);
 

@@ -249,6 +249,23 @@ static void dumpRange(const char* name, uint8_t addr, uint8_t from, uint8_t to) 
     }
 }
 
+void AudioCodec_DumpI2sRx(const char* tag) {
+    // Register der I2S-Peripherie nur bei laufendem Bus-Takt lesen.
+    if (!HP_SYS_CLKRST.soc_clk_ctrl2.reg_i2s0_apb_clk_en) {
+        Serial.printf("[AudioCodec] I2S-Empfang (%s): Bus-Takt aus - Register nicht lesbar\n", tag);
+        return;
+    }
+    Serial.printf("[AudioCodec] I2S-Empfang (%s): rx_conf %08lX rx_conf1 %08lX tdm %08lX timing %08lX | "
+                  "Takt ctrl11 %08lX 12 %08lX 13 %08lX 14 %08lX\n",
+                  tag,
+                  (unsigned long)I2S0.rx_conf.val, (unsigned long)I2S0.rx_conf1.val,
+                  (unsigned long)I2S0.rx_tdm_ctrl.val, (unsigned long)I2S0.rx_timing.val,
+                  (unsigned long)HP_SYS_CLKRST.peri_clk_ctrl11.val,
+                  (unsigned long)HP_SYS_CLKRST.peri_clk_ctrl12.val,
+                  (unsigned long)HP_SYS_CLKRST.peri_clk_ctrl13.val,
+                  (unsigned long)HP_SYS_CLKRST.peri_clk_ctrl14.val);
+}
+
 void AudioCodec_Dump(const char* tag) {
     Serial.printf("[AudioCodec] Auszug (%s)\n", tag ? tag : "");
     dumpRange("ES8388", ES8388_ADDR, 0x00, 0x3F);   // 0x35-0x3F undokumentiert

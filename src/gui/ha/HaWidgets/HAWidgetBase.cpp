@@ -4,6 +4,7 @@
 #include "HaTheme.h"
 #include "UiTheme.h"
 #include <algorithm> 
+#include <esp_heap_caps.h>
 
 bool HAWidget::editModeActive = false;
 void (*HAWidget::onEditRequested)(HAWidget*) = nullptr;
@@ -219,6 +220,20 @@ HAWidget::HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, in
     
     setSize(w, h); 
     all_active_widgets.push_back(this);
+}
+
+// Speicherort der Widget-Objekte: PSRAM (Begruendung im Header). Ist das
+// PSRAM ausnahmsweise voll, ist ein Platz im internen RAM besser als keiner;
+// heap_caps_free() gibt beide Arten von Bloecken frei.
+void* HAWidget::operator new(size_t size) {
+    void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+    if (!p) p = malloc(size);
+    if (!p) abort();   // wie `new` ohne Ausnahmebehandlung
+    return p;
+}
+
+void HAWidget::operator delete(void* p) {
+    heap_caps_free(p);
 }
 
 HAWidget::~HAWidget() { 

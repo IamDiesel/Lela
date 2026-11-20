@@ -39,6 +39,8 @@
 //   4. dasselbe mit einem um 1/16 bzw. 2/16 kleineren Faktor (das Bild wird
 //      dabei hoechstens um ein Achtel kleiner)
 // Findet sich nichts ueber der Schwelle, gewinnt die groesste Rest-Kachel.
+// Liegt selbst die noch unter Espressifs Grenze (PPA_FIFO_BITS), wird der
+// Faktor weiter gesenkt - bis zur Haelfte -, bis die Grenze erreicht ist.
 //
 // Nebenbei rechnet die Datei mit dem Faktor, den der PPA wirklich benutzt
 // (Schritte von 1/16, abgerundet). Die Zielgroesse stimmt damit - das Bild

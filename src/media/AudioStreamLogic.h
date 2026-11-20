@@ -26,6 +26,19 @@ void AudioStreamLogic_ApplyConfig();
 // true, wenn die eingestellte Tonquelle Gegensprechen kann (nur BabyCam/UDP).
 bool AudioStreamLogic_SupportsPTT();
 
+// Abtastrate der Sprachpakete beim Gegensprechen (Hz, 8000 bis 88200). Vorgabe
+// 44100 = Rate des Mikrofons, dann wird nichts umgerechnet. Andere Werte
+// rechnet der Audio-Task um (PcmResampler). Gilt ab dem naechsten Druck auf die
+// Sprechtaste; nicht gespeichert - nach dem Neustart gilt wieder die Vorgabe.
+void     AudioStreamLogic_SetPttSendRate(uint32_t hz);
+uint32_t AudioStreamLogic_GetPttSendRate();
+
+// Groesse der Sprachpakete beim Gegensprechen in Bytes, 128 bis 1024. Vorgabe
+// 500: mehr liest die Kamera-App je Paket nicht (siehe AudioStreamLogic.cpp).
+// Gilt ab dem naechsten Druck auf die Sprechtaste; nicht gespeichert.
+void   AudioStreamLogic_SetPttPacketBytes(size_t bytes);
+size_t AudioStreamLogic_GetPttPacketBytes();
+
 // Diagnose: Teil der Audio-Kette zuruecksetzen, ohne das Geraet stromlos zu
 // machen (Theorien siehe AudioCodecTab5.h; kind = AudioResetKind). Laeuft im
 // Besitzer-Task: Lautsprecher aus, Reset, Lautsprecher im vorherigen Zustand

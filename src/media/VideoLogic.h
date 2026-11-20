@@ -12,7 +12,7 @@
 
 // Ziel der dekodierten Bilder.
 enum class VideoOutput : uint8_t {
-    None = 0,    // empfangen, aber nicht dekodieren
+    None = 0,    // Verbindung halten, Bilder ungelesen verwerfen (kein Dekodieren)
     BabyView,    // Baby-Ansicht (Fenster oder Vollbild, siehe vidFSMode)
     Pip,         // Video-Overlay auf anderen Bildschirmen (PPA, gedrosselt)
 };

@@ -35,6 +35,11 @@
 #include "AudioSourceTypes.h"
 #include "AudioSourceHttp.h"
 #include "AudioCodecTab5.h"
+#include "I2sRxStartGuard.h"
+#include "DebugFlags.h"
+#include "PttCapture.h"
+#include "PcmResampler.h"
+#include "VoiceProcessor.h"
 #include <M5Unified.hpp>
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -59,6 +64,18 @@ static const size_t   CHUNK_BYTES     = 1024;               // je playRaw-Haeppc
 static const uint8_t  CHUNK_SLOTS     = 3;                  // rotierende Puffer
 
 static const size_t   MIC_SAMPLES     = 512;                // ~11,6 ms je Paket
+
+// Startversuche des Mikrofons je Gegensprech-Anforderung. Der Start des
+// I2S-Empfangs bleibt auf dem ESP32-P4 gelegentlich haengen (Befund
+// 17.11.2026); I2sRxStartGuard erkennt das und lehnt den Start ab, statt das
+// Geraet einzufrieren. Ein Neuaufbau setzt das I2S-Modul zurueck - deshalb
+// genau eine Wiederholung. Scheitert auch sie, gilt das Gegensprechen als
+// nicht startbar und der Lautsprecher kommt zurueck (CMD_START_PTT).
+static const uint8_t  MIC_START_ATTEMPTS   = 2;
+// So lange wartet micStartOnce() auf das Urteil des Schutzes. Der
+// Mikrofon-Task hat die hoehere Prioritaet und ist in aller Regel schon durch,
+// wenn M5.Mic.begin() zurueckkehrt.
+static const uint32_t MIC_START_VERDICT_MS = 100;
 
 // Kommt so lange kein Paket, wird der Wiedergabe-Befehl an die Kamera erneuert.
 // Die Kamera sendet unkomprimiertes PCM ohne Pause - auch Stille sind Samples.
@@ -111,6 +128,13 @@ static volatile uint32_t  s_streamGen  = 0;
 static volatile uint32_t  s_streamRate = AUDIO_RATE;
 // Konfiguration beim Start des Gegensprechens (Ziel-Port). Nur Audio-Task.
 static AudioSourceConfig  s_cfgPtt     = {};
+// Sprachaufbereitung (VoiceProcessor): Einstellungen wie s_cfgPending von der
+// Hauptschleife abgelegt (unter s_cfgMux), beim Start des Gegensprechens
+// uebernommen. Der Arbeitspuffer haelt die aufbereitete Kopie eines
+// Mikrofonpuffers. Prozessor und Puffer: nur Audio-Task.
+static VoiceConfig        s_voicePending = {};
+static VoiceProcessor     s_voice;
+static int16_t            s_pttWork[MIC_SAMPLES];
 
 static void captureConfig();   // Einstellungen -> s_cfgPending (Hauptschleife), siehe unten
 
@@ -180,6 +204,71 @@ static volatile SpkState s_spkState = SPK_UI;
 static volatile bool     s_spkBusy  = false;   // Umschaltvorgang laeuft
 static bool s_micUp = false;
 static bool s_resumeBabyAfterPTT = false;
+
+// Messwerte einer Gegensprech-Sitzung, ausgegeben beim Loslassen
+// (logPttStats). Sie trennen die moeglichen Ursachen einer zerhackten Stimme:
+//   Pakete je Sekunde  Soll 44100 / 512 = 86,1 (gemessen 85,6 bis 86,2).
+//                      Abweichung: das Mikrofon laeuft mit falscher Rate.
+//   Luecken            Der Mikrofon-Task stand ohne Puffer da und hat Samples
+//                      verworfen - der Audio-Task kam mit dem Nachlegen zu spaet.
+//   Sendefehler        Das Paket hat das Geraet nicht verlassen.
+//   laengstes Senden   Ab etwa 10 ms entsteht daraus die naechste Luecke.
+//   Pegel              Spitze in Prozent der Vollaussteuerung und Zahl der
+//                      Samples am Anschlag - Uebersteuerung verzerrt die Stimme.
+// Nur Audio-Task.
+struct PttStats {
+    uint32_t startMs;
+    uint32_t packets;
+    uint32_t gaps;
+    uint32_t sendFailed;
+    uint32_t maxSendMs;
+    int32_t  peak;          // groesster Betrag eines Samples
+    uint32_t clipped;       // Samples am Anschlag
+};
+static PttStats s_ptt = {};
+
+// M5Unified begrenzt Aufnahmewerte auf +/-(32767 - 16); alles ab hier gilt als
+// "am Anschlag".
+static const int32_t PTT_CLIP_LEVEL = 32700;
+
+// Abtastrate der Sprachpakete an die Kamera. Vorgabe ist die Rate des Mikrofons
+// (AUDIO_RATE, keine Umrechnung). Weicht sie ab, rechnet PcmResampler die
+// Aufnahme um - der Takt des Mikrofons bleibt unberuehrt. Damit laesst sich
+// pruefen, mit welcher Rate die Kamera die Pakete wirklich abspielt
+// (AudioStreamLogic_SetPttSendRate).
+static const uint32_t PTT_SEND_RATE_MIN = 8000;
+static const uint32_t PTT_SEND_RATE_MAX = 2 * AUDIO_RATE;
+static volatile uint32_t s_pttSendRateWanted = AUDIO_RATE;   // von der Oberflaeche gesetzt
+static uint32_t          s_pttSendRate       = AUDIO_RATE;   // gilt fuer die laufende Sitzung
+
+// Groesse der Sprachpakete in Samples: 250, also 500 Bytes je Paket.
+//
+// Die Kamera-App liest die Sprachpakete in einen Puffer von genau 500 Bytes
+// (BabyCam, Empfaenger des Eltern-Tons: `new byte[500]`); was ein Paket darueber
+// hinaus enthaelt, verwirft UDP. Die Eltern-App sendet deshalb selbst 500 Bytes
+// je Paket. Quelle: entpackter Code der App, siehe api_RE.md Abschnitt 3.
+//
+// Verlauf (17.11.2026): Seit dem Umbau vom 21.09.2026 gingen 1024 Bytes je
+// Paket hinaus - die Kamera spielte davon nicht einmal die Haelfte, die Stimme
+// klang massiv nach Roboter. Mit 512 Bytes war es gut, es fehlten aber noch
+// 12 Bytes (6 Samples) je Paket.
+//
+// Die Aufnahme wird deshalb unabhaengig von der Groesse des Mikrofonpuffers
+// in Pakete zerlegt (forwardPttAudio). Zum Gegenpruefen umstellbar ueber
+// AudioStreamLogic_SetPttPacketBytes.
+static const size_t PTT_PACKET_SAMPLES_DEFAULT = 250;
+static const size_t PTT_PACKET_SAMPLES_MIN     = 64;
+static const size_t PTT_PACKET_SAMPLES_MAX     = MIC_SAMPLES;
+static volatile size_t s_pttPacketSamplesWanted = PTT_PACKET_SAMPLES_DEFAULT;   // von der Oberflaeche gesetzt
+static size_t          s_pttPacketSamples       = PTT_PACKET_SAMPLES_DEFAULT;   // gilt fuer die laufende Sitzung
+
+// Samples, bis ein volles Paket beisammen ist. Platz: der Rest eines Pakets
+// plus alles, was aus einem Mikrofonpuffer bei der hoechsten Senderate
+// entstehen kann. Nur Audio-Task.
+static const size_t PTT_OUT_CAPACITY = 3 * MIC_SAMPLES + 8;
+static PcmResampler s_pttResampler;
+static int16_t      s_pttOut[PTT_OUT_CAPACITY];
+static size_t       s_pttOutCount = 0;
 
 // Absenkung waehrend eines UI-Tons. Frueher hat der Ton-Task die Kanallautstaerke
 // selbst gesetzt - wirkungslos, weil feedSpeaker() sie alle 5 ms wieder auf den
@@ -362,19 +451,89 @@ static void speakerFallbackToUI() {
     }
 }
 
-static void micUp() {
-    if (s_micUp) return;
+// Ein Startversuch. true = das Mikrofon laeuft.
+//
+// M5.Mic.begin() meldet nur, ob Kanal und Task angelegt wurden. Den
+// eigentlichen Start (i2s_channel_enable) fuehrt erst der Mikrofon-Task aus,
+// und M5Unified verwirft dessen Ergebnis. Ob der Start gelang, sagt deshalb
+// der Schutz I2sRxStartGuard: seine Zaehler werden vor und nach begin()
+// verglichen.
+static bool micStartOnce(uint8_t attempt) {
+    I2sRxGuardStats before;
+    I2sRxStartGuard_GetStats(&before);
 
     AudioHw_Lock(portMAX_DELAY);
     auto cfg = M5.Mic.config();
     cfg.sample_rate      = AUDIO_RATE;
     cfg.stereo           = false;
+    // over_sampling bleibt auf der M5Unified-Vorgabe (2), wie in v2.0.0.
+    // Gemessen am 17.11.2026 (Sitzungsbilanz, logPttStats): 86 Pakete/s, das
+    // sind die verlangten 44100 Hz. Eine Rechnung aus dem Quelltext von
+    // M5Unified hatte 39062 Hz ergeben und zur Umstellung auf 1 gefuehrt -
+    // die Rechnung war falsch, die Stimme wurde davon tiefer. Zurueckgenommen;
+    // nicht ohne Messung aendern.
     cfg.task_priority    = 13;
     cfg.task_pinned_core = 1;
     M5.Mic.config(cfg);
 
-    s_micUp = M5.Mic.begin();
+    bool up = M5.Mic.begin();
+
+    // M5Unified startet das Mikrofon beim ersten record() nach dem Einschalten
+    // von sich aus neu (Mic_Class::begin: _rec_sample_rate wird erst dort
+    // gesetzt). Dieser zweite Start soll HIER passieren, wo sein Ergebnis
+    // geprueft wird - nicht spaeter mitten in der Aufnahme. Eine Aufnahme der
+    // Laenge 0 loest genau das aus und reiht nichts ein.
+    if (up) up = M5.Mic.record(s_micBuf[0], 0, AUDIO_RATE);
+
+    if (up) {
+        // Auf das Urteil des Schutzes warten (begrenzt).
+        I2sRxGuardStats now = before;
+        const uint32_t waitStart = millis();
+        for (;;) {
+            I2sRxStartGuard_GetStats(&now);
+            if (now.starts != before.starts) break;
+            if (millis() - waitStart >= MIC_START_VERDICT_MS) break;
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+
+        if (now.starts == before.starts) {
+            // Kein Urteil: Der Schutz ist nicht eingebunden. Dann verhaelt sich
+            // der Start wie frueher - also weitermachen, aber nicht still.
+            Serial.println("[Audio] Hinweis: Startschutz des Mikrofons meldet sich nicht "
+                           "(platformio.ini: -Wl,--wrap=i2s_channel_enable).");
+        } else {
+            if (now.refused != before.refused) {
+                Serial.printf("[Audio] Mikrofonstart abgefangen (Versuch %u/%u, %lu von %lu Starts, %s): "
+                              "rx_conf %08lX, Takt %08lX %08lX %08lX %08lX.\n",
+                              (unsigned)attempt, (unsigned)MIC_START_ATTEMPTS,
+                              (unsigned long)(now.refused - before.refused),
+                              (unsigned long)(now.starts - before.starts),
+                              I2sRxStartGuard_StageText(now.lastStage),
+                              (unsigned long)now.lastRxConf,
+                              (unsigned long)now.lastClk[0], (unsigned long)now.lastClk[1],
+                              (unsigned long)now.lastClk[2], (unsigned long)now.lastClk[3]);
+            }
+            // Es zaehlt der juengste Start: Wurde er abgelehnt, laeuft der
+            // Kanal nicht. Task beenden und Kanal abbauen - das ist auch die
+            // Voraussetzung fuer den naechsten Versuch.
+            if (now.lastResult != I2S_RX_GUARD_OK) {
+                M5.Mic.end();
+                up = false;
+            }
+        }
+    }
     AudioHw_Unlock();
+
+    return up;
+}
+
+static void micUp() {
+    if (s_micUp) return;
+
+    for (uint8_t attempt = 1; attempt <= MIC_START_ATTEMPTS && !s_micUp; attempt++) {
+        s_micUp = micStartOnce(attempt);
+        if (s_micUp && attempt > 1) Serial.println("[Audio] Mikrofon laeuft nach Neuaufbau.");
+    }
 
     s_micIdx    = 0;
     s_micPrimed = false;
@@ -413,6 +572,11 @@ static const int16_t* micRecord() {
     // Auch das Mikrofon gehoert unter das Hardware-Schloss: record() ruft
     // intern begin(), ist also der empfindlichste Aufruf ueberhaupt.
     if (!AudioHw_Lock(100)) return nullptr;
+
+    // Luecke: Nach dem Anlauf muss beim Nachlegen noch ein Puffer in Arbeit
+    // sein. Steht der Mikrofon-Task schon im Leerlauf, hat er die Samples
+    // seither verworfen - dieser Umlauf kam zu spaet.
+    if (s_micPrimed && M5.Mic.isRecording() == 0) s_ptt.gaps++;
 
     if (!M5.Mic.record(s_micBuf[next], MIC_SAMPLES, AUDIO_RATE)) {
         AudioHw_Unlock();
@@ -592,6 +756,16 @@ static void audioRxTask(void*) {
     uint32_t httpRetryMs = 0;      // naechster HTTP-Versuch frueheste Zeit
     uint32_t httpBackoff = 2000;
 
+    // Messung je Wiedergabe: mit welcher Rate und Paketgroesse die BabyCam
+    // wirklich sendet (eine Logzeile nach RATE_CHECK_MS). Das Format ist nur
+    // aus Beobachtung bekannt (api_RE.md) und kann sich mit der Kamera-App
+    // aendern - dann stimmt auch die Annahme fuer das Gegensprechen nicht mehr.
+    static const uint32_t RATE_CHECK_MS = 10000;
+    uint32_t rateStartMs = 0;      // Zeitpunkt des ersten Pakets, 0 = noch keines
+    uint32_t rateBytes   = 0;      // Bytes NACH dem ersten Paket
+    int      rateFirstLen = 0;     // Groesse des ersten Pakets
+    bool     rateLogged  = false;
+
     while (true) {
         const bool want = isAudioStreaming && !isPTTActive;
 
@@ -610,6 +784,9 @@ static void audioRxTask(void*) {
             taskEXIT_CRITICAL(&s_cfgMux);
             httpRetryMs = 0;
             httpBackoff = 2000;
+            rateStartMs = 0;
+            rateBytes   = 0;
+            rateLogged  = false;
         }
 
         if (WiFi.status() != WL_CONNECTED) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
@@ -653,6 +830,20 @@ static void audioRxTask(void*) {
                 s_profLastLen = (uint16_t)n;
                 for (int i = 0; i < 8 && i < n; i++) s_profHead[i] = packet[i];
 #endif
+                if (rateStartMs == 0) {
+                    rateStartMs  = millis();
+                    rateFirstLen = n;
+                } else if (!rateLogged) {
+                    rateBytes += (uint32_t)n;
+                    const uint32_t elapsed = millis() - rateStartMs;
+                    if (elapsed >= RATE_CHECK_MS) {
+                        rateLogged = true;
+                        Serial.printf("[Audio] Babyphone-Ton kommt mit %lu Samples/s in Paketen zu %d Bytes "
+                                      "(Wiedergabe mit %lu Hz).\n",
+                                      (unsigned long)((uint64_t)rateBytes * 1000u / sizeof(int16_t) / elapsed),
+                                      rateFirstLen, (unsigned long)s_streamRate);
+                    }
+                }
             }
             // Auch im Erfolgsfall abgeben: bei dichtem Paketstrom wuerde diese
             // Schleife sonst nie den Scheduler erreichen und gleich priorisierte
@@ -839,6 +1030,90 @@ static void runToneSweep() {
     }
 }
 
+// Pegel eines aufgenommenen Pakets in die Sitzungsbilanz uebernehmen.
+static void notePttLevel(const int16_t* samples, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        const int32_t level = samples[i] < 0 ? -(int32_t)samples[i] : (int32_t)samples[i];
+        if (level > s_ptt.peak)      s_ptt.peak = level;
+        if (level >= PTT_CLIP_LEVEL) s_ptt.clipped++;
+    }
+}
+
+// Bilanz der Gegensprech-Sitzung, eine Zeile beim Loslassen (siehe PttStats).
+static void logPttStats() {
+    const uint32_t ms       = millis() - s_ptt.startMs;
+    const uint32_t rate10   = ms ? (uint32_t)((uint64_t)s_ptt.packets * 10000u / ms) : 0;   // Pakete/s x 10
+    const uint32_t target10 = s_pttSendRate * 10u / s_pttPacketSamples;
+    const int gainTenth     = VoiceProcessor_GainTenthDb(&s_voice);
+    Serial.printf("[Audio] Gegensprechen: %lu.%lu s, %lu Pakete (%lu.%lu/s, Soll %lu.%lu bei %lu Hz), "
+                  "%lu Luecken, %lu Sendefehler, laengstes Senden %lu ms, "
+                  "Pegelspitze %ld %%, %lu Samples am Anschlag, Verstaerkung zuletzt %s%d.%d dB.\n",
+                  (unsigned long)(ms / 1000), (unsigned long)((ms % 1000) / 100),
+                  (unsigned long)s_ptt.packets,
+                  (unsigned long)(rate10 / 10), (unsigned long)(rate10 % 10),
+                  (unsigned long)(target10 / 10), (unsigned long)(target10 % 10),
+                  (unsigned long)s_pttSendRate,
+                  (unsigned long)s_ptt.gaps, (unsigned long)s_ptt.sendFailed,
+                  (unsigned long)s_ptt.maxSendMs,
+                  (long)(s_ptt.peak * 100 / 32767), (unsigned long)s_ptt.clipped,
+                  gainTenth < 0 ? "-" : "+", abs(gainTenth) / 10, abs(gainTenth) % 10);
+}
+
+// Ein Sprachpaket (count Werte) an die Kamera schicken und in die
+// Sitzungsbilanz aufnehmen.
+static void sendPttPacket(WiFiUDP& udp, const int16_t* samples, size_t count) {
+    const uint32_t sendStart = millis();
+    udp.beginPacket(streamIp.c_str(), effectiveUdpPortOut(s_cfgPtt));
+    udp.write((const uint8_t*)samples, count * sizeof(int16_t));
+    const bool sent = (udp.endPacket() == 1);
+    const uint32_t sendMs = millis() - sendStart;
+
+    s_ptt.packets++;
+    if (!sent) s_ptt.sendFailed++;
+    if (sendMs > s_ptt.maxSendMs) s_ptt.maxSendMs = sendMs;
+    notePttLevel(samples, count);
+#if DIAG_TEST_TOOLS
+    PttCapture_Add(samples, count);
+#endif
+}
+
+// Einen fertigen Mikrofonpuffer weitergeben: aufbereiten, bei abweichender
+// Senderate umrechnen, sammeln und in Paketen der gewaehlten Groesse senden.
+// Paket- und Puffergroesse muessen nicht zueinander passen - was kein volles
+// Paket ergibt, bleibt fuer den naechsten Puffer liegen (hoechstens ein Paket,
+// also wenige Millisekunden). Mehrere Pakete aus einem Puffer gehen unmittelbar
+// nacheinander hinaus.
+static void forwardPttAudio(WiFiUDP& udp, const int16_t* mic) {
+    const size_t packet = s_pttPacketSamples;
+
+    // Sprachaufbereitung auf einer Kopie: der Mikrofonpuffer gehoert M5.Mic.
+    if (!VoiceProcessor_IsBypass(&s_voice)) {
+        memcpy(s_pttWork, mic, sizeof(s_pttWork));
+        VoiceProcessor_Process(&s_voice, s_pttWork, MIC_SAMPLES);
+        mic = s_pttWork;
+    }
+
+    // Anhaengen: unveraendert oder auf die Senderate umgerechnet.
+    if (s_pttSendRate == AUDIO_RATE) {
+        memcpy(s_pttOut + s_pttOutCount, mic, MIC_SAMPLES * sizeof(int16_t));
+        s_pttOutCount += MIC_SAMPLES;
+    } else {
+        s_pttOutCount += PcmResampler_Process(&s_pttResampler, mic, MIC_SAMPLES,
+                                              s_pttOut + s_pttOutCount,
+                                              PTT_OUT_CAPACITY - s_pttOutCount);
+    }
+
+    size_t sent = 0;
+    while (s_pttOutCount - sent >= packet) {
+        sendPttPacket(udp, s_pttOut + sent, packet);
+        sent += packet;
+    }
+    if (sent > 0) {
+        s_pttOutCount -= sent;
+        memmove(s_pttOut, s_pttOut + sent, s_pttOutCount * sizeof(int16_t));
+    }
+}
+
 // ------------------------------------------------------------------------------
 // Besitzer-Task
 // ------------------------------------------------------------------------------
@@ -922,6 +1197,7 @@ static void audioTask(void*) {
                 if (isPTTActive) break;
                 taskENTER_CRITICAL(&s_cfgMux);
                 s_cfgPtt = s_cfgPending;
+                const VoiceConfig voiceCfg = s_voicePending;
                 taskEXIT_CRITICAL(&s_cfgMux);
                 // Gegensprechen gibt es nur mit der BabyCam: nur sie hat einen
                 // Rueckkanal (UDP an die Kamera).
@@ -949,6 +1225,31 @@ static void audioTask(void*) {
                 }
 
                 BabyCamApi_SetParentAudio(true);
+
+                // Senderate und Paketgroesse fuer diese Sitzung festlegen
+                // (Wechsel wirkt erst beim naechsten Druck) und die Umrechnung
+                // von vorn beginnen.
+                s_pttPacketSamples = s_pttPacketSamplesWanted;
+                s_pttSendRate = s_pttSendRateWanted;
+                VoiceProcessor_Reset(&s_voice, voiceCfg, AUDIO_RATE);
+                Serial.printf("[Audio] Sprachaufbereitung: Hochpass %u Hz, Tiefpass %u Hz, %s %u dB (0 = aus).\n",
+                              (unsigned)s_voice.cfg.highpassHz, (unsigned)s_voice.cfg.lowpassHz,
+                              s_voice.cfg.autoGain ? "Pegelautomatik bis" : "feste Verstaerkung",
+                              (unsigned)s_voice.cfg.gainDb);
+                PcmResampler_Reset(&s_pttResampler, AUDIO_RATE, s_pttSendRate);
+                s_pttOutCount = 0;
+
+                // Ziel der Sprachpakete. Der Port kommt aus dem Kamera-Status,
+                // wenn sie einen meldet (effectiveUdpPortOut) - seit v2.0.0 die
+                // einzige Aenderung am Sendeweg, deshalb steht er im Log.
+                Serial.printf("[Audio] Gegensprechen sendet an %s:%u (%u Bytes je Paket, %lu Hz).\n",
+                              streamIp.c_str(), (unsigned)effectiveUdpPortOut(s_cfgPtt),
+                              (unsigned)(s_pttPacketSamples * sizeof(int16_t)), (unsigned long)s_pttSendRate);
+                s_ptt = {};
+                s_ptt.startMs = millis();
+#if DIAG_TEST_TOOLS
+                PttCapture_Begin(s_pttSendRate);   // Mitschnitt fuer /ptt_capture
+#endif
                 isPTTActive = true;
                 break;
             }
@@ -956,6 +1257,18 @@ static void audioTask(void*) {
             case CMD_STOP_PTT:
                 if (!isPTTActive) break;
                 isPTTActive = false;
+                logPttStats();
+#if DIAG_TEST_TOOLS
+                PttCapture_End();
+                // Zustand des Empfangs, solange das Mikrofon noch laeuft. Der
+                // volle Auszug (liest ES7210/ES8388 ueber I2C) nur einmal je
+                // Einschalten, die Registerzeile jedes Mal.
+                {
+                    static bool s_dumpedOnce = false;
+                    if (!s_dumpedOnce) { s_dumpedOnce = true; AudioCodec_Dump("Gegensprechen"); }
+                    AudioCodec_DumpI2sRx("Gegensprechen");
+                }
+#endif
                 micDown();
                 BabyCamApi_SetParentAudio(false);
 
@@ -974,9 +1287,7 @@ static void audioTask(void*) {
             const int16_t* ready = micRecord();
             if (ready) {
                 if (WiFi.status() == WL_CONNECTED && streamIp.length() > 0) {
-                    udpOut.beginPacket(streamIp.c_str(), effectiveUdpPortOut(s_cfgPtt));
-                    udpOut.write((const uint8_t*)ready, MIC_SAMPLES * sizeof(int16_t));
-                    udpOut.endPacket();
+                    forwardPttAudio(udpOut, ready);
                 }
             } else {
                 vTaskDelay(pdMS_TO_TICKS(2));
@@ -1102,8 +1413,15 @@ static void captureConfig() {
     c.udpPortOut  = (uint16_t)audioUdpPortOut;
     strlcpy(c.url, babyStreamUrl.c_str(), sizeof(c.url));
 
+    VoiceConfig v = {};
+    v.highpassHz = (uint16_t)pttHighpassHz;
+    v.lowpassHz  = (uint16_t)pttLowpassHz;
+    v.autoGain   = pttAutoGain;
+    v.gainDb     = (uint8_t)pttGainDb;
+
     taskENTER_CRITICAL(&s_cfgMux);
-    s_cfgPending = c;
+    s_cfgPending   = c;
+    s_voicePending = v;
     taskEXIT_CRITICAL(&s_cfgMux);
 }
 
@@ -1120,6 +1438,27 @@ void AudioStreamLogic_ApplyConfig() {
 void AudioStreamLogic_ResetAudio(uint8_t kind) {
     s_resetKind = kind;
     post(CMD_RESET_CODEC);
+}
+
+void AudioStreamLogic_SetPttSendRate(uint32_t hz) {
+    if (hz < PTT_SEND_RATE_MIN) hz = PTT_SEND_RATE_MIN;
+    if (hz > PTT_SEND_RATE_MAX) hz = PTT_SEND_RATE_MAX;
+    s_pttSendRateWanted = hz;
+}
+
+uint32_t AudioStreamLogic_GetPttSendRate() {
+    return s_pttSendRateWanted;
+}
+
+void AudioStreamLogic_SetPttPacketBytes(size_t bytes) {
+    size_t samples = bytes / sizeof(int16_t);   // nur ganze Samples
+    if (samples < PTT_PACKET_SAMPLES_MIN) samples = PTT_PACKET_SAMPLES_MIN;
+    if (samples > PTT_PACKET_SAMPLES_MAX) samples = PTT_PACKET_SAMPLES_MAX;
+    s_pttPacketSamplesWanted = samples;
+}
+
+size_t AudioStreamLogic_GetPttPacketBytes() {
+    return s_pttPacketSamplesWanted * sizeof(int16_t);
 }
 
 bool AudioStreamLogic_SupportsPTT() {

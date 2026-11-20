@@ -9,6 +9,8 @@
 #include "WifiNetworks.h"
 #include "WifiConnect.h"
 #include "ColdRestart.h"
+#include "DebugFlags.h"
+#include "PttCapture.h"
 #include "secrets.h"
 
 extern bool lvgl_port_lock(uint32_t timeout_ms);
@@ -353,6 +355,40 @@ void WebSetupLogic_Init() {
         }
         free(rowBuffer);
     });
+
+#if DIAG_TEST_TOOLS
+    // =========================================================
+    // Diagnose: Mitschnitt des letzten Gegensprechens als WAV (PttCapture.h)
+    // =========================================================
+    server.on("/ptt_capture", HTTP_GET, []() {
+        const int16_t* samples = nullptr;
+        size_t count = 0;
+        uint32_t rateHz = 0;
+        if (!PttCapture_Get(&samples, &count, &rateHz)) {
+            server.send(404, "text/plain", "Kein Mitschnitt: erst Gegensprechen benutzen und die Taste loslassen.");
+            return;
+        }
+
+        const uint32_t dataBytes = (uint32_t)(count * sizeof(int16_t));
+        uint8_t header[PTT_WAV_HEADER_BYTES];
+        PttCapture_WavHeader(header, dataBytes, rateHz);
+
+        server.setContentLength(PTT_WAV_HEADER_BYTES + dataBytes);
+        server.sendHeader("Content-Disposition", "attachment; filename=\"lela_ptt.wav\"");
+        server.send(200, "audio/wav", "");
+        server.client().write(header, PTT_WAV_HEADER_BYTES);
+
+        // In Haeppchen: der Netzwerkstapel nimmt keine 800 KB am Stueck.
+        const uint8_t* p = (const uint8_t*)samples;
+        size_t left = dataBytes;
+        while (left > 0) {
+            const size_t chunk = left > 4096 ? 4096 : left;
+            if (server.client().write(p, chunk) != chunk) break;   // Verbindung weg
+            p    += chunk;
+            left -= chunk;
+        }
+    });
+#endif
 
     // =========================================================
     // NEU: EXIT SCREENSHOT ROUTE

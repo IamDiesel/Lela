@@ -9,6 +9,7 @@
 #include "CrashDiag.h"
 #include "ColdRestart.h"
 #include "HangGuard.h"
+#include "I2sRxStartGuard.h"
 #include "CameraTab5.h"
 #include "ViewCameraPreview.h"
 #include "AudioStreamLogic.h"
@@ -21,6 +22,7 @@
 #include <esp_heap_caps.h>
 
 #include "WifiConnect.h"
+#include "DisplayBrightness.h"
 
 using namespace SettingsUi;
 
@@ -53,14 +55,13 @@ static void schemeChanged(lv_event_t* e) {
 }
 
 static void brightnessChanged(lv_event_t* e) {
-    brightnessPercent = lv_slider_get_value(lv_event_get_target(e));
-    M5.Display.setBrightness((brightnessPercent * 255) / 100);
+    DisplayBrightness_Set(lv_slider_get_value(lv_event_get_target(e)));
     lv_label_set_text_fmt(s_brightVal, "%d %%", brightnessPercent);
 }
 
 static void brightnessReleased(lv_event_t*) {
     playToneI2S(1000, 40, true);
-    Preferences p; p.begin("catmat", false); p.putInt("bright", brightnessPercent); p.end();
+    DisplayBrightness_Save();
 }
 
 // Globale Gegenfarben der HA-Widgets (HaTheme). Wirkt beim naechsten Oeffnen
@@ -79,7 +80,8 @@ void SettingsDisplay_Build(lv_obj_t* parent) {
     segmented(r.obj, SCHEMES, 3, (uint8_t)UiTheme::mode(), schemeChanged);
 
     r = row(card, "Helligkeit", "Gleicher Wert wie in den Schnelleinstellungen");
-    lv_obj_t* sl = addSlider(r, 5, 100, brightnessPercent, brightnessChanged, &s_brightVal);
+    lv_obj_t* sl = addSlider(r, DISPLAY_BRIGHTNESS_MIN_PERCENT, DISPLAY_BRIGHTNESS_MAX_PERCENT,
+                             brightnessPercent, brightnessChanged, &s_brightVal);
     lv_obj_add_event_cb(sl, brightnessReleased, LV_EVENT_RELEASED, nullptr);
     lv_label_set_text_fmt(s_brightVal, "%d %%", brightnessPercent);
 
@@ -203,6 +205,51 @@ static void audioResetClicked(lv_event_t* e) {
     AudioStreamLogic_ResetAudio((uint8_t)(uintptr_t)lv_event_get_user_data(e));
 }
 
+// Senderate des Gegensprechens durchschalten; der Knopf zeigt den Wert, der ab
+// dem naechsten Druck auf die Sprechtaste gilt. 44100 Hz ist die Vorgabe (Rate
+// des Mikrofons, keine Umrechnung).
+static void pttRateText(char* buf, size_t len) {
+    snprintf(buf, len, "%lu Hz", (unsigned long)AudioStreamLogic_GetPttSendRate());
+}
+
+static void pttRateClicked(lv_event_t* e) {
+    static const uint32_t RATES[] = { 44100, 48000, 32000, 22050, 16000, 8000 };
+    static const size_t   COUNT   = sizeof(RATES) / sizeof(RATES[0]);
+
+    const uint32_t current = AudioStreamLogic_GetPttSendRate();
+    size_t next = 0;
+    for (size_t i = 0; i < COUNT; i++) {
+        if (RATES[i] == current) { next = (i + 1) % COUNT; break; }
+    }
+    AudioStreamLogic_SetPttSendRate(RATES[next]);
+
+    char text[16];
+    pttRateText(text, sizeof(text));
+    lv_label_set_text(lv_obj_get_child(lv_event_get_target(e), 0), text);
+}
+
+// Paketgroesse des Gegensprechens durchschalten: 500 (Vorgabe, so liest die
+// Kamera) -> 250 -> 512 -> 1024.
+static void pttPacketText(char* buf, size_t len) {
+    snprintf(buf, len, "%u Bytes", (unsigned)AudioStreamLogic_GetPttPacketBytes());
+}
+
+static void pttPacketClicked(lv_event_t* e) {
+    static const size_t SIZES[] = { 500, 250, 512, 1024 };
+    static const size_t COUNT   = sizeof(SIZES) / sizeof(SIZES[0]);
+
+    const size_t current = AudioStreamLogic_GetPttPacketBytes();
+    size_t next = 0;
+    for (size_t i = 0; i < COUNT; i++) {
+        if (SIZES[i] == current) { next = (i + 1) % COUNT; break; }
+    }
+    AudioStreamLogic_SetPttPacketBytes(SIZES[next]);
+
+    char text[16];
+    pttPacketText(text, sizeof(text));
+    lv_label_set_text(lv_obj_get_child(lv_event_get_target(e), 0), text);
+}
+
 // Kamera Stufe 1: Sensor ansprechen; Ergebnis im Knopf und im Monitor.
 static void cameraProbeClicked(lv_event_t* e) {
     const CameraProbeResult r = CameraTab5_Probe();
@@ -259,10 +306,42 @@ void SettingsDiag_Build(lv_obj_t* parent) {
     snprintf(start, sizeof(start), "%lu insgesamt", (unsigned long)hangs);
     addValue(hangRow, start);
 
+    // Mikrofonstarts fuer das Gegensprechen und wie viele davon der Schutz
+    // I2sRxStartGuard abgelehnt hat (jeder waere frueher ein Haenger gewesen).
+    I2sRxGuardStats mic;
+    I2sRxStartGuard_GetStats(&mic);
+    snprintf(start, sizeof(start), "%lu von %lu abgefangen, Quittung max. %lu us",
+             (unsigned long)mic.refused, (unsigned long)mic.starts, (unsigned long)mic.maxWaitUs);
+    addValue(row(card, "Mikrofonstart", "Seit dem Einschalten (Schutz I2sRxStartGuard, Frist 2000 us)"), start);
+
 #if DIAG_TEST_TOOLS
     card = section(pg, "TESTWERKZEUGE",
                    "Nur zur Fehlersuche (DebugFlags.h: DIAG_TEST_TOOLS). Registerauszug des "
                    "Audio-Chips vor und nach dem Reset im seriellen Monitor.");
+    // Reihenfolge: Neue Testwerkzeuge kommen OBEN in ihren Themenbereich - das,
+    // woran gerade gearbeitet wird, soll ohne Scrollen erreichbar sein. Aeltere
+    // rutschen nach unten.
+    Row r;
+
+    // --- Gegensprechen (17.11.2026) -------------------------------------------
+    {
+        char rateText[16];
+        pttRateText(rateText, sizeof(rateText));
+        r = row(card, "Senderate Gegensprechen",
+                "Tippen schaltet weiter; gilt ab dem naechsten Sprechen, bis zum Neustart. Vorgabe 44100 Hz");
+        addButton(r.obj, rateText, Btn::Tonal, pttRateClicked);
+
+        char packetText[16];
+        pttPacketText(packetText, sizeof(packetText));
+        r = row(card, "Paketgroesse Gegensprechen",
+                "Tippen schaltet weiter; gilt ab dem naechsten Sprechen, bis zum Neustart. Vorgabe 500 Bytes");
+        addButton(r.obj, packetText, Btn::Tonal, pttPacketClicked);
+    }
+    r = row(card, "Mikrofonstart ablehnen",
+            "Je Tippen ein Fehlstart beim naechsten Gegensprechen: 1x = Neuaufbau, 2x = Abbruch");
+    addButton(r.obj, "Ablehnen", Btn::Tonal, [](lv_event_t*) { I2sRxStartGuard_TestRefuseNext(); });
+
+    // --- Audio-Kette zuruecksetzen ---------------------------------------------
     // Je Theorie ein Knopf (AudioCodecTab5.h). Danach ertoent ein Testton.
     struct AudioReset { const char* title; const char* desc; AudioResetKind kind; };
     static const AudioReset RESETS[] = {
@@ -279,7 +358,6 @@ void SettingsDiag_Build(lv_obj_t* parent) {
         { "Frequenztest",        "Je 1 s: 150 bis 6400 Hz (300 ms), dann 800 und 150 Hz kurz", AudioResetKind::ToneSweep },
         { "Alles nacheinander",  "USB-Pads, I2S, ES7210, ES8388, Verstaerker", AudioResetKind::All },
     };
-    Row r;
     for (const AudioReset& a : RESETS) {
         r = row(card, a.title, a.desc);
         addButton(r.obj, "Zuruecksetzen", Btn::Tonal, audioResetClicked, (void*)(uintptr_t)a.kind);

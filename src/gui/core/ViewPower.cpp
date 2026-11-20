@@ -3,6 +3,7 @@
 #include "SharedData.h"
 #include "LVGL_Driver.h"
 #include "BabyService.h"
+#include "DisplayBrightness.h"
 #include <WiFi.h>
 #include <M5Unified.h>
 
@@ -10,7 +11,7 @@ static lv_obj_t * screen_off_overlay = nullptr;
 
 // Display wieder an. Gemeinsamer Weg fuer Beruehrung und Alarm.
 static void screenOn() {
-    M5.Display.setBrightness((brightnessPercent * 255) / 100);
+    DisplayBrightness_Apply();
 
     if (screen_off_overlay != nullptr) {
         lv_obj_del_async(screen_off_overlay);
@@ -51,7 +52,7 @@ void ViewPower::btn_screen_off_event_cb(lv_event_t * e) {
     lv_obj_add_flag(screen_off_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(screen_off_overlay, screen_off_click_cb, LV_EVENT_PRESSED, NULL);
 
-    M5.Display.setBrightness(0);
+    DisplayBrightness_Off();
     BabyService_SetDisplayOn(false);   // Video nicht mehr dekodieren, Audio laeuft weiter
     ViewQuickSettings::hide(); // Schliesst das Menue im Hintergrund
 }

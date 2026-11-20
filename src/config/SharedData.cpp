@@ -8,6 +8,8 @@
 #include "WifiNetworks.h"
 #include "DebugFlags.h"
 #include "ColdRestart.h"
+#include "DisplayBrightness.h"
+#include "VoiceProcessor.h"
 
 SemaphoreHandle_t bleMutex = NULL;
 volatile bool isStreamActive = false; 
@@ -172,6 +174,10 @@ int audioPcmRate     = AUDIO_PCM_RATE_DEFAULT;
 int audioPcmChannels = 1;
 int audioUdpPortIn   = AUDIO_UDP_PORT_IN_DEFAULT;
 int audioUdpPortOut  = AUDIO_UDP_PORT_OUT_DEFAULT;
+int  pttHighpassHz = VOICE_HIGHPASS_DEFAULT_HZ;
+int  pttLowpassHz  = VOICE_LOWPASS_DEFAULT_HZ;
+bool pttAutoGain   = VOICE_AUTO_GAIN_DEFAULT;
+int  pttGainDb     = VOICE_GAIN_DEFAULT_DB;
 volatile int camAudioPortIn  = 0;
 volatile int camAudioPortOut = 0;
 volatile bool audioStandaloneMode = false;
@@ -238,6 +244,22 @@ static void loadAudioSourceSettings() {
     if (!validPort(audioUdpPortOut))                    audioUdpPortOut = AUDIO_UDP_PORT_OUT_DEFAULT;
 }
 
+// Sprachaufbereitung des Gegensprechens. Gespeicherte Werte ausserhalb der
+// Grenzen werden eingefangen (VoiceConfig_Sanitized), 0 bleibt "aus".
+static void loadTalkSettings() {
+    VoiceConfig cfg;
+    cfg.highpassHz = (uint16_t)constrain(preferences.getInt("pttHp", VOICE_HIGHPASS_DEFAULT_HZ), 0, 65535);
+    cfg.lowpassHz  = (uint16_t)constrain(preferences.getInt("pttLp", VOICE_LOWPASS_DEFAULT_HZ), 0, 65535);
+    cfg.autoGain   = preferences.getBool("pttAgc", VOICE_AUTO_GAIN_DEFAULT);
+    cfg.gainDb     = (uint8_t)constrain(preferences.getInt("pttGain", VOICE_GAIN_DEFAULT_DB), 0, 255);
+    cfg = VoiceConfig_Sanitized(cfg);
+
+    pttHighpassHz = cfg.highpassHz;
+    pttLowpassHz  = cfg.lowpassHz;
+    pttAutoGain   = cfg.autoGain;
+    pttGainDb     = cfg.gainDb;
+}
+
 void Data_Init() {
     for(int i=0; i<HISTORY_SIZE; i++) pressureHistory[i] = -32000;
     preferences.begin("catmat", false);
@@ -286,6 +308,7 @@ void Data_Init() {
     camSpeed   = preferences.getInt("camSpeed", 0);
 
     loadAudioSourceSettings();
+    loadTalkSettings();
 
     volMaster = preferences.getInt("volM", 80);
     volUI = preferences.getInt("volU", 100);
@@ -319,7 +342,8 @@ void Data_Init() {
     currentGraphMode = preferences.getInt("gMode", GRAPH_MODE_PRESSURE);
     autoBleInterval = preferences.getBool("bleAuto", true);
     manualBleIntervalMs = preferences.getInt("bleManMs", 1000);
-    brightnessPercent = preferences.getInt("bright", 80);
+    // Reglerwert 1..100 %; eine alte (lineare) Einstellung wird umgerechnet.
+    brightnessPercent = DisplayBrightness_LoadPercent(preferences);
     wifiEnabled = preferences.getBool("wifiEn", true);
     matEnabled = preferences.getBool("matEn", true);
     kippyEnabled = preferences.getBool("kipEn", true);

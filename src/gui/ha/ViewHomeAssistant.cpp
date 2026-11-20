@@ -20,6 +20,7 @@
 #include "HaTrackHistory.h"
 #include "HaTheme.h"
 #include "UiTheme.h"
+#include "HeapMonitor.h"
 
 #include <algorithm> 
 
@@ -162,6 +163,9 @@ void ViewHomeAssistant::buildPendingTabs() {
     if (all) {
         Serial.printf("[HA-Start] Uebrige Tabs: %u Widgets im Hintergrund angelegt (%lu ms).\n",
                       (unsigned)s_backgroundWidgets, (unsigned long)(millis() - s_backgroundStartMs));
+        // Alle Kacheln stehen: ab hier ist der Speicherbedarf der HA-App
+        // vollstaendig - der Stand, an dem das interne RAM am knappsten ist.
+        HeapMonitor_Log("HA-Tabs fertig");
     }
 }
 

@@ -108,7 +108,8 @@ PpaFit PpaGeometry_Fit(uint16_t srcW, uint16_t srcH, uint16_t boxW, uint16_t box
     static const struct { bool cropW; bool cropH; } kCrops[] = {
         { false, false }, { false, true }, { true, false }, { true, true },
     };
-    uint32_t maxSteps = best.valid ? (uint32_t)best.scale16 / kMaxShrinkParts : 0;
+    const uint32_t fullScale = best.valid ? (uint32_t)best.scale16 : 0;
+    uint32_t maxSteps = fullScale / kMaxShrinkParts;
     if (maxSteps > kMaxStepsDown) maxSteps = kMaxStepsDown;
     for (uint32_t stepsDown = 0; stepsDown <= maxSteps; stepsDown++) {
         for (const auto& crop : kCrops) {
@@ -116,6 +117,20 @@ PpaFit PpaGeometry_Fit(uint16_t srcW, uint16_t srcH, uint16_t boxW, uint16_t box
             if (!fit.valid) continue;
             if (fit.tailBits >= PPA_SAFE_TAIL_BITS) return fit;
             if (!best.valid || fit.tailBits > best.tailBits) best = fit;
+        }
+    }
+
+    // Notfall: Liegt die Rest-Kachel immer noch unter Espressifs eigener Grenze,
+    // darf das Bild deutlich kleiner werden (bis zur Haelfte) - lieber ein
+    // kleineres Bild als ein Auftrag, der haengen bleiben kann. Das trifft
+    // starke Verkleinerungen, z.B. 1280x720 in ein Overlay von 400x225 in den
+    // Sekunden, bis die Kamera auf die kleine Overlay-Aufloesung umgestellt hat.
+    if (best.valid && best.tailBits < PPA_FIFO_BITS) {
+        for (uint32_t stepsDown = maxSteps + 1; stepsDown <= fullScale / 2; stepsDown++) {
+            for (const auto& crop : kCrops) {
+                const PpaFit fit = makeFit(srcW, srcH, crop.cropW, crop.cropH, boxW, boxH, stepsDown);
+                if (fit.valid && fit.tailBits >= PPA_FIFO_BITS) return fit;
+            }
         }
     }
     return best;

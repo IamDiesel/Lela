@@ -11,6 +11,28 @@
 
 ---
 
+## 0. Zwei Zugänge: App und Browser
+
+Die Kamera-App (BabyCam von Arjona Software, hier Version 2.48) betreibt auf Port 8080 **einen** Webserver mit **einer** Routentabelle (vollständige Liste in Abschnitt 10). Eltern-App und Browser benutzen dieselben Endpunkte. Sie unterscheiden sich in den Parametern und darin, wie der Ton transportiert wird:
+
+| | App-Zugang (Eltern-App, Lela OS) | Web-Zugang (Browser, Dateien der Kamera unter `/`) |
+| --- | --- | --- |
+| Anmeldung | `POST /api/v1/client/online` mit eigener `uuidClient`, alle 10 s (Abschnitt 1) | ebenfalls `client/online`, aber fest mit `{"ip":"1.1.1.1","deviceName":"BabyCam Web"}` |
+| Video | `GET /api-stream/v1/video?id=<Zufalls-UUID>&uuid=<Client-UUID>&quality=<n>` | `GET /api-stream/v1/video?random=<Zufallszahl>` (bei Passwortschutz zusätzlich `password=`) |
+| Ton von der Kamera | UDP, rohes PCM, Pakete zu 500 Bytes an Port 50001 | HTTP: `GET /api-stream/v1/audio`, WAV-Strom (`audio/wav`) |
+| Gegensprechen | UDP, rohes PCM, Pakete zu 500 Bytes an Port 50003 | in der Web-Oberfläche nicht vorhanden |
+| Standbild | nicht untersucht (Lela OS benutzt es nicht) | `GET /api-stream/v1/photo?quality=25&id=<Zähler>` (Bild-im-Bild), `…/photo?quality=90&download=true` |
+
+**Der Video-Endpunkt ist für beide derselbe, das Format auch** (MJPEG, Abschnitt 2). Der Server wertet nur `uuid`, `quality` und `chromecast` aus; `id` und `random` ignoriert er (sie verhindern nur, dass ein Zwischenspeicher eine alte Antwort liefert). Daraus folgt:
+
+* **Ohne `uuid` gilt der Abrufer als Browser:** Die Kamera trägt ihn als „BabyCam Web“ mit der IP `1.1.1.1` ein.
+* **`quality` wirkt nur zusammen mit `uuid`** – die Qualität wird je Client-UUID gemerkt.
+* Alte Namen derselben Ströme: `/stream/video` und `/stream/audioHttp`.
+
+Quelle für diesen Abschnitt: der entpackte Code der App (Routentabelle des Servers, Bearbeitung der Ströme) und die mitgelieferte Web-Oberfläche (`index.js`), ausgewertet am 17.11.2026.
+
+---
+
 ## 1. Verbindungsaufbau & Keep-Alive (Boot-Sequenz)
 
 Da die Cloud-Infrastruktur umgangen wird, muss der Client die TCP-Session lokal aufrechterhalten. Ohne regelmäßigen Keep-Alive schließt der Kamera-Server aus Sicherheitsgründen die aktiven Video- und Audio-Sockets.
@@ -100,7 +122,7 @@ Weist die Kamera an, einen UDP-Stream an die definierte IP des Clients zu senden
 
 *(Zum Stoppen: `"status": "STOP"`).*
 
-* **Netzwerk-Routing:** Die Kamera feuert UDP-Pakete an den lokalen Client-Port **50001** (`audioBabyRecorderPort`).
+* **Netzwerk-Routing:** Die Kamera feuert UDP-Pakete an den lokalen Client-Port **50001** (`audioBabyRecorderPort`), in der Regel 500 Bytes je Paket (das Kleinere aus 500 und der Mindestpuffergröße des Mikrofons der Kamera).
 
 ### 🎤 Mit dem Baby sprechen (Push-to-Talk / Audio Uplink)
 
@@ -117,7 +139,9 @@ Versetzt die Kamera in den Zuhör-Modus.
 
 ```
 
-* **Netzwerk-Routing:** Der Client muss nun UDP-Audio-Chunks (Empfehlung: 512 bis 1024 Bytes) an die IP der Kamera auf Ziel-Port **50003** (`audioParentPlayerPort`) senden.
+* **Netzwerk-Routing:** Der Client sendet UDP-Pakete mit rohem PCM an die IP der Kamera auf Ziel-Port **50003** (`audioParentPlayerPort`).
+* **Paketgröße: höchstens 500 Bytes (250 Samples).** Die Kamera liest jedes Paket in einen Puffer von genau 500 Bytes und spielt nur das ab; der Rest eines größeren Pakets ist verloren. Die Eltern-App sendet selbst 500 Bytes je Paket. Pakete mit genau 1 Byte verwirft die Kamera (Lebenszeichen).
+  * Erfahrung mit Lela OS (17.11.2026): 1024 Bytes je Paket → mehr als die Hälfte fehlt, die Stimme klingt massiv roboterhaft. 512 Bytes → klingt gut, es fehlen aber noch 6 Samples je Paket. Seitdem 500 Bytes.
 
 **⚠️ Hardware Race Conditions (I2S):**
 Auf Embedded-Systemen mit geteiltem I2S-Bus für Mikrofon und Lautsprecher (z.B. ESP32-P4 / M5Stack Tab5) muss die Audio-Steuerung zwingend **Half-Duplex** erfolgen. Die Umschaltung muss über OS-Flags isoliert werden (erst Stream-Task logisch stoppen -> RTOS Yield ausführen -> I2S-Hardware deaktivieren -> Gegenseite hochfahren). Ein hartes Trennen der I2S-DMA-Hardware während eines aktiven Schreibzugriffs führt sofort zu einem Fatal Exception Core Panic.
@@ -174,7 +198,7 @@ Dieser Endpunkt sollte zyklisch (alle 3 bis 5 Sekunden) abgerufen werden, um das
 
 * **Auflösung ändern:**
 * `POST /api/v1/camera/change-resolution`
-* Body: `{"forceChangeResolution": false, "width": 1280, "height": 720}` *(Führt serverseitig zu einem Stream-Neustart)*
+* Body: `{"forceChangeResolution": true, "width": 1280, "height": 720}` *(Führt serverseitig zu einem Stream-Neustart; mit `false` darf die Kamera ablehnen, siehe Abschnitt 9)*
 
 
 * **Belichtung (Exposure) anpassen:**
@@ -271,3 +295,213 @@ Ressourcenschonende Endpunkte für Microcontroller (liefern kurze Plaintext- ode
 * **Geräuscherkennung / Baby-Alarm:**
 * Alarm umschalten: `POST /api/v1/audio-alert/baby/start-stop`
 
+---
+
+## 8. Web-Zugang (Browser)
+
+Die Kamera liefert unter `http://<Kamera-IP>:8080/` eine Web-Oberfläche aus (`index.html`, `index.js`). Was sie aufruft, steht im mitgelieferten `index.js` der App-Version 2.48; **von Lela OS wird dieser Zugang nicht benutzt.**
+
+* **Anmeldung:** `POST /api/v1/client/online` mit `{"ip": "1.1.1.1", "deviceName": "BabyCam Web"}`.
+* **Video:** `<img src="/api-stream/v1/video?random=<Zufallszahl>">` – derselbe MJPEG-Strom wie in Abschnitt 2, ohne `uuid` und `quality`.
+  * Die Kamera nimmt denselben Endpunkt auch mit `uuid` und `quality` an (z. B. `…/video?uuid=<UUID>&quality=50&random=0.72…`); dann zählt der Abruf zu dieser UUID und nicht als „BabyCam Web“.
+* **Ton:** `<audio src="/api-stream/v1/audio">` – ein fortlaufender WAV-Strom (`audio/wav`) aus demselben Mikrofon wie der UDP-Ton: 44100 Hz, 16 Bit, Mono. Mit dem Parameter `notAddWavHeader` entfällt der WAV-Kopf (rohes PCM).
+  * Lela OS könnte diesen Strom über die Tonquelle „HTTP-Stream“ (PCM/WAV) abspielen – ungetestet.
+* **Standbild:** `/api-stream/v1/photo?quality=25&id=<Zähler>` (Bild-im-Bild), `/api-stream/v1/photo?quality=90&download=true`.
+* **Aufgenommenes Video laden:** `/api-stream/v1/download-video`.
+* **Steuerung:** dieselben `/api/v1/…`-Endpunkte wie die App (Zoom, Licht, Linse, Auflösung, Aufnahme, Schlaflied, Kamera an/aus, Power-Off, Akku, Passwort).
+* **Nur im Browser benutzt:** `GET /cgi/getUpdatingImage`, `GET /cgi/sensors`.
+* **Passwortschutz:** als Kopfzeile `Password: <Wert>` bei den Steuer-Aufrufen, als Parameter `password=<Wert>` bei den Strömen.
+* **Gegensprechen:** in der Web-Oberfläche nicht vorhanden.
+* Die Web-Oberfläche spricht außerdem einen zweiten Server auf **Port 8081** an (`/cgi/initServer`), der die Kamera aus der Ferne startet – nicht untersucht.
+
+---
+
+## 9. Erkenntnisse aus dem Betrieb (Lela OS, Stand 17.11.2026)
+
+Was die Beobachtung der Schnittstelle nicht gezeigt hat und erst im Betrieb aufgefallen ist. Belege stehen im Quelltext von Lela OS (`src/media/BabyCamApi.cpp`, `VideoLogic.cpp`, `AudioStreamLogic.cpp`) und in `src/doc/video_refactoring.md`.
+
+### Anmeldung
+* **Erst anmelden, dann alles andere.** Eine Statusabfrage vor dem ersten `client/online` zeigt die Kamera-App als „Babycam Web“ an.
+* **Ein Gerätename je `uuidClient`.** Zwei verschiedene `deviceName` unter derselben UUID sehen für die Kamera wie zwei Anmeldungen aus.
+* Lela OS wiederholt die Anmeldung alle 8 s (verlangt: 10 s) und fragt den Status alle 5 s ab.
+* `POST /api/v1/client/offline` beim Beenden wirklich senden – sonst bleibt die Sitzung auf der Kamera stehen.
+
+### Video
+* **`Content-Length` ist nicht die Länge des JPEG.** Hinter dem Bildende (`FF D9`) folgt Füllmaterial; die Kamera liefert Blöcke fester Größe (beobachtet: 81920 Bytes je Bild in jeder Auflösung, bei großen Bildern 655360 Bytes). Das Bildende rückwärts suchen, nur das JPEG an den Decoder geben.
+* **`quality` in der Stream-URL ist die Startqualität und gilt bei jedem Verbindungsaufbau neu.** Was per `POST /api/v1/camera/quality` eingestellt wurde, hält nur bis zur nächsten Verbindung, wenn die URL einen anderen Wert trägt.
+* **`forceChangeResolution` auf `true` setzen.** Mit `false` darf die Kamera die Auflösung ablehnen – das hat sie nachweislich getan. Die tatsächliche Auflösung danach aus dem Status lesen.
+* `/api/v1/camera/speed`: 0 = höchste Bildrate, 100 = stärkster Sparmodus (leicht zu verwechseln).
+
+### Ton
+* **Gegensprechen: höchstens 500 Bytes je UDP-Paket** (Empfangspuffer der Kamera, Abschnitt 3). Größere Pakete werden abgeschnitten; das Gesendete selbst war dabei in Ordnung – der Fehler ist nur an der Kamera zu hören.
+* **44100 Hz in beide Richtungen bestätigt:** Der Babyton spielt seit September sauber mit 44100 Hz; beim Gegensprechen klingt 48000 Hz hörbar tiefer.
+* Die Ports aus dem Status (`audioBabyRecorderPort`, `audioParentPlayerPort`) haben Vorrang vor festen Werten – die Kamera sendet dorthin, wohin sie will.
+
+### Stand der Prüfung
+
+| Abschnitt | Stand |
+| --- | --- |
+| 1 Anmeldung, Keep-Alive, Abmeldung | im Betrieb bestätigt |
+| 2 Videostrom (App-Zugang) | im Betrieb bestätigt, mit den Ergänzungen oben |
+| 3 Ton über UDP, Gegensprechen | im Betrieb bestätigt; Paketgröße, Rate und Ports zusätzlich am Code der App geprüft |
+| 4 Status | benutzte Felder bestätigt (`batteryLevel`, `screenOn`, `flash`, `zoom`, `cameraStatus`, `resolution`, `resolutions`, Audio-Ports); übrige nur beobachtet |
+| 5 Steuerung | von Lela OS benutzt: Qualität, Bildrate, Zoom, Belichtung, Auflösung, Aufnahme, Licht, Linse, Display, Ein/Aus, Power-Off; Antworten nicht einzeln ausgewertet |
+| 6 Geräteinformationen | nur beobachtet, von Lela OS nicht benutzt (außer `/cgi/version`) |
+| 7 Schlaflieder, Geräuschalarm | nur beobachtet, nicht benutzt |
+| 0, 8 Web-Zugang | am Code der App und an der mitgelieferten Web-Oberfläche geprüft (Version 2.48); von Lela OS nicht benutzt |
+| 10 Routenliste | aus dem Code der App (Version 2.48) |
+| 11 WiFi Direct | aus dem Code und den Texten der App (Version 2.48); mit Lela OS nicht getestet |
+| 12 Verschlüsselung | aus dem Code der App (Version 2.48); am Gerät nicht geprüft |
+
+---
+
+## 10. Alle Routen des Kamera-Servers (Port 8080)
+
+Aus der Routentabelle der App, Version 2.48. Was nicht hier steht, beantwortet der Server als Datei der Web-Oberfläche oder mit 404.
+
+**Ströme** (`/api-stream/…`, lange laufende Antworten)
+
+* `/api-stream/v1/video` (alt: `/stream/video`) – MJPEG, `multipart/x-mixed-replace; boundary=Ba4oTvQMY8ew04N8dcnM`
+* `/api-stream/v1/audio` (alt: `/stream/audioHttp`) – WAV-Strom
+* `/api-stream/v1/photo` – einzelnes JPEG (`quality`, `download`)
+* `/api-stream/v1/download-video` – aufgenommenes Video (MP4)
+
+**Sitzung und Auskunft**
+
+* `/api/v1/client/online`, `/api/v1/client/offline`
+* `/api/v1/status`, `/api/v1/battery`, `/api/v1/version`, `/api/v1/name-device`
+* `/api/v1/password/check`, `/api/v1/password/enabled`, `/api/v1/premium`, `/api/v1/update-app`
+
+**Kamera und Bildschirm**
+
+* `/api/v1/camera/on`, `/off`, `/power-off`, `/switch`
+* `/api/v1/camera/quality`, `/speed`, `/zoom`, `/exposure`
+* `/api/v1/camera/resolutions`, `/change-resolution`
+* `/api/v1/camera/flash`, `/flash-screen`, `/record-video`
+* `/api/v1/screen/on-off`, `/api/v1/screen/on-temporal`
+
+**Ton**
+
+* `/api/v1/audio/baby/start-stop`, `/api/v1/audio/parents/start-stop`
+* `/api/v1/lullaby/start-stop`, `/previous`, `/next`, `/change-media-volume`
+
+**Ältere Namen** (`/cgi/…`)
+
+* `/cgi/version`, `/cgi/nameDevice`, `/cgi/batteryQuery`, `/cgi/offline`, `/cgi/getUpdatingImage`, `/cgi/sensors`
+
+Die Eltern-App ruft zusätzlich `/api/v1/audio-alert/baby/start-stop` auf; in dieser Routentabelle steht der Pfad nicht – wo er bedient wird, ist nicht untersucht.
+
+---
+
+## 11. WiFi Direct (Betrieb ohne Router)
+
+Aus dem Code und den Hilfetexten der App, Version 2.48. **Mit Lela OS nicht getestet.**
+
+**Kurz:** WiFi Direct ändert nur das Netz, nicht die Schnittstelle. Die Kamera spannt ein eigenes Funknetz auf und ist darin immer unter **`192.168.49.1`** erreichbar. Server, Port, Anmeldung, Video- und Tonpfade sind dieselben wie in den Abschnitten 1 bis 3 und 10 – im Code gibt es keinen eigenen Pfad für WiFi Direct.
+
+### Was die Kamera tut
+
+* Sie eröffnet eine WiFi-Direct-Gruppe und ist deren Besitzer (Group Owner). Android vergibt dem Besitzer fest die Adresse `192.168.49.1` und verteilt den Gegenstellen Adressen aus `192.168.49.x`.
+* Ab Android 10 legt die App Namen und Passwort selbst fest:
+  * Netzname: Vorgabe `DIRECT-WIFI-BABYCAM`, in der App änderbar.
+  * Passwort: 8 zufällige Zeichen aus `0-9a-z`, einmal erzeugt und dann gespeichert; in der App änderbar.
+  * Band: Vorgabe 2,4 GHz. Mit der Einstellung „Start WiFi Direct on the 5GHz WiFi band“ wählt das Handy das Band selbst – dann kommen Geräte, die nur 2,4 GHz können, nicht mehr hinein.
+* Vor Android 10 vergibt das System Namen (`DIRECT-xy-…`) und Passwort; die App liest sie aus und zeigt sie an.
+* Danach läuft derselbe Kamera-Bildschirm mit demselben Server auf Port 8080. Wo der Code den Modus abfragt, geht es um Anzeige, Statistik, die eigene Adresse (die der WiFi-Direct-Schnittstelle) und den Mobilfunk-Zugang – nicht um die lokalen Pfade.
+
+### Zwei Wege hinein
+
+| | „WiFi Direct“ | „WiFi Direct Hotspot“ |
+| --- | --- | --- |
+| Verbindungsaufbau | echtes WiFi Direct: Eltern-App sucht Geräte in der Nähe und fragt die Verbindung an | die Gegenstelle tritt dem Netz der Kamera wie einem gewöhnlichen WLAN bei (Name + Passwort, WPA2) |
+| Bestätigung an der Kamera | ja – die Anfrage muss am entsperrten Kamera-Handy angenommen werden | nein, das Passwort genügt |
+| Zugangsdaten | keine Eingabe | QR-Code auf dem Kamera-Handy: `WIFI:T:WPA;S:<Netzname>;P:<Passwort>;H:;` oder von Hand |
+| Adresse der Kamera | vom System gemeldete Adresse des Gruppenbesitzers, ersatzweise `192.168.49.1` | `192.168.49.1` |
+| Geeignet für | Android-Handys mit der Eltern-App | alles mit WLAN: Browser (`http://192.168.49.1:8080`), iPhone, PC – und Lela OS |
+
+### Ablauf nach dem Verbinden (beide Wege gleich)
+
+1. Erreichbarkeit prüfen: `GET http://192.168.49.1:8080/cgi/version` – die Antwort muss mit `1.`, `2.` oder `3.` beginnen. (Die App probiert daneben die Ports 6060 und 8443, siehe Abschnitt 12; Vorgabe ist 8080.)
+2. Anmelden: `POST /api/v1/client/online` wie in Abschnitt 1. Als `ip` gehört die **eigene Adresse im Netz der Kamera** hinein (`192.168.49.x`), denn dorthin schickt die Kamera den Ton.
+3. Video: `GET /api-stream/v1/video?...` wie in Abschnitt 2.
+4. Ton: `audio/baby/start-stop` und `audio/parents/start-stop` wie in Abschnitt 3, UDP-Ports 50001 und 50003, Pakete zu 500 Bytes.
+
+### Für Lela OS
+
+* Der Weg „WiFi Direct Hotspot“ passt ohne neue Schnittstelle: den QR-Code der Kamera mit der vorhandenen WLAN-Einrichtung einlesen (das Format wird gelesen), als Kamera-Adresse `192.168.49.1` eintragen.
+* Echtes WiFi Direct (Suchen und Aushandeln) kann das Tab5 nicht.
+* Das Tab5 funkt nur auf 2,4 GHz – die 5-GHz-Einstellung der Kamera-App muss aus bleiben (Vorgabe).
+* Solange das Tab5 im Netz der Kamera hängt, ist das Heim-WLAN weg: kein Home Assistant, keine Uhrzeit aus dem Netz.
+
+---
+
+## 12. Verschlüsselung (HTTPS)
+
+Aus dem Code der App, Version 2.48. **Am Gerät nicht geprüft** – erste Probe: `https://<Kamera-IP>:8443/cgi/version` im Browser (Zertifikatswarnung ist zu erwarten).
+
+### Was die Kamera anbietet
+
+Beim Start öffnet die Kamera-App drei Zugänge mit **derselben Routentabelle** (Abschnitt 10):
+
+| Port | Transport | Bemerkung |
+| --- | --- | --- |
+| 8080 | HTTP | Vorgabe; von Lela OS benutzt |
+| 6060 | HTTP | zweiter Zugang, auch Ausweichport, falls 8080 belegt ist |
+| 8443 | **HTTPS (TLS)** | wird zusätzlich gestartet; schlägt der Start fehl, bleibt es still bei den anderen beiden |
+
+Die Eltern-App nimmt `https://` genau dann, wenn ihr Port 8443 ist. Ob sie 8443 als Vorgabe benutzt, bestimmt ein Schalter des Herstellers (`useHttpsByDefault`, Fernkonfiguration über Firebase; Vorgabe im Code, soweit ablesbar: aus).
+
+### Was sich damit verschlüsseln lässt – und was nicht
+
+| Strecke | über HTTPS möglich? |
+| --- | --- |
+| Anmeldung, Status, Steuerung (`/api/v1/…`) | ja |
+| Video (`/api-stream/v1/video`) | ja |
+| Babyton als WAV-Strom (`/api-stream/v1/audio`, Abschnitt 8) | ja |
+| Babyton über UDP (Port 50001) | **nein** – rohes PCM, im Code keine Verschlüsselung |
+| Gegensprechen über UDP (Port 50003) | **nein** – und einen anderen Weg zur Kamera gibt es dafür nicht |
+| Passwort der Kamera (`Password`-Kopfzeile / `password=`) | nur über HTTPS geschützt; über HTTP geht es im Klartext |
+
+### Das Zertifikat
+
+* Selbst ausgestellt, `CN=BabyCam`, RSA 2048, gültig 12.07.2023 bis 3022, SHA-256-Fingerabdruck `0A:CE:8C:B2:52:AC:08:3A:78:FF:4E:05:1E:2E:E5:86:53:71:D9:63:0F:56:70:69:25:22:F9:ED:FC:3A:5F:AE`.
+* **Es liegt samt privatem Schlüssel in der App (`assets/keystore.bks`) und ist in jeder Installation dasselbe.** Die Eltern-App prüft den Namen im Zertifikat nicht.
+* Folge: Die Verschlüsselung schützt vor bloßem Mitlesen (sofern ein Schlüsseltausch mit ECDHE ausgehandelt wird), **nicht** vor jemandem, der sich aktiv als Kamera ausgibt – den Schlüssel dazu hat jeder, der die App hat. Den Fingerabdruck zu prüfen stellt nur sicher, dass die Gegenstelle eine BabyCam-App ist, nicht welche.
+
+### Einordnung für Lela OS
+
+* Im Heim-WLAN und im WiFi-Direct-Netz ist die Funkstrecke bereits durch WPA2/WPA3 verschlüsselt. HTTPS schützt zusätzlich nur vor anderen Geräten **im selben Netz**.
+* Preis auf dem Tab5 (nicht gemessen): TLS-Entschlüsselung des Videostroms (Blöcke zu 81920 Bytes je Bild, Abschnitt 9), ein TLS-Verbindungsaufbau je Steuer-Aufruf, solange die Verbindungen nicht wiederverwendet werden, zusätzlicher Speicher je Verbindung.
+* Der Babyton ließe sich nur über den WAV-Strom verschlüsseln (TCP: keine Lücken, dafür mehr Verzögerung); das Gegensprechen bliebe in jedem Fall unverschlüsselt.
+
+### Passwortschutz der Kamera
+
+Der Passwortschutz wird in der Kamera-App eingeschaltet. Er gilt auf allen drei Ports gleich (dieselben Bearbeiter).
+
+* **Übergabe:** Kopfzeile `Password: <Wert>` oder Parameter `password=<Wert>` (auch klein geschrieben als Kopfzeile, auch als Parameter mit großem `P`). Die Kopfzeile wird zuerst gelesen.
+* **Wert:** das Passwort als Base64 (URL-Alphabet, ohne Füllzeichen, ohne Zeilenumbruch) – so legt die Kamera es ab und so schickt es die Eltern-App. Der Wert ist also dem Passwort gleichwertig und bei jedem Aufruf derselbe.
+* **Ohne oder mit falschem Wert:** Der Aufruf scheitert („Invalid password“).
+* Abfragen, ob der Schutz an ist: `GET /api/v1/password/enabled`. Prüfen: `POST /api/v1/password/check`.
+
+| Mit Passwort geschützt | Auch ohne Passwort erreichbar |
+| --- | --- |
+| Video, Standbild, Ton-Strom, Video-Download (`/api-stream/…`, `/stream/…`) | `/cgi/version`, `/api/v1/version` |
+| Anmeldung und Abmeldung (`client/online`, `client/offline`) | `/cgi/nameDevice`, `/api/v1/name-device` |
+| Ton starten/stoppen (`audio/baby/…`, `audio/parents/…`) | `/api/v1/status` (Akku, Auflösung, Ports …) |
+| alle Kamera-, Bildschirm- und Schlaflied-Befehle | `/api/v1/password/enabled`, `/api/v1/password/check` |
+| `/cgi/batteryQuery`, `/api/v1/battery`, `/cgi/sensors`, `/cgi/getUpdatingImage`, `/cgi/offline` | `/api/v1/premium`, `/api/v1/update-app` |
+
+### HTTPS und Passwort zusammen – was es gegen jemanden im WLAN bringt
+
+* **Ohne Passwort nützt die Verschlüsselung nichts:** Wer im WLAN ist, holt sich Bild und Ton einfach selbst von der Kamera (Port 8080).
+* **Mit Passwort, aber über HTTP:** Das Passwort geht im Klartext über die Leitung und ist mitlesbar.
+* **Mit Passwort über HTTPS (Port 8443):** Passwort, Bild und Ton-Strom sind vor Mitlesen geschützt, und ohne Passwort gibt die Kamera weder Bild noch Ton heraus.
+
+Was offen bleibt:
+
+* Die Ports 8080 und 6060 lassen sich nicht abschalten. Jede Gegenstelle, die dort mit Passwort anfragt (die Eltern-App auf dem Handy, solange der Hersteller sie nicht auf HTTPS umstellt; ein Browser mit `http://`), verrät es einem Mitleser.
+* Das Zertifikat ist allgemein bekannt (siehe oben): Wer den Verkehr aktiv über sich umleitet, kann sich als Kamera ausgeben und das Passwort abgreifen. Gegen bloßes Mitlesen hilft HTTPS, gegen diesen Angriff nicht.
+* Der Ton über UDP (Babyton an Port 50001, Gegensprechen an Port 50003) bleibt unverschlüsselt. Der Babyton lässt sich auf den verschlüsselten Ton-Strom verlegen, das Gegensprechen nicht.
+* `status`, Version und Gerätename bleiben ohne Passwort lesbar.
+
+Lela OS kann derzeit weder HTTPS noch das Passwort (feste Adresse `http://<IP>:8080`, keine `Password`-Kopfzeile).

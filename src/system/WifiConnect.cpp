@@ -100,6 +100,18 @@ void storeCurrent(const String& ssid, const String& pass) {
     preferences.end();
 }
 
+// Funkadresse (BSSID) des Zugangspunkts als Text. Im Ereignis-Log steht sie
+// bei An- und Abmeldung: Bedienen mehrere Geraete dasselbe Netz (Router und
+// Mesh-Verstaerker), zeigt erst sie, WELCHES davon einen Versuch abgewiesen
+// hat und welches ihn danach annahm.
+struct BssidText { char text[18]; };
+BssidText bssidText(const uint8_t* b) {
+    BssidText out;
+    snprintf(out.text, sizeof(out.text), "%02X:%02X:%02X:%02X:%02X:%02X",
+             b[0], b[1], b[2], b[3], b[4], b[5]);
+    return out;
+}
+
 void onWifiEvent(arduino_event_t* event) {
     const unsigned long t = (unsigned long)(millis() - s_beginMs);
     switch (event->event_id) {
@@ -107,9 +119,10 @@ void onWifiEvent(arduino_event_t* event) {
             Serial.printf("[WLAN] +%lu ms: Station gestartet (WLAN-Chip bereit).\n", t);
             break;
         case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-            Serial.printf("[WLAN] +%lu ms: Am Router angemeldet (Kanal %u, %s).\n", t,
+            Serial.printf("[WLAN] +%lu ms: Am Router angemeldet (Kanal %u, %s, Zugangspunkt %s).\n", t,
                           (unsigned)event->event_info.wifi_sta_connected.channel,
-                          authName((uint8_t)event->event_info.wifi_sta_connected.authmode));
+                          authName((uint8_t)event->event_info.wifi_sta_connected.authmode),
+                          bssidText(event->event_info.wifi_sta_connected.bssid).text);
             break;
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
             const uint8_t reason = event->event_info.wifi_sta_disconnected.reason;
@@ -121,8 +134,10 @@ void onWifiEvent(arduino_event_t* event) {
             }
             if (s_disconnectLogs >= MAX_DISCONNECT_LOGS) break;
             s_disconnectLogs = s_disconnectLogs + 1;   // volatile: kein ++
-            Serial.printf("[WLAN] +%lu ms: Getrennt/abgelehnt, Grund %u (%s).\n", t, (unsigned)reason,
-                          WiFi.disconnectReasonName((wifi_err_reason_t)reason));
+            Serial.printf("[WLAN] +%lu ms: Getrennt/abgelehnt, Grund %u (%s), Zugangspunkt %s, %d dBm.\n",
+                          t, (unsigned)reason, WiFi.disconnectReasonName((wifi_err_reason_t)reason),
+                          bssidText(event->event_info.wifi_sta_disconnected.bssid).text,
+                          (int)event->event_info.wifi_sta_disconnected.rssi);
             break;
         }
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:

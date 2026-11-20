@@ -1,5 +1,6 @@
 #include "LVGL_Driver.h"
 #include "DebugFlags.h"
+#include "PanelBlit.h"
 #include <M5Unified.h>
 
 static SemaphoreHandle_t lvgl_mux = NULL;
@@ -49,6 +50,7 @@ static void pushClipped(const lv_area_t* area, int w, int h, const uint16_t* dat
 // zaehlt die Hauptschleife weiter (lv_tick_inc), steht also waehrend eines
 // langen Bildaufbaus still.
 static uint32_t s_flushUs = 0;          // Summe Uebertragen + Drehen ins Panel
+static uint32_t s_syncUs = 0;           // davon Abgleich Cache -> Bildspeicher (nur schneller Weg)
 static uint32_t s_firstFlushUs = 0;     // Beginn des ersten Streifens (0 = keiner)
 static uint32_t s_lastFlushEndUs = 0;
 
@@ -58,14 +60,21 @@ static void disp_monitor(lv_disp_drv_t * disp_drv, uint32_t time, uint32_t px) {
     (void)time;
     const uint32_t screenPx = (uint32_t)disp_drv->hor_res * disp_drv->ver_res;
     if (px * 2 >= screenPx && s_firstFlushUs != 0) {
-        Serial.printf("[Perf] Bild: %lu ms, davon Flush %lu ms, %lu%% der Flaeche\n",
+        Serial.printf("[Perf] Bild: %lu ms, davon Flush %lu ms (Abgleich %lu ms), %lu%% der Flaeche\n",
                       (unsigned long)((s_lastFlushEndUs - s_firstFlushUs) / 1000),
-                      (unsigned long)(s_flushUs / 1000), (unsigned long)(px * 100 / screenPx));
+                      (unsigned long)(s_flushUs / 1000), (unsigned long)(s_syncUs / 1000),
+                      (unsigned long)(px * 100 / screenPx));
     }
     s_flushUs = 0;
+    s_syncUs = 0;
     s_firstFlushUs = 0;
 }
 #endif
+
+// Schneller Weg: Bereich, der seit dem letzten Abgleich Cache -> Bildspeicher
+// beschrieben wurde (ein Bild besteht aus vielen Streifen).
+static lv_area_t s_unsynced;
+static bool      s_unsyncedValid = false;
 
 static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p) {
 #if PERF_PROFILE
@@ -79,8 +88,46 @@ static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_colo
     lv_area_t hole;
     const bool clip = s_reservedActive && _lv_area_intersect(&hole, area, &s_reserved);
 
+    // Schneller Weg: direkt und gedreht in den Bildspeicher (PanelBlit.h).
+    // Faellt von selbst auf M5GFX zurueck, wenn sein Selbsttest nicht passt.
+#if LVGL_FAST_FLUSH
+    const bool fast = PanelBlit_Ready();
+#else
+    const bool fast = false;
+#endif
+
     M5.Display.startWrite();
-    if (!clip) {
+    if (fast) {
+        if (!clip) {
+            PanelBlit_Push(data, w, area->x1, area->y1, area->x1, area->y1, area->x2, area->y2);
+        } else {
+            // Dieselben vier Streifen um die Aussparung wie unten.
+            PanelBlit_Push(data, w, area->x1, area->y1, area->x1, area->y1,    area->x2, hole.y1 - 1);
+            PanelBlit_Push(data, w, area->x1, area->y1, area->x1, hole.y2 + 1, area->x2, area->y2);
+            PanelBlit_Push(data, w, area->x1, area->y1, area->x1, hole.y1,     hole.x1 - 1, hole.y2);
+            PanelBlit_Push(data, w, area->x1, area->y1, hole.x2 + 1, hole.y1,  area->x2, hole.y2);
+        }
+        // Cache -> Bildspeicher (M5.Display.display) EINMAL je Bild, mit dem
+        // letzten Streifen. Ein Streifen ist im hochkant liegenden Speicher ein
+        // schmales, hohes Band ueber fast alle Zeilen: Der Abgleich je Streifen
+        // liefe jedes Mal ueber den ganzen Bildspeicher (so arbeitet der Weg
+        // ueber M5GFX bei jedem endWrite). Geschrieben werden dabei ohnehin nur
+        // veraenderte Cache-Zeilen; was der Cache vorher verdraengt, steht
+        // schon im Speicher.
+        if (s_unsyncedValid) _lv_area_join(&s_unsynced, &s_unsynced, area);
+        else { s_unsynced = *area; s_unsyncedValid = true; }
+        if (lv_disp_flush_is_last(disp_drv)) {
+#if PERF_PROFILE
+            const uint32_t syncStart = micros();
+#endif
+            M5.Display.display(s_unsynced.x1, s_unsynced.y1,
+                               s_unsynced.x2 - s_unsynced.x1 + 1, s_unsynced.y2 - s_unsynced.y1 + 1);
+            s_unsyncedValid = false;
+#if PERF_PROFILE
+            s_syncUs += micros() - syncStart;
+#endif
+        }
+    } else if (!clip) {
         M5.Display.pushImage(area->x1, area->y1, w, h, data);
     } else {
         // Bis zu vier Streifen um die Aussparung herum: oben, unten (volle
@@ -133,11 +180,19 @@ void Lvgl_Init() {
     // statt zweier - ein zweiter braechte ohne DMA im Flush ohnehin nichts,
     // weil dort synchron gearbeitet wird.
     //
-    // Frueher 30 Zeilen (75 KB). Messung 14.10.2026: HA-Bildschirm + Video-
-    // Overlay drueckten den groessten DMA-Block auf 4-14 KB, einmal folgte
-    // "assert failed: sdio_rx_get_buffer". 16 Zeilen geben 35 KB zurueck.
-    // LVGL zeichnet dafuer in mehr, kleineren Streifen; die Gesamtzeit
-    // bestimmt ohnehin der Flush auf das gedrehte Panel (Pixel fuer Pixel).
+    // Geschichte der Groesse:
+    // - Frueher 30 Zeilen (75 KB). Messung 14.10.2026: HA-Bildschirm + Video-
+    //   Overlay drueckten den groessten DMA-Block auf 4-14 KB, einmal folgte
+    //   "assert failed: sdio_rx_get_buffer". Deshalb 16 Zeilen (40 KB).
+    // - 17.11.2026, Versuch mit 32 Zeilen (80 KB): Scrollen in den
+    //   Einstellungen 85 statt 111 ms je Bild (halb so viele Streifen =
+    //   halb so viele Gaenge durch den Objektbaum). Aber: HA-App + Overlay +
+    //   Karte drueckten den groessten DMA-Block auf 7-11 KB, das Video wurde
+    //   pausiert ("Speicher knapp"). Nach einer HA-Sitzung mit Karte bleibt
+    //   der interne Speicher zerstueckelt (101 KB frei, groesster DMA-Block
+    //   16 KB); die 40 KB Polster fehlen dann. Deshalb zurueck auf 16.
+    //   32 Zeilen erst wieder, wenn die langlebigen HA-/Karten-Daten nicht
+    //   mehr im internen RAM liegen (Projekt-Doku "Scroll-Messung").
     //
     // Faellt die Reservierung aus, weichen wir auf PSRAM zurueck: langsamer,
     // aber lauffaehig. Ein Absturz beim Start waere die schlechtere Antwort.
@@ -173,8 +228,4 @@ void Lvgl_Init() {
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = touchpad_read;
     lv_indev_drv_register(&indev_drv);
-}
-
-void Set_Backlight(uint8_t val) {
-    M5.Display.setBrightness(val);
 }

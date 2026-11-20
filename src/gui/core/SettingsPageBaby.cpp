@@ -9,6 +9,7 @@
 #include "CameraScanner.h"
 #include "BabyService.h"
 #include "AudioStreamLogic.h"
+#include "VoiceProcessor.h"
 #include "secrets.h"
 #include <Preferences.h>
 #include <WiFi.h>
@@ -61,6 +62,21 @@ static const char* audioSourceText() {
     return audioFormat == AUDIO_FMT_AAC ? "HTTP, AAC" : "HTTP, PCM";
 }
 
+// Kurzfassung der Sprachaufbereitung fuer die Zeile "Gegensprechen".
+static String talkSummary() {
+    String s;
+    if (pttHighpassHz > 0 || pttLowpassHz > 0) {
+        s += pttHighpassHz > 0 ? String(pttHighpassHz) + " Hz" : String("offen");
+        s += " - ";
+        s += pttLowpassHz > 0 ? String(pttLowpassHz / 1000) + " kHz" : String("offen");
+    } else {
+        s += "Ohne Filter";
+    }
+    if (pttAutoGain)        s += ", Automatik";
+    else if (pttGainDb > 0) s += ", +" + String(pttGainDb) + " dB";
+    return s;
+}
+
 void SettingsBaby_Build(lv_obj_t* parent) {
     lv_obj_t* pg = page(parent);
     header(pg, "Babyphone", "Kamera, Bild und Ton");
@@ -84,6 +100,8 @@ void SettingsBaby_Build(lv_obj_t* parent) {
     linkRow(card, "Tonquelle",
             audioSource == AUDIO_SRC_BABYCAM_UDP ? "Gegensprechen verfuegbar" : "Ohne Gegensprechen",
             audioSourceText(), openPage, (void*)(uintptr_t)SettingsPage::Audio);
+    linkRow(card, "Gegensprechen", "Klang der eigenen Stimme an der Kamera",
+            talkSummary().c_str(), openPage, (void*)(uintptr_t)SettingsPage::Talk);
 
     refreshBaby();
 }
@@ -310,4 +328,113 @@ void SettingsAudio_Build(lv_obj_t* parent) {
     addButton(bar, "Uebernehmen", Btn::Primary, audioSave);
 
     audioVisibility();
+}
+
+// ==============================================================================
+// Unterseite "Gegensprechen"
+// ==============================================================================
+// Klang der eigenen Stimme an der Kamera (VoiceProcessor.h). Jede Aenderung
+// gilt sofort und wird gleich gespeichert - ohne "Uebernehmen", damit man
+// zwischen zwei Durchsagen probieren kann. Wirksam wird sie mit dem naechsten
+// Druck auf die Sprechtaste (AudioStreamLogic uebernimmt die Werte beim Start).
+static const int HIGHPASS_HZ[]  = { 0, 80, 100, 120, 150, 200, 300 };
+static const char HIGHPASS_TEXT[] = "Aus\n80 Hz\n100 Hz\n120 Hz\n150 Hz\n200 Hz\n300 Hz";
+static const int LOWPASS_HZ[]   = { 0, 10000, 8000, 7000, 6000, 5000, 4000 };
+static const char LOWPASS_TEXT[]  = "Aus\n10 kHz\n8 kHz\n7 kHz\n6 kHz\n5 kHz\n4 kHz";
+static const int FILTER_STEPS   = sizeof(HIGHPASS_HZ) / sizeof(HIGHPASS_HZ[0]);
+
+static Row       s_talkGainRow;
+static lv_obj_t* s_talkGainVal = nullptr;
+
+// Eintrag der Auswahl, der dem gespeicherten Wert am naechsten liegt.
+static uint16_t nearestStep(const int* list, int value) {
+    int best = 0;
+    for (int i = 1; i < FILTER_STEPS; i++) {
+        if (abs(list[i] - value) < abs(list[best] - value)) best = i;
+    }
+    return (uint16_t)best;
+}
+
+static void saveTalk() {
+    Preferences p;
+    p.begin("catmat", false);
+    p.putInt("pttHp", pttHighpassHz);
+    p.putInt("pttLp", pttLowpassHz);
+    p.putBool("pttAgc", pttAutoGain);
+    p.putInt("pttGain", pttGainDb);
+    p.end();
+}
+
+// Beschriftung der Verstaerkung: je nach Automatik Obergrenze oder fester Wert.
+static void talkGainTexts() {
+    setDesc(s_talkGainRow, pttAutoGain ? "Wie weit die Automatik leises Sprechen hoechstens anhebt"
+                                       : "Fester Wert; 0 dB laesst die Lautstaerke unveraendert");
+    lv_label_set_text_fmt(s_talkGainVal, "+%d dB", pttGainDb);
+}
+
+static void talkHighpassChanged(lv_event_t* e) {
+    playToneI2S(800, 50, true);
+    pttHighpassHz = HIGHPASS_HZ[lv_dropdown_get_selected(lv_event_get_target(e)) % FILTER_STEPS];
+    saveTalk();
+}
+
+static void talkLowpassChanged(lv_event_t* e) {
+    playToneI2S(800, 50, true);
+    pttLowpassHz = LOWPASS_HZ[lv_dropdown_get_selected(lv_event_get_target(e)) % FILTER_STEPS];
+    saveTalk();
+}
+
+static void talkAutoChanged(lv_event_t* e) {
+    playToneI2S(800, 60, true);
+    pttAutoGain = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    talkGainTexts();
+    saveTalk();
+}
+
+static void talkGainChanged(lv_event_t* e) {
+    pttGainDb = lv_slider_get_value(lv_event_get_target(e));
+    talkGainTexts();
+}
+
+// Gespeichert wird erst beim Loslassen - nicht bei jedem Schritt des Reglers.
+static void talkGainReleased(lv_event_t*) {
+    playToneI2S(1000, 40, true);
+    saveTalk();
+}
+
+static void talkDefaults(lv_event_t*) {
+    playToneI2S(800, 100, true);
+    pttHighpassHz = VOICE_HIGHPASS_DEFAULT_HZ;
+    pttLowpassHz  = VOICE_LOWPASS_DEFAULT_HZ;
+    pttAutoGain   = VOICE_AUTO_GAIN_DEFAULT;
+    pttGainDb     = VOICE_GAIN_DEFAULT_DB;
+    saveTalk();
+    Settings_Navigate(SettingsPage::Talk);   // Seite mit den neuen Werten neu aufbauen
+}
+
+void SettingsTalk_Build(lv_obj_t* parent) {
+    lv_obj_t* pg = page(parent);
+    header(pg, "Gegensprechen", "Klang der eigenen Stimme an der Kamera", "Babyphone", Settings_BackCb);
+
+    lv_obj_t* card = section(pg, "KLANG", "Aenderungen gelten ab dem naechsten Druck auf die Sprechtaste.");
+    Row r = row(card, "Tiefen abschneiden", "Entfernt Rumpeln, Griffgeraeusche und Brummen");
+    addDropdown(r, HIGHPASS_TEXT, nearestStep(HIGHPASS_HZ, pttHighpassHz), talkHighpassChanged);
+    r = row(card, "Hoehen abschneiden", "Entfernt Zischen und Rauschen; Sprache braucht bis etwa 7 kHz");
+    addDropdown(r, LOWPASS_TEXT, nearestStep(LOWPASS_HZ, pttLowpassHz), talkLowpassChanged);
+
+    card = section(pg, "LAUTSTAERKE", "Ein Begrenzer faengt Spitzen ab, sobald verstaerkt wird.");
+    r = row(card, "Pegelautomatik", "Hebt leises Sprechen an, senkt lautes ab; Pausen bleiben leise");
+    addSwitch(r, pttAutoGain, talkAutoChanged);
+    s_talkGainRow = row(card, "Verstaerkung", "");
+    lv_obj_t* sl = addSlider(s_talkGainRow, 0, VOICE_GAIN_MAX_DB, pttGainDb, talkGainChanged, &s_talkGainVal);
+    lv_obj_add_event_cb(sl, talkGainReleased, LV_EVENT_RELEASED, nullptr);
+    talkGainTexts();
+
+    card = section(pg, nullptr);
+    char defaults[72];
+    snprintf(defaults, sizeof(defaults), "%u Hz, %u kHz, Automatik bis %u dB",
+             (unsigned)VOICE_HIGHPASS_DEFAULT_HZ, (unsigned)(VOICE_LOWPASS_DEFAULT_HZ / 1000),
+             (unsigned)VOICE_GAIN_DEFAULT_DB);
+    r = row(card, "Empfohlene Werte", defaults);
+    addButton(r.obj, "Zuruecksetzen", Btn::Tonal, talkDefaults);
 }

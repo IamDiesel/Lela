@@ -7,7 +7,7 @@
 // aktualisiert ihre Live-Werte selbst. Aufgeteilt nach Bereichen:
 //
 //   SettingsPageCat.cpp     Katzenmatte, Bluetooth-Suche (Matte/Kippy)
-//   SettingsPageBaby.cpp    Babyphone, Kamera-Verbindung, Tonquelle
+//   SettingsPageBaby.cpp    Babyphone, Kamera-Verbindung, Tonquelle, Gegensprechen
 //   SettingsPageNet.cpp     Verbindungen, WLAN-Netze, Web-Setup
 //   SettingsPageSystem.cpp  Anzeige, System, Diagnose, Bildschirmfoto
 //
@@ -22,7 +22,7 @@ enum class SettingsPage : uint8_t {
     // Bereiche der Seitenleiste (Reihenfolge = Reihenfolge der Leiste)
     Cat = 0, Baby, Net, Display, System,
     // Unterseiten
-    Camera, Audio, Wifi, WebSetup, BleScanMat, BleScanKippy, Diag, Screenshot,
+    Camera, Audio, Talk, Wifi, WebSetup, BleScanMat, BleScanKippy, Diag, Screenshot,
     // Unterseite einer Unterseite: "Zurueck" fuehrt zu Wifi (ViewSettings: parentOf)
     WifiEdit, WifiNew,
 };
@@ -59,6 +59,7 @@ void SettingsBaby_Update();
 void SettingsCamera_Build(lv_obj_t* parent);
 void SettingsCamera_Update();
 void SettingsAudio_Build(lv_obj_t* parent);
+void SettingsTalk_Build(lv_obj_t* parent);       // Gegensprechen: Klang der eigenen Stimme
 
 void SettingsNet_Build(lv_obj_t* parent);
 void SettingsNet_Update();

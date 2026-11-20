@@ -158,6 +158,18 @@ public:
     // die Scroll-Kette gekappt. Nach jedem Wechsel von editModeActive aufrufen.
     static void applyEditModeScrollChain();
 
+    // --- Speicherort ---------------------------------------------------------
+    // Widget-Objekte liegen im PSRAM. Mit dem ueblichen `new` kaemen sie ins
+    // interne RAM (dort landet alles unter 4 KB, SPIRAM_MALLOC_ALWAYSINTERNAL):
+    // bei gut hundert Kacheln einige zehn KB, verstreut in kleinen Stuecken.
+    // Genau diesen zusammenhaengenden, DMA-faehigen Speicher braucht aber der
+    // WLAN-Treiber (siehe HeapMonitor.h) - laeuft neben der HA-App das Video,
+    // wurde er so knapp, dass das Sicherheitsventil das Video pausierte.
+    // Gilt fuer alle abgeleiteten Klassen; `delete` ueber den virtuellen
+    // Destruktor gibt den Block wieder frei.
+    static void* operator new(size_t size);
+    static void  operator delete(void* p);
+
     HAWidget(lv_obj_t* parent, int tab_idx, String type, String entity, int x, int y, int w, int h, const char* name, const char* mdi, const char* c_on, const char* c_off);
     virtual ~HAWidget();
 

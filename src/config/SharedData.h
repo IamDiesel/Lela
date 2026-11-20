@@ -214,6 +214,13 @@ extern int audioPcmRate;       // Hz, nur HTTP-PCM ohne WAV-Kopf (NVS "audRate")
 extern int audioPcmChannels;   // 1/2, nur HTTP-PCM ohne WAV-Kopf (NVS "audCh")
 extern int audioUdpPortIn;     // BabyCam -> Tablet          (NVS "audPIn")
 extern int audioUdpPortOut;    // Tablet -> BabyCam (PTT)    (NVS "audPOut")
+// Sprachaufbereitung des Gegensprechens (VoiceProcessor.h: Bedeutung, Grenzen
+// und Vorgaben). Einstellbar unter Babyphone > Gegensprechen; gilt ab dem
+// naechsten Druck auf die Sprechtaste.
+extern int  pttHighpassHz;     // Hochpass, 0 = aus                  (NVS "pttHp")
+extern int  pttLowpassHz;      // Tiefpass, 0 = aus                  (NVS "pttLp")
+extern bool pttAutoGain;       // Pegelautomatik                     (NVS "pttAgc")
+extern int  pttGainDb;         // feste Verstaerkung / Obergrenze dB (NVS "pttGain")
 // Von der BabyCam im Status gemeldete Ports, 0 = unbekannt. Geschrieben vom
 // API-Task; gemeldete Werte haben Vorrang vor der Einstellung - die Kamera
 // sendet dorthin, wohin SIE will.

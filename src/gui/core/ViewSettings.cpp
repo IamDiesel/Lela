@@ -72,7 +72,8 @@ static bool         s_navPending = false;
 static SettingsPage areaOf(SettingsPage p) {
     switch (p) {
         case SettingsPage::Camera:
-        case SettingsPage::Audio:        return SettingsPage::Baby;
+        case SettingsPage::Audio:
+        case SettingsPage::Talk:         return SettingsPage::Baby;
         case SettingsPage::Wifi:
         case SettingsPage::WifiEdit:
         case SettingsPage::WifiNew:
@@ -109,6 +110,7 @@ static void buildPage(SettingsPage p) {
         case SettingsPage::System:       SettingsSystem_Build(s_content);         break;
         case SettingsPage::Camera:       SettingsCamera_Build(s_content);         break;
         case SettingsPage::Audio:        SettingsAudio_Build(s_content);          break;
+        case SettingsPage::Talk:         SettingsTalk_Build(s_content);           break;
         case SettingsPage::Wifi:         SettingsWifi_Build(s_content);           break;
         case SettingsPage::WifiEdit:     SettingsWifiEdit_Build(s_content);       break;
         case SettingsPage::WifiNew:      SettingsWifiNew_Build(s_content);        break;

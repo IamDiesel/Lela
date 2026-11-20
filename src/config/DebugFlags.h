@@ -175,6 +175,22 @@
 #define VIDEO_SRAM_RESERVE_KB 220
 
 // ------------------------------------------------------------------------------
+// LVGL_FAST_FLUSH - LVGL-Bilder direkt und gedreht in den Bildspeicher kopieren
+//
+// Messung 16.11.2026 (Scrollen in den Einstellungen): Ein Bild ueber zwei
+// Drittel der Flaeche dauert 110-220 ms, davon 75-115 ms nur fuer das
+// Uebertragen ins hochkant liegende Panel ueber M5.Display.pushImage. PanelBlit
+// (system/PanelBlit.h) kopiert stattdessen direkt - gleicher Speicher, weiter
+// mit der CPU, kein PPA und kein 2D-DMA; der Panel-Patch unten bleibt gueltig.
+//
+// 1 = schneller Weg (Standard). Ein Selbsttest gegen M5GFX entscheidet beim
+//     ersten Bild, ob er benutzt wird; Logzeile "[LVGL] Schneller Flush ...".
+// 0 = wie bisher ueber M5.Display.pushImage - zum Vergleich, oder falls doch
+//     Bildfehler auftreten.
+// ------------------------------------------------------------------------------
+#define LVGL_FAST_FLUSH 1
+
+// ------------------------------------------------------------------------------
 // PERF_PROFILE - Messzeilen [Perf] fuer grosse Bildaufbauten
 //
 // Nach jedem Neuzeichnen von mindestens der halben Bildschirmflaeche (Wechsel
@@ -187,7 +203,7 @@
 // Startzeit 2026-11 abgeschlossen. Die [Boot]- und [HA-Start]-Zeilen sind
 // davon unabhaengig.
 // ------------------------------------------------------------------------------
-#define PERF_PROFILE 0
+#define PERF_PROFILE 1
 
 // ==============================================================================
 // NICHT per Schalter: Panel-Patch
@@ -220,6 +236,16 @@
 //    AudioCodecTab5.h), mit Registerauszug vorher/nachher auf der Konsole.
 //  * "Absturz ausloesen": absichtlicher Absturz (CrashDiag_TriggerCrash), um
 //    die Absturz-Behandlung reproduzierbar zu testen.
+//  * "Mikrofonstart ablehnen": laesst den naechsten Start des Mikrofons
+//    kuenstlich scheitern (I2sRxStartGuard), um Neuaufbau und Abbruch des
+//    Gegensprechens zu testen.
+//  * "Senderate Gegensprechen": rechnet die Sprachpakete auf eine andere
+//    Abtastrate um (PcmResampler), um zu pruefen, welche die Kamera erwartet.
+//  * "Paketgroesse Gegensprechen": 1024, 512 oder 256 Bytes je Sprachpaket.
+//  * Mitschnitt des Gegensprechens (PttCapture): die ersten 10 s jeder
+//    Sitzung, abholbar als WAV unter http://<Geraet>/ptt_capture, solange der
+//    Bildschirmfoto-Modus den Webserver offen haelt. Dazu Registerzeilen im
+//    Monitor ([AudioCodec] I2S-Empfang ...).
 //
 // Nur zur Fehlersuche. Fuer den Dauerbetrieb auf 0 - dann fehlt der Abschnitt.
 // ------------------------------------------------------------------------------
